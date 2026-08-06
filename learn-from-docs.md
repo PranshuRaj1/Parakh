@@ -1,49 +1,73 @@
-1. automating-code-validation - by Daksh gupta --> My understanding and what I am going to build
+# Automating Code Validation
 
-automate code validation what they want to achieve
+## My Understanding and What I Am Going to Build
 
-Daytime and nighttime coding (this explains everything)
-![alt text](image.png)
+This is my understanding of automated code validation and what Greptile aims to achieve.
 
-since, I am trying to contribute and make meaningful changes(rather than code works only changes) Review is very big thing, I got to know it more while working for an org.
-I code then use AI to review, it will miss NITS a lot, some-times halluciantes and also forget the rules of the codebase.
+## Daytime and Nighttime Coding
 
-I remember when writing unit-test I use to get the suggestion as use cleanup after each test, as AI reviewer only works by diff so they never look on our global setup which already has cleanup after test-cases.
-This is was my first time writing unit-test, PR-reviews, and greptile
+This explains everything:
 
-since then, I really got excited as It works really well in P1 issues in my PR.
+![Daytime and nighttime coding](image.png)
 
-I have a plan to build something which I think Greptile might need, but do understand what they are doing I am reading and documenting My understanding of it.
+Because I want to contribute and make meaningful changes, rather than changes that merely work, I have learned that review is a very important part of the process. I understood this even more while working for an organization.
 
-Reaching to this point great but very difficult,
-"A large, regulated bank should be able to merge a change to flow-of-funds with only Greptile's approval. No manual code review, no tests, no QA."
+I write code and then use AI to review it, but it can miss small details, hallucinate, and forget the rules of the codebase.
 
-since I am into tech which is like 2 years, I am a huge supporter of AI will create a lot of jobs and remove some, but jobs that asks for accountbility is something I am yet to decide, like if a feature breaks in production whom will we point to(who takes accountablity), AI will say SORRY and move on.
-I might change my opinion based on more-and-more I learn (A quote I love, its mine not copied , I am sure of it is "The more I learn, the less I know"), But I think an overview by humans will always be there but pressure to go through each line will change and reduce. Like class's monitor goes through the work first and then work goes to subject-teacher, It reduces the pressure from prof so that they can work on their tasks also.
+I remember writing unit tests and getting a suggestion to use cleanup after every test. The AI reviewer was working only from the diff, so it did not look at our global setup, which already cleaned up after test cases.
 
-what Greptile does to validate code changes:
+This was my first experience writing unit tests, doing pull request reviews, and using Greptile.
 
-1. Deeply understand the product, the business, the codebase, and the intent of the change
-   -> Internal knowledge for every part of codebase
-   -> Store context about architecture also
+Since then, I have become really excited about it because it works very well for priority one issues in my pull requests.
 
-2. Understand the "blast radius" of the change
-   -> changes are harmless on their own but introduce a new bug two function calls away in an unchanged part of the codebase.
+I have a plan to build something that I think Greptile might need. Before doing that, I want to understand what they are doing, so I am reading and documenting my understanding of it.
 
-3. Read changed files and change-related files and evaluate the architectural decisions and tradeoffs  
-   -> knowledge base, which eliminates the tens of thousands of tokens that the agent would otherwise consume re-learning how the codebase works.
-   -> simple tasks like running grep and following traces which are very token-heavy but don't need frontier intelligence, we use fast open source models.
+Reaching this point is great, but very difficult:
 
-4. Run the code and simulate users to test the application through browser/mobile agents, simulation of production traffic on backend APIs, etc.
+> “A large, regulated bank should be able to merge a change to flow of funds with only Greptile’s approval. No manual code review, no tests, no QA.”
 
-5. Ensure the code is secure, through a combination of agents and comprehensive security scans
-   Greptile's approach is hybrid. Let agents use deterministic scanners to reduce the entropy of the search space. Use AI to eliminate false positives and detect chained exploits.
+I have been in tech for around two years, and I strongly believe that AI will create many jobs while removing some. However, I am still deciding how to think about jobs that require accountability. If a feature breaks in production, who do we hold accountable? AI will say sorry and move on.
 
-6. Continuously learn from other patches, other engineers' comments, etc.
-   New PR creates new problems (I got to know this myself), also the PRs merged before or while my PR is being reviwed is also problamatic somethimes (Generally, team discuss it on engineering page or group. Ours was not connected to greptile I feel).
+My opinion may change as I learn more. A quote I love, and one that is mine, is: “The more I learn, the less I know.” Still, I think human oversight will always remain. The pressure to review every line will change and reduce. It is like a class monitor reviewing work before it reaches the subject teacher: it reduces pressure on the teacher, allowing them to focus on their other responsibilities as well.
 
-Initially, what I got to know from this talk is that what we need is a frontier model doing the heavy lifting. Whenever and wherever we can use a smaller context model, a cheap model, or an open-source model, we use them as much as we want so that we reduce cost.
+## What Greptile Does to Validate Code Changes
 
-It's like we have a WeGov offense per solution, but we go for more efficient WeGov and log in kind of solutions because they are more efficient and cost-saving.
+1. **Deeply understand the product, the business, the codebase, and the intent of the change**
 
-Now I really understand why we have data structure and algorithm (O(n square) to O(nlogn))classes in college, but it's really interesting that we could have only used frontier models and could have made two or three agents who discuss with each other and find out the exact position of which things are wrong. That flow would have been very simple but very time-consuming and also very expensive, especially with this new era of models getting way out of hand for the expense.
+   * Build internal knowledge for every part of the codebase.
+   * Store context about the architecture as well.
+
+2. **Understand the blast radius of the change**
+
+   * Changes can be harmless on their own but introduce a new bug two function calls away, in an unchanged part of the codebase.
+
+3. **Read changed files and related files, then evaluate architectural decisions and tradeoffs**
+
+   * Use a knowledge base to eliminate the tens of thousands of tokens an agent would otherwise spend relearning how the codebase works.
+   * Use fast open source models for simple but token heavy tasks, such as running searches and following traces, which do not need frontier intelligence.
+
+4. **Run the code and simulate users**
+
+   * Test the application through browser and mobile agents.
+   * Simulate production traffic on backend APIs.
+
+5. **Ensure the code is secure through agents and comprehensive security scans**
+
+   Greptile’s approach is hybrid. It lets agents use deterministic scanners to reduce the entropy of the search space. AI then eliminates false positives and detects chained exploits.
+
+6. **Continuously learn from other patches and engineers’ comments**
+
+   * New pull requests create new problems. I learned this myself.
+   * Pull requests merged before or while my pull request is being reviewed can also create problems. Generally, teams discuss this on an engineering page or group. I feel our team was not connected to Greptile in this way.
+
+## Models and Cost Efficiency
+
+Initially, what I understood from this talk is that we need a frontier model to do the heavy lifting. Whenever and wherever we can use a smaller context model, a cheaper model, or an open source model, we should use them as much as possible to reduce cost.
+
+It is like having a WeGov solution for each problem, while choosing more efficient WeGov and Log In type solutions whenever possible because they are more efficient and cost saving.
+
+## Why This Matters
+
+Now I really understand why we have data structure and algorithm classes in college, from improving an O(n squared) approach to an O(n log n) approach.
+
+It is interesting that we could have used only frontier models and created two or three agents that discuss with each other to find the exact location of what is wrong. That flow would have been simple, but it would also have been time consuming and expensive, especially in this era where model costs can quickly get out of hand.
