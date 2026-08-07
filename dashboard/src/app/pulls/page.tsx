@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import { CheckCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
-import type { Finding } from '@parakh/shared';
+import type { Finding, Review } from '@parakh/shared';
 
 export default async function PullsPage({
   searchParams,
@@ -16,7 +16,7 @@ export default async function PullsPage({
   const params = await searchParams;
   const repo = params.repo || 'PranshuRaj1/Parakh'; // Default for demo
 
-  let reviews = [];
+  let reviews: Review[] = [];
   let dbError = false;
 
   try {

@@ -157,7 +157,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   try {
     return await crypto.subtle.importKey(
       'pkcs8',
-      binaryDer.buffer,
+      binaryDer,
       { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
       false,
       ['sign']
@@ -167,7 +167,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
     const pkcs8 = wrapPKCS1inPKCS8(binaryDer);
     return await crypto.subtle.importKey(
       'pkcs8',
-      pkcs8.buffer,
+      pkcs8,
       { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
       false,
       ['sign']

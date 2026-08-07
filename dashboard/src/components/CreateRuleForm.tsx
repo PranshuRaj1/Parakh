@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'next';
+import { useState } from 'react';
 import { Plus, Loader2 } from 'lucide-react';
 
 export default function CreateRuleForm({ repo }: { repo: string }) {

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import CreateRuleForm from '@/components/CreateRuleForm';
 import { formatDistanceToNow } from 'date-fns';
+import type { Rule, RuleRelationshipRecord } from '@parakh/shared';
 
 export default async function MemoryPage({
   searchParams,
@@ -16,8 +17,8 @@ export default async function MemoryPage({
   const repo = params.repo || 'PranshuRaj1/Parakh'; // Default for demo
 
   // Ensure env var exists for DB connection before trying to fetch
-  let rules = [];
-  let relationships = [];
+  let rules: Rule[] = [];
+  let relationships: RuleRelationshipRecord[] = [];
   let dbError = false;
 
   try {
