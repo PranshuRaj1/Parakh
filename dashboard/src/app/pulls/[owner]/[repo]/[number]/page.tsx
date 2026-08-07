@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { ReviewStepper } from '@/components/ReviewStepper';
 import { FailureDetail } from '@/components/FailureDetail';
+import { ReasoningPanel } from '@/components/ReasoningPanel';
 
 export default async function PullRequestPage({
   params,
@@ -38,6 +39,7 @@ export default async function PullRequestPage({
 
       <ReviewStepper reviewId={review.id} />
       {review.status === 'FAILED' && <FailureDetail reviewId={review.id} />}
+      <ReasoningPanel reviewId={review.id} />
     </div>
   );
 }

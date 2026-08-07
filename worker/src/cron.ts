@@ -2,7 +2,7 @@
  * Cron sweeps for stalled reviews
  */
 
-import { dbSweepStalledReviews, dbTimeoutStage, getReview } from './db/reviews.js';
+import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning } from './db/reviews.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
 import { createRedisGet, createRedisSet } from './redis.js';
@@ -11,6 +11,17 @@ import type { Env } from './index.js';
 const STALL_TIMEOUT_SECONDS = 5 * 60; // 5 minutes
 
 export async function handleCronTrigger(env: Env): Promise<void> {
+  // Prune captured reasoning past its retention window (keeps storage ~zero).
+  // Cheap indexed DELETE — only writes when there is something to remove.
+  try {
+    const pruned = await pruneExpiredReasoning(env);
+    if (pruned > 0) {
+      console.log(`[cron] Pruned ${pruned} expired reasoning row(s)`);
+    }
+  } catch (err) {
+    console.error(`[cron] Failed to prune expired reasoning:`, err);
+  }
+
   const stalled = await dbSweepStalledReviews(STALL_TIMEOUT_SECONDS, env);
 
   for (const record of stalled) {

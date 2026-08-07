@@ -6,11 +6,11 @@ import type { ReviewStatus } from '@parakh/shared';
 
 const STEPS = [
   { id: 'FETCHING_DIFF', label: 'Fetching Diff' },
-  { id: 'FETCHING_RULES', label: 'Loading Rules' },
+  { id: 'LOADING_RULES', label: 'Loading Rules' },
   { id: 'REVIEWING_FILES', label: 'Reviewing Files' },
-  { id: 'COMPUTING_SCORE', label: 'Scoring' },
+  { id: 'SCORING', label: 'Scoring' },
   { id: 'POSTING_COMMENT', label: 'Posting Results' },
-  { id: 'FINALIZING', label: 'Done' }
+  { id: 'REACTING', label: 'Reacting' }
 ];
 
 interface EtaResult {
@@ -23,6 +23,8 @@ interface ProgressResponse {
   status: ReviewStatus;
   currentStep: string | null;
   stepDetail: Record<string, unknown> | null;
+  stageReasonCode?: string | null;
+  stageReasonDetail?: string | null;
   startedAt: string | null;
   eta: EtaResult | null;
   activeStepLogs?: { at: string; code: string; detail: string }[];
@@ -48,7 +50,7 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
         const data = await res.json();
         setProgress(data);
 
-        if (['SEEN', 'RUNNING'].includes(data.status)) {
+        if (['QUEUED', 'RUNNING'].includes(data.status)) {
           timeoutId = setTimeout(fetchProgress, 3000);
         }
       } catch (err) {
@@ -99,11 +101,27 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
           }
 
           let detailText = null;
-          if (isCurrent && step.id === 'REVIEWING_FILES' && progress.stepDetail) {
-             const { completedCount, totalCount } = progress.stepDetail as any;
-             if (completedCount !== undefined && totalCount !== undefined) {
-               detailText = <span className="ml-2 text-sm text-gray-500">({completedCount} / {totalCount} files)</span>;
-             }
+          if (isCurrent && step.id === 'REVIEWING_FILES') {
+            // Live per-file progress from stage_reason_detail: "file 3/8: src/foo.ts"
+            const fileProgress = progress.stageReasonDetail?.match(/^file (\d+)\/(\d+): (.+)$/);
+            if (fileProgress) {
+              const [, index, total, file] = fileProgress;
+              detailText = (
+                <div className="flex flex-col mt-1">
+                  <span className="ml-2 text-sm text-gray-500">({index} / {total} files)</span>
+                  <span className="ml-2 text-xs font-mono text-violet-600 truncate max-w-full">
+                    Now reviewing: {file}
+                  </span>
+                </div>
+              );
+            } else if (progress.stepDetail) {
+              const { completedCount, totalCount } = progress.stepDetail as { completedCount?: number; totalCount?: number };
+              if (completedCount !== undefined && totalCount !== undefined) {
+                detailText = <span className="ml-2 text-sm text-gray-500">({completedCount} / {totalCount} files)</span>;
+              }
+            } else if (progress.stageReasonDetail) {
+              detailText = <span className="ml-2 text-sm text-gray-500">{progress.stageReasonDetail}</span>;
+            }
           }
 
           return (

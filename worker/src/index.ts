@@ -29,6 +29,16 @@ export interface Env {
   GEMINI_API_KEY: string;
   GEMINI_API_KEYS?: string;
 
+  // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
+  // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps
+  // the per-call spend and REASONING_RETENTION_DAYS prunes stored rows.
+  REASONING_CAPTURE_ENABLED?: string;
+  REASONING_THINKING_BUDGET?: string;
+  REASONING_RETENTION_DAYS?: string;
+
+  // Optional public dashboard base URL — adds a reasoning link to PR comments.
+  DASHBOARD_BASE_URL?: string;
+
   // Queues
   WATCHDOG_QUEUE: Queue<JobPayload>;
 

@@ -32,6 +32,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     status: review.status,
     currentStep: review.current_stage,
     stepDetail,
+    stageReasonCode: review.stage_reason_code,
+    stageReasonDetail: review.stage_reason_detail,
     startedAt: review.started_at,
     eta,
     activeStepLogs,

@@ -164,6 +164,26 @@ export interface ContradictionJobPayload {
 
 export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload;
 
+/**
+ * Captured model reasoning (thinking) for a single reviewed file.
+ * Stored separately from findings — raw text, dashboard-only, pruned after expiry.
+ */
+export interface ReviewReasoning {
+  id: string;
+  review_id: string;
+  /** File path this reasoning applies to. */
+  file: string;
+  /** Model identifier that generated the thinking (e.g. gemini-2.5-flash). */
+  model: string | null;
+  /** Raw thinking text. May be null when the file call failed before producing thoughts. */
+  thinking: string | null;
+  /** Set when the file's review call failed (non-rate-limit) — surfaces partial failures. */
+  error_message: string | null;
+  created_at: string;
+  /** Soft retention deadline — pruned from the DB after this. */
+  expires_at: string;
+}
+
 /** Stage event audit record — append-only log of review pipeline progress. */
 export interface ReviewStepEvent {
   id: string;

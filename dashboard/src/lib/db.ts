@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import type { Rule, Review, RuleRelationshipRecord } from '@parakh/shared';
+import type { Rule, Review, RuleRelationshipRecord, ReviewReasoning } from '@parakh/shared';
 
 // Ensures Next.js doesn't cache DB queries at build time
 export const revalidate = 0;
@@ -175,4 +175,15 @@ export async function getReviewByPr(repo: string, prNumber: number): Promise<Rev
     LIMIT 1
   `;
   return (rows[0] as unknown as Review) || null;
+}
+
+export async function getReviewReasoning(reviewId: string): Promise<ReviewReasoning[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, review_id, file, model, thinking, error_message, created_at, expires_at
+    FROM review_reasoning
+    WHERE review_id = ${reviewId}::uuid AND expires_at > now()
+    ORDER BY created_at ASC
+  `;
+  return rows as unknown as ReviewReasoning[];
 }

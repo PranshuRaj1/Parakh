@@ -17,6 +17,11 @@ max_batch_size = 1
 # GITHUB_APP_PRIVATE_KEY
 # GITHUB_WEBHOOK_SECRET
 # GEMINI_API_KEY
+# GEMINI_API_KEYS (comma-separated failover pool)
+# REASONING_CAPTURE_ENABLED (optional, default "true"; set "false" to disable reasoning capture)
+# REASONING_THINKING_BUDGET (optional, default 1024 — max thinking tokens per review call)
+# REASONING_RETENTION_DAYS (optional, default 14 — prune stored reasoning after this)
+# DASHBOARD_BASE_URL (optional — adds a dashboard reasoning link to PR comments)
 # DATABASE_URL
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN

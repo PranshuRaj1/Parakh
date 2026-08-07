@@ -35,23 +35,62 @@ import {
   buildReplyPrompt,
 } from './prompts.js';
 import { getKeyPool, isRateLimitError, AllKeysExhaustedError } from './keyPool.js';
+import { sanitizeErrorText } from '../jobs/sanitize.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const GENERATION_MODEL = 'gemini-2.5-flash';
 const EMBEDDING_MODEL = 'text-embedding-004';
 
+// ─── Reasoning Capture Config ────────────────────────────────────────────────
+
+/** Default cap on thinking tokens per review call — reasoning costs 2x input. */
+const DEFAULT_THINKING_BUDGET = 1024;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ReviewResult {
   genericFindings: RawGenericFinding[];
   ruleFindings: RawRuleFinding[];
+  /** Raw model thinking for this file — null when reasoning capture is disabled. */
+  thinking: string | null;
+}
+
+/**
+ * Split a raw Gemini response into its structured text (the JSON) and its
+ * thinking parts. The SDK's response.text() joins ALL text parts — including
+ * thought parts — which would corrupt JSON.parse, so we must split manually.
+ * Thinking parts are surfaced as `{ thought: true, text }` in the REST payload.
+ */
+function extractResponseWithThinking(
+  response: { candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> } }> }
+): { jsonText: string; thinking: string } {
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const thoughtParts: string[] = [];
+  const textParts: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== 'object' || part === null) continue;
+    if (part.thought === true && typeof part.text === 'string') {
+      thoughtParts.push(part.text);
+    } else if (typeof part.text === 'string') {
+      textParts.push(part.text);
+    }
+  }
+  return { jsonText: textParts.join('\n'), thinking: thoughtParts.join('\n') };
 }
 
 // ─── Client Class ────────────────────────────────────────────────────────────
 
 export class GeminiClient {
   private keys: string[];
+
+  /**
+   * Reasoning capture is opt-in via REASONING_CAPTURE_ENABLED and hard-capped by
+   * REASONING_THINKING_BUDGET. Applied ONLY to reviewDiff calls (not intent /
+   * priority / relationship classification) to keep the thinking-token spend low.
+   */
+  private reasoningEnabled: boolean;
+  private thinkingBudget: number;
 
   /**
    * Shared hint: the index of the last key that succeeded.
@@ -64,8 +103,16 @@ export class GeminiClient {
    */
   private sharedKeyHint: number = 0;
 
-  constructor(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY: string }) {
+  constructor(env: {
+    GEMINI_API_KEYS?: string;
+    GEMINI_API_KEY: string;
+    REASONING_CAPTURE_ENABLED?: string;
+    REASONING_THINKING_BUDGET?: string;
+  }) {
     this.keys = getKeyPool(env);
+    this.reasoningEnabled = env.REASONING_CAPTURE_ENABLED !== 'false';
+    const rawBudget = parseInt(env.REASONING_THINKING_BUDGET ?? '', 10);
+    this.thinkingBudget = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : DEFAULT_THINKING_BUDGET;
   }
 
   // ── Key Rotation ────────────────────────────────────────────────────
@@ -114,6 +161,8 @@ export class GeminiClient {
    * Returns two arrays:
    * - genericFindings: LLM-assigned severity (CRITICAL/HIGH/MEDIUM/LOW)
    * - ruleFindings: NO severity — computed in code from rule priority
+   *
+   * This is the ONLY call that requests model thinking (capped by the budget).
    */
   async reviewDiff(
     fileName: string,
@@ -124,22 +173,31 @@ export class GeminiClient {
       const genAI = new GoogleGenerativeAI(apiKey);
       const prompt = buildReviewPrompt(fileName, diff, activeRules);
 
+      const generationConfig: Record<string, unknown> = {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: reviewResponseSchema,
+      };
+      // Hard cost ceiling — Gemini 2.5 otherwise uses a large dynamic budget.
+      if (this.reasoningEnabled) {
+        generationConfig.thinkingConfig = { thinkingBudget: this.thinkingBudget };
+      }
+
       const model = genAI.getGenerativeModel({
         model: GENERATION_MODEL,
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: 'application/json',
-          responseSchema: reviewResponseSchema as Parameters<typeof model.generateContent>[0] extends { generationConfig?: { responseSchema?: infer S } } ? S : never,
-        },
+        generationConfig: generationConfig as never,
       });
 
       const result = await model.generateContent(prompt);
-      const text = result.response.text();
+      const { jsonText, thinking } = extractResponseWithThinking(result.response as unknown as Parameters<typeof extractResponseWithThinking>[0]);
+      const text = jsonText || result.response.text();
       const parsed = JSON.parse(text) as ReviewResult;
 
       return {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
+        // Scrub secrets before persisting — same pass as error stacks.
+        thinking: this.reasoningEnabled && thinking ? sanitizeErrorText(thinking) : null,
       };
     });
   }

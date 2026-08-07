@@ -6,7 +6,7 @@
  */
 
 import { getDb } from './client.js';
-import type { Review, ReviewStatus, Finding, RepoSettings, ReviewStepEvent } from '@parakh/shared';
+import type { Review, ReviewStatus, Finding, RepoSettings, ReviewStepEvent, ReviewReasoning } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -410,6 +410,27 @@ export async function dbUpdateReason(
   }
 }
 
+/**
+ * Lightweight reason update — updates only the live pointer on the reviews row
+ * (no reason_transitions append). Used for high-frequency per-file progress so
+ * we don't bloat the stage event with one transition per file.
+ */
+export async function dbUpdateReasonDetail(
+  reviewId: string,
+  code: string,
+  detail: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET stage_reason_code = ${code},
+        stage_reason_detail = ${detail},
+        worker_heartbeat_at = now()
+    WHERE id = ${reviewId}
+  `;
+}
+
 export async function dbUpdateHeartbeat(
   reviewId: string,
   env: EnvWithDB
@@ -605,4 +626,70 @@ export async function getStepEventsForReview(
     ORDER BY started_at ASC
   `;
   return rows as unknown as ReviewStepEvent[];
+}
+
+// ─── Reasoning Capture Queries ───────────────────────────────────────────────
+
+/**
+ * Upsert the captured reasoning for one reviewed file.
+ * Re-runs overwrite the prior row so resume/retry doesn't duplicate reasoning.
+ * expires_at is derived from the configured retention window.
+ */
+export async function saveReviewReasoning(
+  reviewId: string,
+  file: string,
+  input: { model?: string | null; thinking?: string | null; errorMessage?: string | null; retentionDays?: number },
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  const retentionDays = Math.max(1, Math.floor(input.retentionDays ?? 14));
+  await sql`
+    INSERT INTO review_reasoning (review_id, file, model, thinking, error_message, expires_at)
+    VALUES (
+      ${reviewId}::uuid,
+      ${file},
+      ${input.model ?? null},
+      ${input.thinking ?? null},
+      ${input.errorMessage ?? null},
+      now() + make_interval(days => ${retentionDays})
+    )
+    ON CONFLICT (review_id, file)
+    DO UPDATE SET
+      model = EXCLUDED.model,
+      thinking = EXCLUDED.thinking,
+      error_message = EXCLUDED.error_message,
+      expires_at = EXCLUDED.expires_at,
+      created_at = now()
+  `;
+}
+
+/**
+ * Read non-expired reasoning rows for a review (dashboard display).
+ */
+export async function getReviewReasoningForReview(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<ReviewReasoning[]> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT id, review_id, file, model, thinking, error_message, created_at, expires_at
+    FROM review_reasoning
+    WHERE review_id = ${reviewId}::uuid AND expires_at > now()
+    ORDER BY created_at ASC
+  `;
+  return rows as unknown as ReviewReasoning[];
+}
+
+/**
+ * Prune reasoning rows past their retention window.
+ * Cheap, indexed DELETE — only writes when there is something to remove.
+ */
+export async function pruneExpiredReasoning(env: EnvWithDB): Promise<number> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    DELETE FROM review_reasoning
+    WHERE expires_at < now()
+    RETURNING id
+  `;
+  return rows.length;
 }

@@ -5,7 +5,7 @@
  * concurrency-safe API key rotation.
  */
 
-import type { ReviewJobPayload, Finding, Rule } from '@parakh/shared';
+import type { ReviewJobPayload, Finding, Rule, StageReasonCode, ReviewStage } from '@parakh/shared';
 import {
   computeScore,
   displayScore,
@@ -34,13 +34,16 @@ import {
   getReview,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
-import { GeminiClient } from '../gemini/client.js';
+import { saveReviewReasoning } from '../db/reviews.js';
+import { GeminiClient, type ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError } from '../gemini/keyPool.js';
+import { sanitizeErrorText } from './sanitize.js';
 import {
   startStage,
   completeStage,
   failStage,
   updateReason,
+  updateReasonDetail,
   heartbeat,
   withTimeout,
   STAGE_TIMEOUTS_MS,
@@ -53,6 +56,13 @@ import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const DEFAULT_REASONING_RETENTION_DAYS = 14;
+
+function parseRetentionDays(raw?: string): number {
+  const n = parseInt(raw ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_REASONING_RETENTION_DAYS;
 }
 
 function matchesScope(filePath: string, scope: Record<string, unknown>): boolean {
@@ -86,12 +96,26 @@ function parseDiffByFile(diff: string): Map<string, string> {
   return files;
 }
 
+function appendDashboardLink(
+  comment: string,
+  repo: string,
+  prNumber: number,
+  dashboardBaseUrl?: string
+): string {
+  if (!dashboardBaseUrl) return comment;
+  const base = dashboardBaseUrl.replace(/\/+$/, '');
+  const [owner, repoName] = repo.split('/');
+  if (!owner || !repoName) return comment;
+  return `${comment}\n---\n🔍 *Want the model's reasoning? See per-file analysis on the [Parakh dashboard](${base}/pulls/${owner}/${repoName}/${prNumber}).*\n`;
+}
+
 function formatReviewComment(
   score: number,
   displayedScore: number,
   findings: Finding[],
   repo: string,
-  prNumber: number
+  prNumber: number,
+  dashboardBaseUrl?: string
 ): string {
   const severityEmoji: Record<string, string> = {
     CRITICAL: '🔴',
@@ -104,7 +128,7 @@ function formatReviewComment(
 
   if (findings.length === 0) {
     comment += '✅ No issues found. Clean code!\n';
-    return comment;
+    return appendDashboardLink(comment, repo, prNumber, dashboardBaseUrl);
   }
 
   const grouped: Record<string, Finding[]> = {};
@@ -133,7 +157,7 @@ function formatReviewComment(
     comment += '\n';
   }
 
-  return comment;
+  return appendDashboardLink(comment, repo, prNumber, dashboardBaseUrl);
 }
 
 // ─── Redis State Types & Helpers ─────────────────────────────────────────────
@@ -184,7 +208,12 @@ async function reviewSingleFile(
   fileChunks: Map<string, string>,
   activeRules: Rule[],
   env: Env,
-  signal: AbortSignal
+  signal: AbortSignal,
+  reviewId: string,
+  fileIndex: number,
+  totalFiles: number,
+  captureReasoning: boolean,
+  retentionDays: number
 ): Promise<Finding[]> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return [];
@@ -193,7 +222,37 @@ async function reviewSingleFile(
     matchesScope(fileName, r.scope as Record<string, unknown>)
   );
 
-  const result = await gemini.reviewDiff(fileName, fileDiff, applicableRules);
+  // Live per-file progress: "file 3/8: src/foo.ts" on the reviews row.
+  // Uses the light update so we don't append a reason_transitions per file.
+  await updateReasonDetail(reviewId, 'PROCESSING', `file ${fileIndex}/${totalFiles}: ${fileName}`, env);
+
+  let result: ReviewResult;
+  try {
+    result = await gemini.reviewDiff(fileName, fileDiff, applicableRules);
+  } catch (err) {
+    if (err instanceof AllKeysExhaustedError) throw err;
+    // Non-rate-limit per-file failure: persist it so the dashboard can show
+    // exactly which file broke and why (failure-mode tie-in).
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[review] Error reviewing ${fileName}:`, err);
+    if (captureReasoning) {
+      await saveReviewReasoning(reviewId, fileName, {
+        model: 'gemini-2.5-flash',
+        errorMessage: sanitizeErrorText(message),
+        retentionDays,
+      }, env).catch(e => console.warn('[review] Failed to save per-file reasoning:', e));
+    }
+    return [];
+  }
+
+  if (captureReasoning && result.thinking) {
+    await saveReviewReasoning(reviewId, fileName, {
+      model: 'gemini-2.5-flash',
+      thinking: result.thinking,
+      retentionDays,
+    }, env).catch(e => console.warn('[review] Failed to save reasoning:', e));
+  }
+
   const findings: Finding[] = [];
 
   for (const gf of result.genericFindings) {
@@ -324,11 +383,18 @@ async function executeReviewJobInternal(
   const redisGet = createRedisGet(env);
   const redisSet = createRedisSet(env);
 
+  // Tracked in function scope so the catch can attribute failures accurately.
+  let currentStage: ReviewStage = 'FETCHING_DIFF';
+  let stageAttempt = 1;
+  let lastReasonCode: StageReasonCode | null = null;
+  let lastReasonDetail: string | null = null;
+
   try {
     let state = await loadReviewState(fullRepo, prNumber, redisGet);
     const dbReview = await getReview(reviewId, env);
-    const stageAttempt = dbReview?.stage_attempt || 1;
+    stageAttempt = dbReview?.stage_attempt || 1;
 
+    currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
     const diff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async (signal) => {
       const res = await fetchDiff(owner, repo, prNumber, token);
@@ -364,6 +430,7 @@ async function executeReviewJobInternal(
       return;
     }
 
+    currentStage = 'LOADING_RULES';
     await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
     const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
        return getActiveRules(fullRepo, env);
@@ -374,8 +441,11 @@ async function executeReviewJobInternal(
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 
+    const captureReasoning = env.REASONING_CAPTURE_ENABLED !== 'false';
+    const retentionDays = parseRetentionDays(env.REASONING_RETENTION_DAYS);
     let filesProcessedInThisAttempt = 0;
 
+    currentStage = 'REVIEWING_FILES';
     await startStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
       batchIndex: state.batchIndex,
       fileNames: filesToProcess.slice(0, MAX_FILES_PER_BATCH),
@@ -390,42 +460,64 @@ async function executeReviewJobInternal(
 
         // Keep lease alive
         await heartbeat(reviewId, env);
-        
-        await updateReason(reviewId, 'PROCESSING', `Reviewing batch ${state!.batchIndex}`, env);
 
-        const results = await Promise.allSettled(
-          batch.map(fileName => reviewSingleFile(gemini, fileName, fileChunks, activeRules, env, signal))
-        );
+        lastReasonCode = 'PROCESSING';
+        lastReasonDetail = `Reviewing batch ${state!.batchIndex} (${state!.completedFiles.length}/${state!.allFiles.length} files done)`;
+        await updateReason(reviewId, 'PROCESSING', lastReasonDetail, env);
 
-        const exhausted = results.find(
-          r => r.status === 'rejected' && r.reason instanceof AllKeysExhaustedError
-        );
+        // Files are processed SEQUENTIALLY within a batch. Concurrent batches
+        // used to burst 5 generations at once against free-tier keys, tripping
+        // the per-minute ceiling and discarding the whole batch on a 429 —
+        // which looped in backoff until the stage timed out with 0 files done.
+        let exhaustedAllKeys = false;
 
-        if (exhausted) {
-          // Put the batch back
-          filesToProcess.unshift(...batch);
-          
+        for (let i = 0; i < batch.length; i++) {
+          if (signal.aborted) {
+            filesToProcess.unshift(...batch.slice(i));
+            break;
+          }
+          const fileName = batch[i];
+          try {
+            const findings = await reviewSingleFile(
+              gemini, fileName, fileChunks, activeRules, env, signal,
+              reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
+              captureReasoning, retentionDays
+            );
+            allFindings.push(...findings);
+            state!.completedFiles.push(fileName);
+            filesProcessedInThisAttempt++;
+            lastReasonCode = 'PROCESSING';
+            lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
+          } catch (err) {
+            if (err instanceof AllKeysExhaustedError) {
+              // This file + the rest of the batch go back for the retry pass.
+              exhaustedAllKeys = true;
+              filesToProcess.unshift(...batch.slice(i));
+              break;
+            }
+            // Non-rate-limit failure: keep existing resume semantics (mark
+            // done, no findings); reviewSingleFile already persisted the error.
+            console.error(`[review] Error reviewing ${fileName}:`, err);
+            state!.completedFiles.push(fileName);
+            filesProcessedInThisAttempt++;
+            lastReasonCode = 'RETRYING_AFTER_FAILURE';
+            lastReasonDetail = `file ${fileName} failed: ${err instanceof Error ? sanitizeErrorText(err.message) : String(err)}`;
+          }
+        }
+
+        if (exhaustedAllKeys) {
           state!.accumulatedFindings = allFindings;
           await saveReviewState(fullRepo, prNumber, state!, redisSet);
-          
+
           // Backoff within the same attempt row
           const backoffDuration = 60 * 1000; // 1 minute
           const backoffUntil = new Date(Date.now() + backoffDuration).toISOString();
-          await updateReason(reviewId, 'RATE_LIMITED_BACKOFF', `backoff until ${backoffUntil}`, env);
-          
-          await delay(backoffDuration);
-          continue; 
-        }
+          lastReasonCode = 'RATE_LIMITED_BACKOFF';
+          lastReasonDetail = `backoff until ${backoffUntil}`;
+          await updateReason(reviewId, 'RATE_LIMITED_BACKOFF', lastReasonDetail, env);
 
-        for (let i = 0; i < results.length; i++) {
-          const r = results[i];
-          if (r.status === 'fulfilled') {
-            allFindings.push(...r.value);
-          } else {
-            console.error(`[review] Error reviewing ${batch[i]}:`, r.reason);
-          }
-          state!.completedFiles.push(batch[i]);
-          filesProcessedInThisAttempt++;
+          await delay(backoffDuration);
+          continue;
         }
 
         state!.batchIndex++;
@@ -448,9 +540,14 @@ async function executeReviewJobInternal(
     await finalizeReview(reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt);
 
   } catch (err) {
-    const stageAttempt = 1; // Assuming we would normally fetch this
     const errorCode = err instanceof Error && err.name === 'StageTimeoutError' ? 'STAGE_TIMEOUT' : 'UNKNOWN';
-    await failStage(reviewId, 'REVIEWING_FILES', stageAttempt, errorCode, err, false, env);
+    // Attribute the failure to the real stage and explain WHY (e.g. the
+    // rate-limit backoff loop) instead of a generic "Stage timed out".
+    const failureMessage =
+      lastReasonCode === 'RATE_LIMITED_BACKOFF'
+        ? `Every Gemini API key is rate-limited. Last state: ${lastReasonDetail ?? 'n/a'}`
+        : (err instanceof Error ? err.message : String(err));
+    await failStage(reviewId, currentStage, stageAttempt, errorCode, new Error(failureMessage), false, env);
     throw err; // allow Cloudflare Queue to retry
   } finally {
     await releaseReviewLock(fullRepo, prNumber, env).catch(err =>
@@ -508,7 +605,8 @@ async function finalizeReview(
       score,
       findings,
       fullRepo,
-      prNumber
+      prNumber,
+      env.DASHBOARD_BASE_URL
     );
     await postComment(owner, repo, prNumber, comment, token);
   });

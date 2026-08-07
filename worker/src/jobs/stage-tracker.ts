@@ -1,13 +1,6 @@
 import type { Env } from '../index.js';
 import type { ReviewStage, StageReasonCode } from '@parakh/shared';
-import {
-  dbStartStage,
-  dbCompleteStage,
-  dbFailStage,
-  dbUpdateReason,
-  dbUpdateHeartbeat,
-  dbTimeoutStage
-} from '../db/reviews.js';
+import { dbStartStage, dbCompleteStage, dbFailStage, dbUpdateReason, dbUpdateReasonDetail, dbUpdateHeartbeat, dbTimeoutStage } from '../db/reviews.js';
 
 /**
  * Open a new stage attempt.
@@ -75,6 +68,20 @@ export async function updateReason(
   env: Env
 ): Promise<void> {
   await dbUpdateReason(reviewId, code, detail, env);
+}
+
+/**
+ * High-frequency progress update (e.g. per-file). Updates the live pointer on
+ * the reviews row without appending a reason_transitions entry — keeps DB
+ * writes flat for large PRs.
+ */
+export async function updateReasonDetail(
+  reviewId: string,
+  code: StageReasonCode,
+  detail: string | null,
+  env: Env
+): Promise<void> {
+  await dbUpdateReasonDetail(reviewId, code, detail, env);
 }
 
 export async function heartbeat(
