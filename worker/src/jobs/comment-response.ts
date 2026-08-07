@@ -19,6 +19,7 @@ export async function executeCommentResponseJob(
     commentId,
     commentBody,
     commentType,
+    githubDeliveryId,
   } = payload;
 
   const fullRepo = `${owner}/${repo}`;
@@ -67,13 +68,18 @@ export async function executeCommentResponseJob(
         await triggerReview(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
-          existingReview.id  // resumeReviewId — reuses existing row
+          existingReview.id,  // resumeReviewId — reuses existing row
+          false,              // skipLock
+          githubDeliveryId    // githubDeliveryId
         );
       } else {
         await postReply("On it — re-reviewing 👀");
         await triggerReview(
           installationId, owner, repo, prNumber,
-          'manual_mention', env
+          'manual_mention', env,
+          undefined,          // resumeReviewId
+          false,              // skipLock
+          githubDeliveryId    // githubDeliveryId
         );
       }
       break;

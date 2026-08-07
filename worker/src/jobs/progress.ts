@@ -15,7 +15,9 @@ import {
   markReviewRunning,
   markReviewFailed,
   getRepoSettingsByReviewId,
+  getMatchingStartedEvent,
 } from '../db/reviews.js';
+import { sanitizeErrorText } from './sanitize.js';
 import type { Env } from '../index.js';
 
 // ─── Step Types ──────────────────────────────────────────────────────────────
@@ -93,7 +95,9 @@ export async function stepCompleted(
   env: Env,
   detail?: Record<string, unknown>
 ): Promise<void> {
-  await insertStepEvent(reviewId, step, 'COMPLETED', detail ?? null, env);
+  const startedEvent = await getMatchingStartedEvent(reviewId, step, env);
+  const durationMs = startedEvent ? Date.now() - new Date(startedEvent.created_at).getTime() : null;
+  await insertStepEvent(reviewId, step, 'COMPLETED', detail ?? null, env, durationMs);
 }
 
 /**
@@ -107,9 +111,15 @@ export async function stepFailed(
   error: unknown,
   env: Env
 ): Promise<void> {
-  const msg = error instanceof Error ? error.message : String(error);
-  const stack = error instanceof Error ? error.stack ?? null : null;
-  await insertStepEvent(reviewId, step, 'FAILED', { error: msg }, env);
+  const rawMsg = error instanceof Error ? error.message : String(error);
+  const rawStack = error instanceof Error ? error.stack ?? null : null;
+  const msg = sanitizeErrorText(rawMsg);
+  const stack = rawStack ? sanitizeErrorText(rawStack) : null;
+
+  const startedEvent = await getMatchingStartedEvent(reviewId, step, env);
+  const durationMs = startedEvent ? Date.now() - new Date(startedEvent.created_at).getTime() : null;
+
+  await insertStepEvent(reviewId, step, 'FAILED', { error: msg }, env, durationMs);
   await markReviewFailed(reviewId, step, msg, stack, env);
 }
 

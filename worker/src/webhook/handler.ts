@@ -57,18 +57,19 @@ interface HandlerResult {
 export async function handleWebhookEvent(
   event: WebhookEvent,
   eventType: string,
+  deliveryId: string,
   env: Env,
   _ctx?: ExecutionContext
 ): Promise<HandlerResult> {
   switch (eventType) {
     case 'pull_request':
-      return handlePullRequest(event, env, _ctx);
+      return handlePullRequest(event, deliveryId, env, _ctx);
 
     case 'issue_comment':
-      return handleIssueComment(event, env, _ctx);
+      return handleIssueComment(event, deliveryId, env, _ctx);
 
     case 'pull_request_review_comment':
-      return handleReviewComment(event, env, _ctx);
+      return handleReviewComment(event, deliveryId, env, _ctx);
 
     case 'installation':
     case 'installation_repositories':
@@ -90,7 +91,7 @@ export async function handleWebhookEvent(
  * 3. Insert new review record with status SEEN
  * 4. Enqueue review job
  */
-async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
+async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, pull_request } = event;
 
   // Handle synchronize separately — clear stale state but don't auto-review
@@ -147,6 +148,7 @@ async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: Execution
       installation_id: installationId,
       status: 'SEEN',
       seen_reaction_id: seenReactionId,
+      github_delivery_id: deliveryId,
     },
     env
   );
@@ -178,7 +180,7 @@ async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: Execution
  * Handle issue_comment events (on PRs).
  * Only processes comments that are replies to bot comments.
  */
-async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
+async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, comment, issue } = event;
 
   if (action !== 'created') {
@@ -218,6 +220,7 @@ async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: Executio
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'issue_comment',
+    githubDeliveryId: deliveryId,
   };
 
   if (_ctx) {
@@ -234,7 +237,7 @@ async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: Executio
  * Handle pull_request_review_comment events.
  * Only processes comments that reply to a bot review comment.
  */
-async function handleReviewComment(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
+async function handleReviewComment(event: WebhookEvent, deliveryId: string, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, comment, pull_request } = event;
 
   if (action !== 'created') {
@@ -269,6 +272,7 @@ async function handleReviewComment(event: WebhookEvent, env: Env, _ctx?: Executi
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'pull_request_review_comment',
+    githubDeliveryId: deliveryId,
   };
 
   if (_ctx) {

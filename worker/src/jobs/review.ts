@@ -228,7 +228,8 @@ export async function triggerReview(
   reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry',
   env: Env,
   resumeReviewId?: string,
-  skipLock?: boolean
+  skipLock?: boolean,
+  githubDeliveryId?: string
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -256,10 +257,10 @@ export async function triggerReview(
   }
 
   let reviewId: string;
-  if (resumeReviewId) {
-    reviewId = resumeReviewId;
-    await updateReviewStatus(reviewId, 'SEEN', env);
-  } else {
+    if (resumeReviewId) {
+      reviewId = resumeReviewId;
+      await updateReviewStatus(reviewId, 'SEEN', env, githubDeliveryId);
+    } else {
     const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
 
     if (reason !== 'manual_mention') {
@@ -276,6 +277,7 @@ export async function triggerReview(
       status: 'SEEN',
       seen_reaction_id: seenReactionId,
       trigger_reason: reason,
+      github_delivery_id: githubDeliveryId,
     }, env);
     reviewId = review.id;
   }
@@ -394,6 +396,7 @@ async function executeReviewJobInternal(
 
       await stepCompleted(reviewId, 'REVIEWING_FILES', env, {
         batchIndex: state.batchIndex,
+        batchSize: batch.length,
         completedCount: state.completedFiles.length,
         totalCount: state.allFiles.length,
       });

@@ -57,6 +57,8 @@ export interface Review {
   failed_at: string | null;
   error_step: string | null;
   error_message: string | null;
+  error_stack: string | null;
+  github_delivery_id: string | null;
   created_at: string;
 }
 
@@ -138,6 +140,7 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
+  githubDeliveryId: string;
 }
 
 export interface ContradictionJobPayload {
@@ -168,6 +171,7 @@ export interface ReviewStepEvent {
   step: string;
   status: 'STARTED' | 'COMPLETED' | 'FAILED';
   detail: Record<string, unknown> | null;
+  duration_ms: number | null;
   created_at: string;
 }
 

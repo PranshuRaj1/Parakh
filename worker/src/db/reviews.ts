@@ -30,22 +30,23 @@ export async function insertReview(
     findings?: Finding[];
     seen_reaction_id?: number;
     trigger_reason?: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
+    github_delivery_id?: string | null;
   },
   env: EnvWithDB
 ): Promise<Review> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
     INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
-                         seen_reaction_id, trigger_reason)
+                         seen_reaction_id, trigger_reason, github_delivery_id)
     VALUES (
       ${review.repo},
       ${review.pr_number},
       ${review.installation_id},
       ${review.status},
       ${review.score ?? null},
-      ${review.findings ? JSON.stringify(review.findings) : null}::jsonb,
       ${review.seen_reaction_id ?? null},
-      ${review.trigger_reason ?? 'opened'}
+      ${review.trigger_reason ?? 'opened'},
+      ${review.github_delivery_id ?? null}
     )
     RETURNING *
   `;
@@ -105,14 +106,24 @@ export async function updateReviewReactions(
 export async function updateReviewStatus(
   id: string,
   status: ReviewStatus,
-  env: EnvWithDB
+  env: EnvWithDB,
+  githubDeliveryId?: string
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
-  await sql`
-    UPDATE reviews
-    SET status = ${status}
-    WHERE id = ${id}
-  `;
+  if (githubDeliveryId) {
+    await sql`
+      UPDATE reviews
+      SET status = ${status},
+          github_delivery_id = ${githubDeliveryId}
+      WHERE id = ${id}
+    `;
+  } else {
+    await sql`
+      UPDATE reviews
+      SET status = ${status}
+      WHERE id = ${id}
+    `;
+  }
 }
 
 /**
@@ -247,16 +258,18 @@ export async function insertStepEvent(
   step: string,
   status: string,
   detail: Record<string, unknown> | null,
-  env: EnvWithDB
+  env: EnvWithDB,
+  durationMs?: number | null
 ): Promise<string> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
-    INSERT INTO review_step_events (review_id, step, status, detail)
+    INSERT INTO review_step_events (review_id, step, status, detail, duration_ms)
     VALUES (
       ${reviewId}::uuid,
       ${step},
       ${status},
-      ${detail ? JSON.stringify(detail) : null}::jsonb
+      ${detail ? JSON.stringify(detail) : null}::jsonb,
+      ${durationMs ?? null}
     )
     RETURNING id
   `;
@@ -386,4 +399,138 @@ export async function getRepoSettingsByReviewId(
     WHERE r.id = ${reviewId}::uuid
   `;
   return (rows[0] as unknown as RepoSettings) || null;
+}
+
+// ─── ETA Queries ─────────────────────────────────────────────────────────────
+
+export async function getMatchingStartedEvent(
+  reviewId: string,
+  step: string,
+  env: EnvWithDB
+): Promise<ReviewStepEvent | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT *
+    FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid AND step = ${step} AND status = 'STARTED'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as ReviewStepEvent) || null;
+}
+
+export async function countCompletedReviews(
+  repo: string | null,
+  env: EnvWithDB
+): Promise<number> {
+  const sql = getDb(env.DATABASE_URL);
+  let rows;
+  if (repo) {
+    rows = await sql`SELECT COUNT(*)::int as count FROM reviews WHERE status = 'COMPLETED' AND repo = ${repo}`;
+  } else {
+    rows = await sql`SELECT COUNT(*)::int as count FROM reviews WHERE status = 'COMPLETED'`;
+  }
+  return rows[0].count;
+}
+
+export async function getAvgDurationByStep(
+  repo: string | null,
+  env: EnvWithDB
+): Promise<Map<string, number>> {
+  const sql = getDb(env.DATABASE_URL);
+  let rows;
+  if (repo) {
+    rows = await sql`
+      SELECT rse.step, AVG(rse.duration_ms) AS avg_ms
+      FROM review_step_events rse
+      JOIN reviews r ON r.id = rse.review_id
+      WHERE rse.status = 'COMPLETED' AND rse.step != 'REVIEWING_FILES'
+        AND r.repo = ${repo}
+      GROUP BY rse.step;
+    `;
+  } else {
+    rows = await sql`
+      SELECT rse.step, AVG(rse.duration_ms) AS avg_ms
+      FROM review_step_events rse
+      WHERE rse.status = 'COMPLETED' AND rse.step != 'REVIEWING_FILES'
+      GROUP BY rse.step;
+    `;
+  }
+  
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    if (row.avg_ms != null) map.set(row.step, Number(row.avg_ms));
+  }
+  return map;
+}
+
+export async function getAvgMsPerFile(
+  repo: string | null,
+  env: EnvWithDB
+): Promise<number> {
+  const sql = getDb(env.DATABASE_URL);
+  let rows;
+  if (repo) {
+    rows = await sql`
+      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'batchSize')::int, 0)) AS avg_ms_per_file
+      FROM review_step_events rse
+      JOIN reviews r ON r.id = rse.review_id
+      WHERE rse.step = 'REVIEWING_FILES' AND rse.status = 'COMPLETED'
+        AND r.repo = ${repo};
+    `;
+  } else {
+    rows = await sql`
+      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'batchSize')::int, 0)) AS avg_ms_per_file
+      FROM review_step_events rse
+      WHERE rse.step = 'REVIEWING_FILES' AND rse.status = 'COMPLETED';
+    `;
+  }
+  return Number(rows[0]?.avg_ms_per_file) || 0;
+}
+
+export async function getCompletedStepsForReview(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<{ step: string; duration_ms: number | null }[]> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT step, duration_ms
+    FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid AND status = 'COMPLETED'
+  `;
+  return rows as { step: string; duration_ms: number | null }[];
+}
+
+export async function getLatestReviewingFilesDetail(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<{ completedCount: number; totalCount: number } | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT detail
+    FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid AND step = 'REVIEWING_FILES' AND status IN ('STARTED', 'COMPLETED')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  if (!rows[0] || !rows[0].detail) return null;
+  const detail = rows[0].detail as Record<string, unknown>;
+  if (typeof detail.completedCount === 'number' && typeof detail.totalCount === 'number') {
+    return { completedCount: detail.completedCount, totalCount: detail.totalCount };
+  }
+  return null;
+}
+
+export async function getStepEventsForReview(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<ReviewStepEvent[]> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT *
+    FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid
+    ORDER BY created_at ASC
+  `;
+  return rows as unknown as ReviewStepEvent[];
 }

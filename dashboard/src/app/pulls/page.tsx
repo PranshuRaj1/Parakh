@@ -77,7 +77,7 @@ export default async function PullsPage({
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-start gap-4">
                         <div className={`mt-1 rounded-full p-1.5 ${isCompleted ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-500' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-500'}`}>
-                          {isCompleted ? <CheckCircle className="w-5 h-5" /> : review.status === 'REVIEWING' ? <Clock className="w-5 h-5 animate-pulse" /> : <Eye className="w-5 h-5" />}
+                          {isCompleted ? <CheckCircle className="w-5 h-5" /> : review.status === 'RUNNING' ? <Clock className="w-5 h-5 animate-pulse" /> : <Eye className="w-5 h-5" />}
                         </div>
                         <div>
                           <a 

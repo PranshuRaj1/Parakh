@@ -12,6 +12,7 @@ import { verifySignature } from './webhook/verify.js';
 import { handleWebhookEvent } from './webhook/handler.js';
 import { handleQueueBatch } from './jobs/queue-handler.js';
 import { handleCreateRule } from './jobs/rule-api.js';
+import { handleRetryReview } from './jobs/retry-api.js';
 import type { JobPayload } from '@parakh/shared';
 
 // ─── Environment Bindings ────────────────────────────────────────────────────
@@ -65,6 +66,12 @@ export default {
       return handleRuleCreationRequest(request, env, _ctx);
     }
 
+    // ── Dashboard retry API ───────────────────────────────────────────
+    const retryMatch = url.pathname.match(/^\/api\/reviews\/([^\/]+)\/retry$/);
+    if (retryMatch && request.method === 'POST') {
+      return handleRetryRequest(request, retryMatch[1], env, _ctx);
+    }
+
     // ── Health check ──────────────────────────────────────────────────
     if (url.pathname === '/' || url.pathname === '/health') {
       return new Response(JSON.stringify({ status: 'ok', service: 'parakh-worker' }), {
@@ -100,7 +107,8 @@ async function handleWebhookRequest(request: Request, env: Env, _ctx?: Execution
 
   try {
     const event = JSON.parse(body);
-    const result = await handleWebhookEvent(event, eventType, env, _ctx);
+    const deliveryId = request.headers.get('X-GitHub-Delivery') || '';
+    const result = await handleWebhookEvent(event, eventType, deliveryId, env, _ctx);
     return new Response(result.body, { status: result.status });
   } catch (err) {
     console.error('[worker] Webhook handler error:', err);
@@ -139,4 +147,15 @@ async function handleRuleCreationRequest(request: Request, env: Env, _ctx?: Exec
       headers: { 'Content-Type': 'application/json' },
     });
   }
+}
+
+async function handleRetryRequest(request: Request, reviewId: string, env: Env, _ctx?: ExecutionContext): Promise<Response> {
+  const authHeader = request.headers.get('Authorization') || '';
+  const expectedAuth = `Bearer ${env.WORKER_API_SECRET}`;
+
+  if (authHeader !== expectedAuth) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  return handleRetryReview(reviewId, env, _ctx);
 }
