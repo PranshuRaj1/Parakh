@@ -102,7 +102,7 @@ export default async function PullsPage({
                           <div>
                             <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Score</p>
                             <p className={`text-2xl font-bold ${scoreClass}`}>
-                              {review.score !== null ? review.score.toFixed(1) : '-'} <span className="text-sm font-normal text-gray-400">/ 5</span>
+                              {review.score !== null ? Number(review.score).toFixed(1) : '-'} <span className="text-sm font-normal text-gray-400">/ 5</span>
                             </p>
                           </div>
                           <div>
