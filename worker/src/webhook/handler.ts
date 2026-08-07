@@ -8,7 +8,7 @@
 
 import { REACTIONS, GITHUB_APP_BOT_SUFFIX } from '@parakh/shared';
 import type { ReviewJobPayload, CorrectionJobPayload } from '@parakh/shared';
-import { addReaction, removeReaction } from '../github/api.js';
+import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import type { Env } from '../index.js';
@@ -126,6 +126,15 @@ async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: Execution
 
   // Post 👀 reaction SYNCHRONOUSLY — proof the bot noticed, before enqueue
   const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+
+  // Post an acknowledgment comment to let the developer know the review is starting
+  await postComment(
+    owner,
+    repo,
+    prNumber,
+    "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
+    token
+  );
 
   // Insert new review record (new row per synchronize — free score history)
   const review = await insertReview(
