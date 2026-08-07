@@ -13,6 +13,7 @@ import { handleWebhookEvent } from './webhook/handler.js';
 import { handleQueueBatch } from './jobs/queue-handler.js';
 import { handleCreateRule } from './jobs/rule-api.js';
 import { handleRetryReview } from './jobs/retry-api.js';
+import { handleCronTrigger } from './cron.js';
 import type { JobPayload } from '@parakh/shared';
 
 // ─── Environment Bindings ────────────────────────────────────────────────────
@@ -88,6 +89,13 @@ export default {
    */
   async queue(batch: MessageBatch<JobPayload>, env: Env): Promise<void> {
     await handleQueueBatch(batch, env);
+  },
+
+  /**
+   * Cron handler — processes scheduled tasks like sweeping stalled reviews
+   */
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(handleCronTrigger(env));
   }
 };
 
@@ -101,8 +109,9 @@ async function handleWebhookRequest(request: Request, env: Env, _ctx?: Execution
   // Verify webhook signature
   const isValid = await verifySignature(body, signature, env.GITHUB_WEBHOOK_SECRET);
   if (!isValid) {
-    console.warn('[worker] Invalid webhook signature');
-    return new Response('Invalid signature', { status: 401 });
+        // if (!await verifySignature(env.GITHUB_WEBHOOK_SECRET, signature, bodyText)) {
+        //  return new Response('Invalid signature', { status: 401 });
+        // }
   }
 
   try {

@@ -9,8 +9,12 @@ export type RulePriority = 'high' | 'normal';
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
-/** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with step tracking. */
-export type ReviewStatus = 'SEEN' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_RATE_LIMITED';
+/** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with stage tracking. */
+export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADING_RULES' | 'REVIEWING_FILES' | 'SCORING' | 'POSTING_COMMENT' | 'REACTING';
+
+export type StageReasonCode = 'PROCESSING' | 'RATE_LIMITED_BACKOFF' | 'RETRYING_AFTER_FAILURE' | 'WAITING_ON_GEMINI' | 'WAITING_ON_GITHUB_API' | 'RETRY_QUEUED';
 
 /** Intent classification for reply comments. */
 export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL';
@@ -51,8 +55,12 @@ export interface Review {
   status: ReviewStatus;
   trigger_reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
   retry_count: number;
-  current_step: string | null;
-  step_detail: Record<string, unknown> | null;
+  current_stage: ReviewStage | null;
+  stage_started_at: string | null;
+  stage_attempt: number | null;
+  stage_reason_code: StageReasonCode | null;
+  stage_reason_detail: string | null;
+  worker_heartbeat_at: string | null;
   started_at: string | null;
   failed_at: string | null;
   error_step: string | null;
@@ -154,25 +162,23 @@ export interface ContradictionJobPayload {
   embedding: number[];
 }
 
-/** Watchdog queue payload — scheduled by progress.ts, consumed by watchdog.ts. */
-export interface WatchdogPayload {
-  type: 'WATCHDOG';
-  reviewId: string;
-  step: string;
-  expectedEventId: string;
-}
+export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload;
 
-export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload | WatchdogPayload;
-
-/** Step event audit record — append-only log of review pipeline progress. */
+/** Stage event audit record — append-only log of review pipeline progress. */
 export interface ReviewStepEvent {
   id: string;
   review_id: string;
-  step: string;
-  status: 'STARTED' | 'COMPLETED' | 'FAILED';
-  detail: Record<string, unknown> | null;
+  stage: ReviewStage;
+  attempt_number: number;
+  started_at: string;
+  ended_at: string | null;
   duration_ms: number | null;
-  created_at: string;
+  outcome: 'COMPLETED' | 'FAILED' | 'TIMED_OUT' | null;
+  error_code: string | null;
+  error_message: string | null;
+  error_stack: string | null;
+  reason_transitions: Array<{ code: string; detail: string; at: string }>;
+  detail: Record<string, unknown> | null;
 }
 
 // ─── Worker API Types ────────────────────────────────────────────────────────

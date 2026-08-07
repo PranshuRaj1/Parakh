@@ -1,0 +1,51 @@
+/**
+ * Cron sweeps for stalled reviews
+ */
+
+import { dbSweepStalledReviews, dbTimeoutStage, getReview } from './db/reviews.js';
+import { getCachedToken } from './github/auth.js';
+import { postComment } from './github/api.js';
+import { createRedisGet, createRedisSet } from './redis.js';
+import type { Env } from './index.js';
+
+const STALL_TIMEOUT_SECONDS = 5 * 60; // 5 minutes
+
+export async function handleCronTrigger(env: Env): Promise<void> {
+  const stalled = await dbSweepStalledReviews(STALL_TIMEOUT_SECONDS, env);
+
+  for (const record of stalled) {
+    const { reviewId, stage, attempt } = record;
+    
+    // Mark as TIMED_OUT in db
+    await dbTimeoutStage(reviewId, stage, attempt, env);
+
+    const review = await getReview(reviewId, env);
+    if (!review) continue;
+
+    const [owner, repo] = review.repo.split('/');
+    const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+
+    if (review.installation_id) {
+      try {
+        const token = await getCachedToken(
+          review.installation_id,
+          env.GITHUB_APP_ID,
+          env.GITHUB_APP_PRIVATE_KEY,
+          redis
+        );
+
+        await postComment(
+          owner,
+          repo,
+          review.pr_number,
+          `🛑 Review stuck at **${stage}** and timed out. ` +
+          `Reply \`@parakh review\` to try again, or check the dashboard.`,
+          token
+        );
+        console.log(`[cron] Swept and failed stalled review ${review.repo}#${review.pr_number} at stage ${stage}`);
+      } catch (err) {
+        console.error(`[cron] Failed to post timeout comment for ${reviewId}:`, err);
+      }
+    }
+  }
+}

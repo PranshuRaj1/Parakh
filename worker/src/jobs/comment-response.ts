@@ -69,7 +69,7 @@ export async function executeCommentResponseJob(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
           existingReview.id,  // resumeReviewId — reuses existing row
-          false,              // skipLock
+          true,               // skipLock
           githubDeliveryId    // githubDeliveryId
         );
       } else {
@@ -78,7 +78,7 @@ export async function executeCommentResponseJob(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
           undefined,          // resumeReviewId
-          false,              // skipLock
+          true,               // skipLock
           githubDeliveryId    // githubDeliveryId
         );
       }

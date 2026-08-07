@@ -32,12 +32,20 @@ import {
   getLatestReviewByPR,
   insertReview,
   getReview,
-  markReviewPaused,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { GeminiClient } from '../gemini/client.js';
 import { AllKeysExhaustedError } from '../gemini/keyPool.js';
-import { stepStarted, stepCompleted, resetProgressTracking } from './progress.js';
+import {
+  startStage,
+  completeStage,
+  failStage,
+  updateReason,
+  heartbeat,
+  withTimeout,
+  STAGE_TIMEOUTS_MS,
+  getReviewingFilesTimeout
+} from './stage-tracker.js';
 import type { Env } from '../index.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
 
@@ -140,6 +148,7 @@ interface ReviewState {
   accumulatedFindings: Finding[];
   batchIndex: number;
   diffHash: string;
+  attemptCounter: number;
 }
 
 async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -174,7 +183,8 @@ async function reviewSingleFile(
   fileName: string,
   fileChunks: Map<string, string>,
   activeRules: Rule[],
-  env: Env
+  env: Env,
+  signal: AbortSignal
 ): Promise<Finding[]> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return [];
@@ -257,10 +267,10 @@ export async function triggerReview(
   }
 
   let reviewId: string;
-    if (resumeReviewId) {
-      reviewId = resumeReviewId;
-      await updateReviewStatus(reviewId, 'SEEN', env, githubDeliveryId);
-    } else {
+  if (resumeReviewId) {
+    reviewId = resumeReviewId;
+    await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
+  } else {
     const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
 
     if (reason !== 'manual_mention') {
@@ -274,7 +284,7 @@ export async function triggerReview(
       repo: fullRepo,
       pr_number: prNumber,
       installation_id: installationId,
-      status: 'SEEN',
+      status: 'QUEUED',
       seen_reaction_id: seenReactionId,
       trigger_reason: reason,
       github_delivery_id: githubDeliveryId,
@@ -291,7 +301,8 @@ export async function triggerReview(
     reviewId,
   };
 
-  await executeReviewJobInternal(payload, env, token);
+  // We push this to the Queue so it runs asynchronously with proper timeouts!
+  await env.WATCHDOG_QUEUE.send(payload);
 }
 
 export async function executeReviewJob(
@@ -315,12 +326,17 @@ async function executeReviewJobInternal(
 
   try {
     let state = await loadReviewState(fullRepo, prNumber, redisGet);
+    const dbReview = await getReview(reviewId, env);
+    const stageAttempt = dbReview?.stage_attempt || 1;
 
-    await stepStarted(reviewId, 'FETCHING_DIFF', env);
-    const diff = await fetchDiff(owner, repo, prNumber, token);
+    await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
+    const diff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async (signal) => {
+      const res = await fetchDiff(owner, repo, prNumber, token);
+      return res;
+    });
     const fileChunks = parseDiffByFile(diff);
     const currentDiffHash = await sha256(diff);
-    await stepCompleted(reviewId, 'FETCHING_DIFF', env);
+    await completeStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
 
     if (state && state.diffHash !== currentDiffHash) {
       console.warn(`[review] Diff hash mismatch on resume — starting fresh`);
@@ -335,6 +351,7 @@ async function executeReviewJobInternal(
         accumulatedFindings: [],
         batchIndex: 0,
         diffHash: currentDiffHash,
+        attemptCounter: stageAttempt,
       };
     }
 
@@ -343,75 +360,98 @@ async function executeReviewJobInternal(
     const remainingFiles = state.allFiles.filter(f => !state.completedFiles.includes(f));
 
     if (remainingFiles.length === 0) {
-      await finalizeReview(reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env);
+      await finalizeReview(reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env, stageAttempt);
       return;
     }
 
-    await stepStarted(reviewId, 'FETCHING_RULES', env);
-    const activeRules = await getActiveRules(fullRepo, env);
-    await stepCompleted(reviewId, 'FETCHING_RULES', env);
+    await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
+    const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
+       return getActiveRules(fullRepo, env);
+    });
+    await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
     const gemini = new GeminiClient(env);
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 
-    while (filesToProcess.length > 0) {
-      const batch = filesToProcess.splice(0, MAX_FILES_PER_BATCH);
+    let filesProcessedInThisAttempt = 0;
 
-      await stepStarted(reviewId, 'REVIEWING_FILES', env, {
-        batchIndex: state.batchIndex,
-        fileNames: batch,
-      });
+    await startStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+      batchIndex: state.batchIndex,
+      fileNames: filesToProcess.slice(0, MAX_FILES_PER_BATCH),
+    });
+    const filesTimeout = getReviewingFilesTimeout(filesToProcess.length);
+    
+    await withTimeout('REVIEWING_FILES', filesTimeout, async (signal) => {
+      while (filesToProcess.length > 0) {
+        if (signal.aborted) break;
 
-      const results = await Promise.allSettled(
-        batch.map(fileName => reviewSingleFile(gemini, fileName, fileChunks, activeRules, env))
-      );
+        const batch = filesToProcess.splice(0, MAX_FILES_PER_BATCH);
 
-      const exhausted = results.find(
-        r => r.status === 'rejected' && r.reason instanceof AllKeysExhaustedError
-      );
+        // Keep lease alive
+        await heartbeat(reviewId, env);
+        
+        await updateReason(reviewId, 'PROCESSING', `Reviewing batch ${state!.batchIndex}`, env);
 
-      if (exhausted) {
-        state.accumulatedFindings = allFindings;
-        await saveReviewState(fullRepo, prNumber, state, redisSet);
-        await markReviewPaused(reviewId, env);
-
-        await postComment(owner, repo, prNumber,
-          "⏳ All Gemini API keys are rate-limited right now. " +
-          "Reply `@parakh review` in a minute to pick this back up.",
-          token
+        const results = await Promise.allSettled(
+          batch.map(fileName => reviewSingleFile(gemini, fileName, fileChunks, activeRules, env, signal))
         );
-        return; 
-      }
 
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        if (r.status === 'fulfilled') {
-          allFindings.push(...r.value);
-        } else {
-          console.error(`[review] Error reviewing ${batch[i]}:`, r.reason);
+        const exhausted = results.find(
+          r => r.status === 'rejected' && r.reason instanceof AllKeysExhaustedError
+        );
+
+        if (exhausted) {
+          // Put the batch back
+          filesToProcess.unshift(...batch);
+          
+          state!.accumulatedFindings = allFindings;
+          await saveReviewState(fullRepo, prNumber, state!, redisSet);
+          
+          // Backoff within the same attempt row
+          const backoffDuration = 60 * 1000; // 1 minute
+          const backoffUntil = new Date(Date.now() + backoffDuration).toISOString();
+          await updateReason(reviewId, 'RATE_LIMITED_BACKOFF', `backoff until ${backoffUntil}`, env);
+          
+          await delay(backoffDuration);
+          continue; 
         }
-        state.completedFiles.push(batch[i]);
+
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          if (r.status === 'fulfilled') {
+            allFindings.push(...r.value);
+          } else {
+            console.error(`[review] Error reviewing ${batch[i]}:`, r.reason);
+          }
+          state!.completedFiles.push(batch[i]);
+          filesProcessedInThisAttempt++;
+        }
+
+        state!.batchIndex++;
+        state!.accumulatedFindings = allFindings;
+        await saveReviewState(fullRepo, prNumber, state!, redisSet);
+
+        if (filesToProcess.length > 0) {
+          await delay(GEMINI_RATE_LIMITS.PER_FILE_DELAY_MS);
+        }
       }
+    });
+    
+    await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+      batchIndex: state.batchIndex,
+      filesProcessed: filesProcessedInThisAttempt,
+      completedCount: state.completedFiles.length,
+      totalCount: state.allFiles.length,
+    });
 
-      await stepCompleted(reviewId, 'REVIEWING_FILES', env, {
-        batchIndex: state.batchIndex,
-        batchSize: batch.length,
-        completedCount: state.completedFiles.length,
-        totalCount: state.allFiles.length,
-      });
+    await finalizeReview(reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt);
 
-      state.batchIndex++;
-      state.accumulatedFindings = allFindings;
-      await saveReviewState(fullRepo, prNumber, state, redisSet);
-
-      if (filesToProcess.length > 0) {
-        await delay(GEMINI_RATE_LIMITS.PER_FILE_DELAY_MS);
-      }
-    }
-
-    await finalizeReview(reviewId, allFindings, owner, repo, prNumber, token, env);
-
+  } catch (err) {
+    const stageAttempt = 1; // Assuming we would normally fetch this
+    const errorCode = err instanceof Error && err.name === 'StageTimeoutError' ? 'STAGE_TIMEOUT' : 'UNKNOWN';
+    await failStage(reviewId, 'REVIEWING_FILES', stageAttempt, errorCode, err, false, env);
+    throw err; // allow Cloudflare Queue to retry
   } finally {
     await releaseReviewLock(fullRepo, prNumber, env).catch(err =>
       console.warn('[review] Failed to release lock:', err)
@@ -426,8 +466,6 @@ async function executeReviewJobInternal(
     } catch (err) {
       console.warn('[review] Failed to check/clean review state:', err);
     }
-
-    resetProgressTracking(reviewId);
   }
 }
 
@@ -438,32 +476,43 @@ async function finalizeReview(
   repo: string,
   prNumber: number,
   token: string,
-  env: Env
+  env: Env,
+  stageAttempt: number
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
+  await startStage(reviewId, 'SCORING', stageAttempt, env);
   const rawScore = computeScore(findings);
   const score = displayScore(rawScore);
-
   await updateReviewResults(reviewId, score, findings, env);
+  await completeStage(reviewId, 'SCORING', stageAttempt, env);
 
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
-  if (review?.seen_reaction_id) {
-    try {
-      await removeReaction(owner, repo, prNumber, review.seen_reaction_id, token);
-    } catch (err) {
-      console.warn(`[review] Failed to remove 👀 reaction:`, err);
+  
+  await startStage(reviewId, 'REACTING', stageAttempt, env);
+  await withTimeout('REACTING', STAGE_TIMEOUTS_MS.REACTING, async () => {
+    if (review?.seen_reaction_id) {
+      try {
+        await removeReaction(owner, repo, prNumber, review.seen_reaction_id, token);
+      } catch (err) {
+        console.warn(`[review] Failed to remove 👀 reaction:`, err);
+      }
     }
-  }
+  });
+  await completeStage(reviewId, 'REACTING', stageAttempt, env);
 
-  const comment = formatReviewComment(
-    rawScore,
-    score,
-    findings,
-    fullRepo,
-    prNumber
-  );
-  await postComment(owner, repo, prNumber, comment, token);
+  await startStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
+  await withTimeout('POSTING_COMMENT', STAGE_TIMEOUTS_MS.POSTING_COMMENT, async () => {
+    const comment = formatReviewComment(
+      rawScore,
+      score,
+      findings,
+      fullRepo,
+      prNumber
+    );
+    await postComment(owner, repo, prNumber, comment, token);
+  });
+  await completeStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
 
   let verdictReactionId: number | null = null;
   if (score >= POSITIVE_THRESHOLD) {

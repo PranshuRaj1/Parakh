@@ -25,3 +25,6 @@ max_batch_size = 1
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+[triggers]
+crons = ["* * * * *"]

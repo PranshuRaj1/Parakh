@@ -12,8 +12,6 @@ import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import type { Env } from '../index.js';
-import { executeReviewJob } from '../jobs/review.js';
-import { executeCommentResponseJob } from '../jobs/comment-response.js';
 import { createRedisGet, createRedisSet, createRedisDel } from '../redis.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -146,8 +144,9 @@ async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: E
       repo: fullRepo,
       pr_number: prNumber,
       installation_id: installationId,
-      status: 'SEEN',
+      status: 'QUEUED',
       seen_reaction_id: seenReactionId,
+      trigger_reason: action === 'synchronize' ? 'synchronize' : 'opened',
       github_delivery_id: deliveryId,
     },
     env
@@ -163,13 +162,9 @@ async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: E
     reviewId: review.id,
   };
 
-  // Run asynchronously without blocking the webhook response
-  if (_ctx) {
-    _ctx.waitUntil(executeReviewJob(payload, env).catch(err => {
-      console.error('[webhook] Failed to execute review job:', err);
-    }));
-  }
-  console.log(`[webhook] Dispatched review job for ${fullRepo}#${prNumber} (review: ${review.id})`);
+  // Run asynchronously via Queue (removes strict edge timeout limit)
+  await env.WATCHDOG_QUEUE.send(payload);
+  console.log(`[webhook] Dispatched review job to queue for ${fullRepo}#${prNumber} (review: ${review.id})`);
 
   return { status: 200, body: 'review enqueued' };
 }
@@ -223,11 +218,7 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     githubDeliveryId: deliveryId,
   };
 
-  if (_ctx) {
-    _ctx.waitUntil(executeCommentResponseJob(payload, env).catch(err => {
-      console.error('[webhook] Failed to execute comment response job:', err);
-    }));
-  }
+  await env.WATCHDOG_QUEUE.send(payload);
   return { status: 200, body: 'comment response dispatched' };
 }
 
@@ -275,10 +266,6 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     githubDeliveryId: deliveryId,
   };
 
-  if (_ctx) {
-    _ctx.waitUntil(executeCommentResponseJob(payload, env).catch(err => {
-      console.error('[webhook] Failed to execute comment response job:', err);
-    }));
-  }
+  await env.WATCHDOG_QUEUE.send(payload);
   return { status: 200, body: 'comment response dispatched' };
 }
