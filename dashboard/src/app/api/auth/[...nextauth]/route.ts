@@ -12,13 +12,13 @@ const handler = NextAuth({
     async session({ session, token }) {
       if (session.user) {
         // Expose username (login) to the session
-        (session.user as any).login = token.login;
+        (session.user as Record<string, unknown>).login = token.login;
       }
       return session;
     },
     async jwt({ token, profile }) {
       if (profile) {
-        token.login = (profile as any).login;
+        token.login = (profile as Record<string, unknown>).login;
       }
       return token;
     },
