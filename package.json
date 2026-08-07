@@ -1,0 +1,13 @@
+{
+  "name": "parakh",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "worker"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

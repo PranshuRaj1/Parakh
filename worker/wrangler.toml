@@ -1,0 +1,26 @@
+name = "parakh-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Queue producer binding (webhook handler enqueues jobs)
+[[queues.producers]]
+queue = "parakh-review-queue"
+binding = "REVIEW_QUEUE"
+
+# Queue consumer binding (worker processes jobs)
+[[queues.consumers]]
+queue = "parakh-review-queue"
+max_batch_size = 5
+max_retries = 3
+dead_letter_queue = "parakh-dlq"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+# GITHUB_APP_ID
+# GITHUB_APP_PRIVATE_KEY
+# GITHUB_WEBHOOK_SECRET
+# GEMINI_API_KEY
+# DATABASE_URL
+# UPSTASH_REDIS_URL
+# UPSTASH_REDIS_TOKEN
+# WORKER_API_SECRET
