@@ -137,7 +137,6 @@ function formatReviewComment(
     comment += '\n';
   }
 
-  comment += `---\n*Score breakdown: 5.0 − ${(5 - score).toFixed(2)} (penalties) = ${score.toFixed(2)} → displayed as ${displayedScore}/5*`;
 
   return comment;
 }
