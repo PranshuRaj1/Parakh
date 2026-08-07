@@ -13,7 +13,7 @@ export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type ReviewStatus = 'SEEN' | 'REVIEWING' | 'COMPLETED';
 
 /** Intent classification for reply comments. */
-export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION';
+export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL';
 
 /** Relationship between two rules, determined by contradiction engine. */
 export type Relationship = 'DUPLICATE' | 'REFINEMENT' | 'CONTRADICTION' | 'UNRELATED';
@@ -48,7 +48,13 @@ export interface Review {
   seen_reaction_id: number | null;
   verdict_reaction_id: number | null;
   status: ReviewStatus;
+  trigger_reason: 'opened' | 'synchronize' | 'manual_mention';
   created_at: string;
+}
+
+export interface RepoSettings {
+  repo: string;
+  reply_mode: 'mentioned_only' | 'all_comments';
 }
 
 export interface RuleRelationshipRecord {
@@ -114,15 +120,15 @@ export interface ReviewJobPayload {
   reviewId: string;
 }
 
-export interface CorrectionJobPayload {
-  type: 'CORRECTION';
+export interface CommentJobPayload {
+  type: 'COMMENT_RESPONSE';
   installationId: number;
   owner: string;
   repo: string;
   prNumber: number;
   commentId: number;
   commentBody: string;
-  parentCommentBody: string;
+  commentType: 'issue_comment' | 'pull_request_review_comment';
 }
 
 export interface ContradictionJobPayload {
@@ -136,7 +142,7 @@ export interface ContradictionJobPayload {
   embedding: number[];
 }
 
-export type JobPayload = ReviewJobPayload | CorrectionJobPayload | ContradictionJobPayload;
+export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload;
 
 // ─── Worker API Types ────────────────────────────────────────────────────────
 

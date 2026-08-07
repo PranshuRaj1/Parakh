@@ -7,13 +7,14 @@
  */
 
 import { REACTIONS, GITHUB_APP_BOT_SUFFIX } from '@parakh/shared';
-import type { ReviewJobPayload, CorrectionJobPayload } from '@parakh/shared';
+import type { ReviewJobPayload, CommentJobPayload } from '@parakh/shared';
 import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import type { Env } from '../index.js';
 import { executeReviewJob } from '../jobs/review.js';
-import { executeCorrectionJob } from '../jobs/correction.js';
+import { executeCommentResponseJob } from '../jobs/comment-response.js';
+import { createRedisGet, createRedisSet } from '../redis.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ interface WebhookEvent {
   comment?: {
     id: number;
     body: string;
-    user: { login: string };
+    user: { login: string; id: number };
     in_reply_to_id?: number;
   };
   issue?: {
@@ -190,15 +191,14 @@ async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: Executio
     return { status: 400, body: 'missing required fields' };
   }
 
-  // Don't process our own comments
-  if (comment.user.login.endsWith(GITHUB_APP_BOT_SUFFIX)) {
-    return { status: 200, body: 'ignoring bot comment' };
+  // Step 0 Guard: Self-Loop Prevention
+  if (!env.GITHUB_APP_BOT_USER_ID) {
+    throw new Error('GITHUB_APP_BOT_USER_ID not configured, refusing to process comment webhooks');
+  }
+  if (comment.user.id.toString() === env.GITHUB_APP_BOT_USER_ID) {
+    return { status: 200, body: 'ignoring self comment' };
   }
 
-  // For issue comments, we check if this is a reply to a bot comment
-  // by looking for a bot mention or by context. In practice, GitHub doesn't
-  // have native threading for issue comments, so we'll process all comments
-  // on PRs where the bot has commented and let the intent classifier decide.
   const owner = repository.owner.login;
   const repo = repository.name;
   const fullRepo = repository.full_name;
@@ -206,23 +206,23 @@ async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: Executio
 
   console.log(`[webhook] issue_comment.created on ${fullRepo}#${prNumber} by ${comment.user.login}`);
 
-  const payload: CorrectionJobPayload = {
-    type: 'CORRECTION',
+  const payload: CommentJobPayload = {
+    type: 'COMMENT_RESPONSE',
     installationId: installation.id,
     owner,
     repo,
     prNumber,
     commentId: comment.id,
     commentBody: comment.body,
-    parentCommentBody: '', // Will be resolved in the correction job
+    commentType: 'issue_comment',
   };
 
   if (_ctx) {
-    _ctx.waitUntil(executeCorrectionJob(payload, env).catch(err => {
-      console.error('[webhook] Failed to execute correction job:', err);
+    _ctx.waitUntil(executeCommentResponseJob(payload, env).catch(err => {
+      console.error('[webhook] Failed to execute comment response job:', err);
     }));
   }
-  return { status: 200, body: 'correction check dispatched' };
+  return { status: 200, body: 'comment response dispatched' };
 }
 
 // ─── Review Comment Handler ──────────────────────────────────────────────────
@@ -242,14 +242,12 @@ async function handleReviewComment(event: WebhookEvent, env: Env, _ctx?: Executi
     return { status: 400, body: 'missing required fields' };
   }
 
-  // Don't process our own comments
-  if (comment.user.login.endsWith(GITHUB_APP_BOT_SUFFIX)) {
-    return { status: 200, body: 'ignoring bot comment' };
+  // Step 0 Guard: Self-Loop Prevention
+  if (!env.GITHUB_APP_BOT_USER_ID) {
+    throw new Error('GITHUB_APP_BOT_USER_ID not configured, refusing to process comment webhooks');
   }
-
-  // Only process replies to bot comments (in_reply_to_id present)
-  if (!comment.in_reply_to_id) {
-    return { status: 200, body: 'not a reply' };
+  if (comment.user.id.toString() === env.GITHUB_APP_BOT_USER_ID) {
+    return { status: 200, body: 'ignoring self comment' };
   }
 
   const owner = repository.owner.login;
@@ -259,43 +257,21 @@ async function handleReviewComment(event: WebhookEvent, env: Env, _ctx?: Executi
 
   console.log(`[webhook] review_comment.created on ${fullRepo}#${prNumber} by ${comment.user.login}`);
 
-  const payload: CorrectionJobPayload = {
-    type: 'CORRECTION',
+  const payload: CommentJobPayload = {
+    type: 'COMMENT_RESPONSE',
     installationId: installation.id,
     owner,
     repo,
     prNumber,
     commentId: comment.id,
     commentBody: comment.body,
-    parentCommentBody: '', // Will be resolved in the correction job
+    commentType: 'pull_request_review_comment',
   };
 
   if (_ctx) {
-    _ctx.waitUntil(executeCorrectionJob(payload, env).catch(err => {
-      console.error('[webhook] Failed to execute correction job:', err);
+    _ctx.waitUntil(executeCommentResponseJob(payload, env).catch(err => {
+      console.error('[webhook] Failed to execute comment response job:', err);
     }));
   }
-  return { status: 200, body: 'correction check dispatched' };
-}
-
-// ─── Redis Helpers ───────────────────────────────────────────────────────────
-
-function createRedisGet(env: Env): (key: string) => Promise<string | null> {
-  return async (key: string) => {
-    const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${key}`, {
-      headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
-    });
-    const data = (await response.json()) as { result: string | null };
-    return data.result;
-  };
-}
-
-function createRedisSet(env: Env): (key: string, value: string, opts?: { ex?: number }) => Promise<unknown> {
-  return async (key: string, value: string, opts?: { ex?: number }) => {
-    const args = opts?.ex ? `/${key}/${value}/EX/${opts.ex}` : `/${key}/${value}`;
-    const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
-      headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
-    });
-    return response.json();
-  };
+  return { status: 200, body: 'comment response dispatched' };
 }

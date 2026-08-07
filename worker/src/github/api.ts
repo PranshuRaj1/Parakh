@@ -156,6 +156,25 @@ export async function postReviewComment(
   });
 }
 
+/**
+ * Reply to a review comment in a PR diff thread.
+ */
+export async function replyToReviewComment(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  commentId: number,
+  body: string,
+  token: string
+): Promise<{ id: number }> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/comments/${commentId}/replies`;
+  return githubFetch<{ id: number }>(url, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+    body: JSON.stringify({ body }),
+  });
+}
+
 // ─── Reactions (Emoji State Machine) ─────────────────────────────────────────
 
 /**

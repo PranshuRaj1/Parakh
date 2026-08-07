@@ -81,9 +81,9 @@ export function buildIntentPrompt(
 ): string {
   return `You are classifying the intent of a developer's reply to an automated code review comment.
 
-## Bot's Original Comment
+## Bot's Original Comment (if applicable)
 
-${parentBotComment}
+${parentBotComment || "(None — this is a standalone comment from the developer)"}
 
 ## Developer's Reply
 
@@ -91,7 +91,7 @@ ${comment}
 
 ## Intent Categories
 
-Classify the reply into exactly one of these four categories:
+Classify the reply into exactly one of these six categories:
 
 - **CORRECTION**: The developer is telling the bot it was wrong and providing the correct coding standard or practice. The reply contains information about how things should actually be done in this codebase. Examples: "No, we use Zustand here, not Redux", "Actually we handle cleanup globally in our test setup", "The convention here is to use snake_case for DB columns".
 
@@ -100,6 +100,10 @@ Classify the reply into exactly one of these four categories:
 - **DISMISSAL**: The developer is dismissing the bot's comment as unhelpful, irrelevant, or wrong without providing a corrective standard. Examples: "Not relevant", "Ignore this", "This is fine", "👎", "Nah".
 
 - **QUESTION**: The developer is asking a follow-up question about the bot's suggestion. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "Would using X fix this?".
+
+- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. Examples: "@parakh review this again", "please re-review", "can you check this PR now?".
+
+- **GENERAL**: The comment is a general conversation, casual acknowledgment, or doesn't fit the above categories. Examples: "lol nice catch", "thanks", "will fix", "I see what you mean", or chatter between developers.
 `;
 }
 

@@ -6,7 +6,7 @@
  */
 
 import { getDb } from './client.js';
-import type { Review, ReviewStatus, Finding } from '@parakh/shared';
+import type { Review, ReviewStatus, Finding, RepoSettings } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -28,25 +28,40 @@ export async function insertReview(
     score?: number;
     findings?: Finding[];
     seen_reaction_id?: number;
+    trigger_reason?: 'opened' | 'synchronize' | 'manual_mention';
   },
   env: EnvWithDB
 ): Promise<Review> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
-    INSERT INTO reviews (repo, pr_number, status, score, findings, seen_reaction_id)
+    INSERT INTO reviews (repo, pr_number, status, score, findings, seen_reaction_id, trigger_reason)
     VALUES (
       ${review.repo},
       ${review.pr_number},
       ${review.status},
       ${review.score ?? null},
       ${review.findings ? JSON.stringify(review.findings) : null}::jsonb,
-      ${review.seen_reaction_id ?? null}
+      ${review.seen_reaction_id ?? null},
+      ${review.trigger_reason ?? 'opened'}
     )
     RETURNING id, repo, pr_number, score, findings, seen_reaction_id,
-              verdict_reaction_id, status, created_at
+              verdict_reaction_id, status, trigger_reason, created_at
   `;
 
   return rows[0] as unknown as Review;
+}
+
+// ─── Repo Settings Queries ───────────────────────────────────────────────────
+
+/**
+ * Get settings for a specific repository.
+ */
+export async function getRepoSettings(repo: string, env: EnvWithDB): Promise<RepoSettings | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM repo_settings WHERE repo = ${repo}
+  `;
+  return (rows[0] as unknown as RepoSettings) || null;
 }
 
 /**
