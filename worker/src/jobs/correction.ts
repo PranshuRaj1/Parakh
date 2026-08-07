@@ -14,6 +14,7 @@ import { GeminiClient } from '../gemini/client.js';
 import { getCachedToken } from '../github/auth.js';
 import { postComment } from '../github/api.js';
 import { insertRule } from '../db/rules.js';
+import { executeContradictionJob } from './contradiction.js';
 import type { Env } from '../index.js';
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -127,17 +128,21 @@ async function handleCorrection(
   // Enqueue contradiction check (async safety net)
   const contradictionPayload: ContradictionJobPayload = {
     type: 'CONTRADICTION',
-    installationId: 0, // Not needed for contradiction check
-    owner,
-    repo,
-    prNumber,
     ruleId: rule.id,
+    installationId: 0,
+    owner: owner,
+    repo: repo,
+    prNumber: prNumber,
     ruleBody: ruleBody,
-    embedding,
+    embedding: Array.from(embedding),
   };
 
-  await env.REVIEW_QUEUE.send(contradictionPayload);
-  console.log(`[correction] Enqueued contradiction check for rule ${rule.id}`);
+  // We are already inside a background execution (waitUntil), so we can just fire and forget,
+  // or await it. Let's fire and forget so we can return quickly.
+  executeContradictionJob(contradictionPayload, env).catch(err => {
+    console.error('[correction] Failed to execute contradiction check:', err);
+  });
+  console.log(`[correction] Dispatched contradiction check for rule ${rule.id}`);
 }
 
 // ─── Question Handler ────────────────────────────────────────────────────────

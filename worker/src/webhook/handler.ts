@@ -12,6 +12,8 @@ import { addReaction, removeReaction } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import type { Env } from '../index.js';
+import { executeReviewJob } from '../jobs/review.js';
+import { executeCorrectionJob } from '../jobs/correction.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,17 +56,18 @@ interface HandlerResult {
 export async function handleWebhookEvent(
   event: WebhookEvent,
   eventType: string,
-  env: Env
+  env: Env,
+  _ctx?: ExecutionContext
 ): Promise<HandlerResult> {
   switch (eventType) {
     case 'pull_request':
-      return handlePullRequest(event, env);
+      return handlePullRequest(event, env, _ctx);
 
     case 'issue_comment':
-      return handleIssueComment(event, env);
+      return handleIssueComment(event, env, _ctx);
 
     case 'pull_request_review_comment':
-      return handleReviewComment(event, env);
+      return handleReviewComment(event, env, _ctx);
 
     case 'installation':
     case 'installation_repositories':
@@ -86,7 +89,7 @@ export async function handleWebhookEvent(
  * 3. Insert new review record with status SEEN
  * 4. Enqueue review job
  */
-async function handlePullRequest(event: WebhookEvent, env: Env): Promise<HandlerResult> {
+async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, pull_request } = event;
 
   if (!['opened', 'synchronize', 'reopened'].includes(action)) {
@@ -145,8 +148,13 @@ async function handlePullRequest(event: WebhookEvent, env: Env): Promise<Handler
     reviewId: review.id,
   };
 
-  await env.REVIEW_QUEUE.send(payload);
-  console.log(`[webhook] Enqueued review job for ${fullRepo}#${prNumber} (review: ${review.id})`);
+  // Run asynchronously without blocking the webhook response
+  if (_ctx) {
+    _ctx.waitUntil(executeReviewJob(payload, env).catch(err => {
+      console.error('[webhook] Failed to execute review job:', err);
+    }));
+  }
+  console.log(`[webhook] Dispatched review job for ${fullRepo}#${prNumber} (review: ${review.id})`);
 
   return { status: 200, body: 'review enqueued' };
 }
@@ -157,7 +165,7 @@ async function handlePullRequest(event: WebhookEvent, env: Env): Promise<Handler
  * Handle issue_comment events (on PRs).
  * Only processes comments that are replies to bot comments.
  */
-async function handleIssueComment(event: WebhookEvent, env: Env): Promise<HandlerResult> {
+async function handleIssueComment(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, comment, issue } = event;
 
   if (action !== 'created') {
@@ -200,8 +208,12 @@ async function handleIssueComment(event: WebhookEvent, env: Env): Promise<Handle
     parentCommentBody: '', // Will be resolved in the correction job
   };
 
-  await env.REVIEW_QUEUE.send(payload);
-  return { status: 200, body: 'correction check enqueued' };
+  if (_ctx) {
+    _ctx.waitUntil(executeCorrectionJob(payload, env).catch(err => {
+      console.error('[webhook] Failed to execute correction job:', err);
+    }));
+  }
+  return { status: 200, body: 'correction check dispatched' };
 }
 
 // ─── Review Comment Handler ──────────────────────────────────────────────────
@@ -210,7 +222,7 @@ async function handleIssueComment(event: WebhookEvent, env: Env): Promise<Handle
  * Handle pull_request_review_comment events.
  * Only processes comments that reply to a bot review comment.
  */
-async function handleReviewComment(event: WebhookEvent, env: Env): Promise<HandlerResult> {
+async function handleReviewComment(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, comment, pull_request } = event;
 
   if (action !== 'created') {
@@ -249,8 +261,12 @@ async function handleReviewComment(event: WebhookEvent, env: Env): Promise<Handl
     parentCommentBody: '', // Will be resolved in the correction job
   };
 
-  await env.REVIEW_QUEUE.send(payload);
-  return { status: 200, body: 'correction check enqueued' };
+  if (_ctx) {
+    _ctx.waitUntil(executeCorrectionJob(payload, env).catch(err => {
+      console.error('[webhook] Failed to execute correction job:', err);
+    }));
+  }
+  return { status: 200, body: 'correction check dispatched' };
 }
 
 // ─── Redis Helpers ───────────────────────────────────────────────────────────

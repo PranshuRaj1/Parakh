@@ -17,6 +17,7 @@
 
 import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
 import { GeminiClient } from '../gemini/client.js';
+import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
 
@@ -24,11 +25,11 @@ import type { Env } from '../index.js';
  * Handle a rule creation request from the dashboard.
  */
 export async function handleCreateRule(
-  body: unknown,
-  env: Env
+  request: CreateRuleRequest,
+  env: Env,
+  _ctx?: ExecutionContext
 ): Promise<CreateRuleResponse> {
   // 1. Validate
-  const request = body as CreateRuleRequest;
   if (!request.repo || !request.body) {
     throw new Error('Missing required fields: repo, body');
   }
@@ -55,20 +56,25 @@ export async function handleCreateRule(
   );
 
   // 5. Enqueue contradiction check (same path as PR-comment corrections)
-  const contradictionPayload: ContradictionJobPayload = {
+  const payload: ContradictionJobPayload = {
     type: 'CONTRADICTION',
+    ruleId: rule.id,
     installationId: 0,
     owner: request.repo.split('/')[0],
     repo: request.repo.split('/')[1],
-    prNumber: 0, // No PR context for dashboard-created rules
-    ruleId: rule.id,
+    prNumber: 0,
     ruleBody: request.body,
-    embedding,
+    embedding: Array.from(embedding),
   };
 
-  await env.REVIEW_QUEUE.send(contradictionPayload);
+  // Run asynchronously without blocking the API response
+  if (_ctx) {
+    _ctx.waitUntil(executeContradictionJob(payload, env).catch(err => {
+      console.error('[rule-api] Failed to execute contradiction job:', err);
+    }));
+  }
 
-  console.log(`[rule-api] Created rule ${rule.id} for ${request.repo} (priority: ${priority}), contradiction check enqueued`);
+  console.log(`[rule-api] Dispatched contradiction job for rule ${rule.id}`);
 
   return {
     rule,

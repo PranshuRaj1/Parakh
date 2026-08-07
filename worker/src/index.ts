@@ -35,8 +35,6 @@ export interface Env {
   // Worker API auth (dashboard → worker)
   WORKER_API_SECRET: string;
 
-  // Queue binding
-  REVIEW_QUEUE: Queue<JobPayload>;
 }
 
 // ─── Worker Export ────────────────────────────────────────────────────────────
@@ -54,12 +52,12 @@ export default {
 
     // ── Webhook endpoint ──────────────────────────────────────────────
     if (url.pathname === '/webhook' && request.method === 'POST') {
-      return handleWebhookRequest(request, env);
+      return handleWebhookRequest(request, env, _ctx);
     }
 
     // ── Dashboard rule creation API ───────────────────────────────────
     if (url.pathname === '/api/rules' && request.method === 'POST') {
-      return handleRuleCreationRequest(request, env);
+      return handleRuleCreationRequest(request, env, _ctx);
     }
 
     // ── Health check ──────────────────────────────────────────────────
@@ -70,19 +68,12 @@ export default {
     }
 
     return new Response('Not Found', { status: 404 });
-  },
-
-  /**
-   * Queue consumer — processes batched job messages.
-   */
-  async queue(batch: MessageBatch<JobPayload>, env: Env): Promise<void> {
-    await handleQueueBatch(batch, env);
-  },
+  }
 };
 
 // ─── Request Handlers ────────────────────────────────────────────────────────
 
-async function handleWebhookRequest(request: Request, env: Env): Promise<Response> {
+async function handleWebhookRequest(request: Request, env: Env, _ctx?: ExecutionContext): Promise<Response> {
   const body = await request.text();
   const signature = request.headers.get('X-Hub-Signature-256') || '';
   const eventType = request.headers.get('X-GitHub-Event') || '';
@@ -96,7 +87,7 @@ async function handleWebhookRequest(request: Request, env: Env): Promise<Respons
 
   try {
     const event = JSON.parse(body);
-    const result = await handleWebhookEvent(event, eventType, env);
+    const result = await handleWebhookEvent(event, eventType, env, _ctx);
     return new Response(result.body, { status: result.status });
   } catch (err) {
     console.error('[worker] Webhook handler error:', err);
@@ -111,7 +102,7 @@ async function handleWebhookRequest(request: Request, env: Env): Promise<Respons
  * creation handler which does embedding + priority classification + DB insert +
  * contradiction check enqueue. This keeps all Gemini access in the worker.
  */
-async function handleRuleCreationRequest(request: Request, env: Env): Promise<Response> {
+async function handleRuleCreationRequest(request: Request, env: Env, _ctx?: ExecutionContext): Promise<Response> {
   // Authenticate dashboard → worker call
   const authHeader = request.headers.get('Authorization') || '';
   const expectedAuth = `Bearer ${env.WORKER_API_SECRET}`;
@@ -121,8 +112,8 @@ async function handleRuleCreationRequest(request: Request, env: Env): Promise<Re
   }
 
   try {
-    const body = await request.json();
-    const result = await handleCreateRule(body, env);
+    const body = await request.json() as import('@parakh/shared').CreateRuleRequest;
+    const result = await handleCreateRule(body, env, _ctx);
     return new Response(JSON.stringify(result), {
       status: 201,
       headers: { 'Content-Type': 'application/json' },
