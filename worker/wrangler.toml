@@ -21,3 +21,7 @@ max_batch_size = 1
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN
 # WORKER_API_SECRET
+
+[observability.logs]
+enabled = true
+invocation_logs = true
