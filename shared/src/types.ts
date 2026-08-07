@@ -9,8 +9,8 @@ export type RulePriority = 'high' | 'normal';
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
-/** Review lifecycle status. */
-export type ReviewStatus = 'SEEN' | 'REVIEWING' | 'COMPLETED';
+/** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with step tracking. */
+export type ReviewStatus = 'SEEN' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_RATE_LIMITED';
 
 /** Intent classification for reply comments. */
 export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL';
@@ -41,20 +41,29 @@ export interface Rule {
 
 export interface Review {
   id: string;
-  repo: string;
+  repo: string;                    // "owner/repo" — combined field
   pr_number: number;
+  installation_id: number | null;  // stored for watchdog resume
   score: number | null;
   findings: Finding[] | null;
   seen_reaction_id: number | null;
   verdict_reaction_id: number | null;
   status: ReviewStatus;
-  trigger_reason: 'opened' | 'synchronize' | 'manual_mention';
+  trigger_reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
+  retry_count: number;
+  current_step: string | null;
+  step_detail: Record<string, unknown> | null;
+  started_at: string | null;
+  failed_at: string | null;
+  error_step: string | null;
+  error_message: string | null;
   created_at: string;
 }
 
 export interface RepoSettings {
   repo: string;
   reply_mode: 'mentioned_only' | 'all_comments';
+  stuck_timeout_seconds: number | null;
 }
 
 export interface RuleRelationshipRecord {
@@ -142,7 +151,25 @@ export interface ContradictionJobPayload {
   embedding: number[];
 }
 
-export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload;
+/** Watchdog queue payload — scheduled by progress.ts, consumed by watchdog.ts. */
+export interface WatchdogPayload {
+  type: 'WATCHDOG';
+  reviewId: string;
+  step: string;
+  expectedEventId: string;
+}
+
+export type JobPayload = ReviewJobPayload | CommentJobPayload | ContradictionJobPayload | WatchdogPayload;
+
+/** Step event audit record — append-only log of review pipeline progress. */
+export interface ReviewStepEvent {
+  id: string;
+  review_id: string;
+  step: string;
+  status: 'STARTED' | 'COMPLETED' | 'FAILED';
+  detail: Record<string, unknown> | null;
+  created_at: string;
+}
 
 // ─── Worker API Types ────────────────────────────────────────────────────────
 

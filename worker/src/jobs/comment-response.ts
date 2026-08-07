@@ -1,7 +1,7 @@
 import type { CommentJobPayload } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
-import { getRepoSettings } from '../db/reviews.js';
+import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment } from '../github/api.js';
 import { GeminiClient } from '../gemini/client.js';
 import { triggerReview } from './review.js';
@@ -47,7 +47,7 @@ export async function executeCommentResponseJob(
     }
   };
 
-  const gemini = new GeminiClient(env.GEMINI_API_KEY);
+  const gemini = new GeminiClient(env);
 
   // For issue comments (top-level), there is no parentBotComment context passed directly.
   // We can pass an empty string to the LLM classifier for now, or fetch the parent if needed.
@@ -58,10 +58,26 @@ export async function executeCommentResponseJob(
   console.log(`[comment-response] Classified intent: ${intent}`);
 
   switch (intent) {
-    case 'REVIEW_REQUEST':
-      await postReply("On it — re-reviewing 👀");
-      await triggerReview(installationId, owner, repo, prNumber, 'manual_mention', env);
+    case 'REVIEW_REQUEST': {
+      // Check for an existing resumable review before creating a new one
+      const existingReview = await getResumableReview(fullRepo, prNumber, env);
+
+      if (existingReview) {
+        await postReply("On it — resuming the previous review 👀");
+        await triggerReview(
+          installationId, owner, repo, prNumber,
+          'manual_mention', env,
+          existingReview.id  // resumeReviewId — reuses existing row
+        );
+      } else {
+        await postReply("On it — re-reviewing 👀");
+        await triggerReview(
+          installationId, owner, repo, prNumber,
+          'manual_mention', env
+        );
+      }
       break;
+    }
 
     case 'CORRECTION':
       // TODO: wire to correction.ts once memory write is re-enabled

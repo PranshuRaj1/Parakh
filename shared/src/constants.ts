@@ -58,6 +58,23 @@ export const GEMINI_RATE_LIMITS = {
   PER_FILE_DELAY_MS: 4000,
 };
 
+// ─── Stuck Detection & Recovery ──────────────────────────────────────────────
+
+/** Maximum retries before marking FAILED. Checked as: retry_count >= MAX_REVIEW_RETRIES. */
+export const MAX_REVIEW_RETRIES = 1;
+
+/** Default stuck timeout in seconds (overridable per-repo via repo_settings.stuck_timeout_seconds). */
+export const DEFAULT_STUCK_TIMEOUT_SECONDS = 30;
+
+/** TTL for Redis review state keys. Prevents abandoned PRs from holding state forever. */
+export const REVIEW_STATE_TTL_SECONDS = 48 * 60 * 60; // 48 hours
+
+/** TTL for Redis session lock. Short — just long enough to survive a cold-start race. */
+export const REVIEW_LOCK_TTL_SECONDS = 300; // 5 minutes
+
+/** Max files per Gemini batch within one worker invocation. */
+export const MAX_FILES_PER_BATCH = 5;
+
 // ─── Contradiction Engine ────────────────────────────────────────────────────
 
 /** Cosine similarity threshold for candidate retrieval in contradiction check. */

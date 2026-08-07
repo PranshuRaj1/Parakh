@@ -9,6 +9,7 @@ import type { JobPayload } from '@parakh/shared';
 import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
+import { handleWatchdog } from './watchdog.js';
 import type { Env } from '../index.js';
 
 /**
@@ -39,6 +40,12 @@ export async function handleQueueBatch(
         case 'CONTRADICTION':
           console.log(`[queue] Processing CONTRADICTION job for rule ${payload.ruleId}`);
           await executeContradictionJob(payload, env);
+          message.ack();
+          break;
+
+        case 'WATCHDOG':
+          console.log(`[queue] Processing WATCHDOG job for review ${payload.reviewId} at step ${payload.step}`);
+          await handleWatchdog(payload, env);
           message.ack();
           break;
 

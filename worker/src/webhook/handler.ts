@@ -14,7 +14,7 @@ import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/
 import type { Env } from '../index.js';
 import { executeReviewJob } from '../jobs/review.js';
 import { executeCommentResponseJob } from '../jobs/comment-response.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisGet, createRedisSet, createRedisDel } from '../redis.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +93,19 @@ export async function handleWebhookEvent(
 async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, pull_request } = event;
 
-  if (!['opened', 'synchronize', 'reopened'].includes(action)) {
+  // Handle synchronize separately — clear stale state but don't auto-review
+  if (action === 'synchronize') {
+    if (!installation?.id || !repository || !pull_request) {
+      return { status: 400, body: 'missing required fields' };
+    }
+    const fullRepo = repository.full_name;
+    const redisDel = createRedisDel(env);
+    await redisDel(`pr_review_state:${fullRepo}:${pull_request.number}`);
+    console.log(`[webhook] synchronize: cleared stale review state for ${fullRepo}#${pull_request.number}`);
+    return { status: 200, body: 'cleared stale review state' };
+  }
+
+  if (!['opened', 'reopened'].includes(action)) {
     return { status: 200, body: `ignored PR action: ${action}` };
   }
 
@@ -113,17 +125,7 @@ async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: Execution
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // On synchronize: clean up previous verdict reaction to prevent stale 👍 + fresh 👀
-  if (action === 'synchronize') {
-    const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
-    if (previousReview?.verdict_reaction_id) {
-      try {
-        await removeReaction(owner, repo, prNumber, previousReview.verdict_reaction_id, token);
-      } catch (err) {
-        console.warn(`[webhook] Failed to remove previous verdict reaction:`, err);
-      }
-    }
-  }
+
 
   // Post 👀 reaction SYNCHRONOUSLY — proof the bot noticed, before enqueue
   const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
@@ -137,11 +139,12 @@ async function handlePullRequest(event: WebhookEvent, env: Env, _ctx?: Execution
     token
   );
 
-  // Insert new review record (new row per synchronize — free score history)
+  // Insert new review record
   const review = await insertReview(
     {
       repo: fullRepo,
       pr_number: prNumber,
+      installation_id: installationId,
       status: 'SEEN',
       seen_reaction_id: seenReactionId,
     },

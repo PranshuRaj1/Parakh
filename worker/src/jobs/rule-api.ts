@@ -34,7 +34,7 @@ export async function handleCreateRule(
     throw new Error('Missing required fields: repo, body');
   }
 
-  const gemini = new GeminiClient(env.GEMINI_API_KEY);
+  const gemini = new GeminiClient(env);
 
   // 2. Generate embedding
   const embedding = await gemini.generateEmbedding(request.body);

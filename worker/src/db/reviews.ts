@@ -6,7 +6,7 @@
  */
 
 import { getDb } from './client.js';
-import type { Review, ReviewStatus, Finding, RepoSettings } from '@parakh/shared';
+import type { Review, ReviewStatus, Finding, RepoSettings, ReviewStepEvent } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -24,28 +24,30 @@ export async function insertReview(
   review: {
     repo: string;
     pr_number: number;
+    installation_id: number;
     status: ReviewStatus;
     score?: number;
     findings?: Finding[];
     seen_reaction_id?: number;
-    trigger_reason?: 'opened' | 'synchronize' | 'manual_mention';
+    trigger_reason?: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
   },
   env: EnvWithDB
 ): Promise<Review> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
-    INSERT INTO reviews (repo, pr_number, status, score, findings, seen_reaction_id, trigger_reason)
+    INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
+                         seen_reaction_id, trigger_reason)
     VALUES (
       ${review.repo},
       ${review.pr_number},
+      ${review.installation_id},
       ${review.status},
       ${review.score ?? null},
       ${review.findings ? JSON.stringify(review.findings) : null}::jsonb,
       ${review.seen_reaction_id ?? null},
       ${review.trigger_reason ?? 'opened'}
     )
-    RETURNING id, repo, pr_number, score, findings, seen_reaction_id,
-              verdict_reaction_id, status, trigger_reason, created_at
+    RETURNING *
   `;
 
   return rows[0] as unknown as Review;
@@ -195,4 +197,193 @@ export async function getReviewsByPR(
   `;
 
   return rows as unknown as Review[];
+}
+
+// ─── Stuck Detection & Recovery Queries ───────────────────────────────────────
+
+/**
+ * Get a single review by ID.
+ * Used by watchdog and resume logic.
+ */
+export async function getReview(
+  id: string,
+  env: EnvWithDB
+): Promise<Review | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM reviews WHERE id = ${id}
+  `;
+  return (rows[0] as unknown as Review) || null;
+}
+
+/**
+ * Find the latest non-terminal review for a PR.
+ * Used by REVIEW_REQUEST handler to check for resumable reviews.
+ * Returns reviews in RUNNING or PAUSED_RATE_LIMITED status.
+ */
+export async function getResumableReview(
+  repo: string,
+  prNumber: number,
+  env: EnvWithDB
+): Promise<Review | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM reviews
+    WHERE repo = ${repo}
+      AND pr_number = ${prNumber}
+      AND status IN ('RUNNING', 'PAUSED_RATE_LIMITED')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as Review) || null;
+}
+
+/**
+ * Insert a step event into the audit log. Returns the generated event ID.
+ * Used by progress.ts for step tracking and watchdog scheduling.
+ */
+export async function insertStepEvent(
+  reviewId: string,
+  step: string,
+  status: string,
+  detail: Record<string, unknown> | null,
+  env: EnvWithDB
+): Promise<string> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    INSERT INTO review_step_events (review_id, step, status, detail)
+    VALUES (
+      ${reviewId}::uuid,
+      ${step},
+      ${status},
+      ${detail ? JSON.stringify(detail) : null}::jsonb
+    )
+    RETURNING id
+  `;
+  return (rows[0] as unknown as { id: string }).id;
+}
+
+/**
+ * Get the latest step event for a review.
+ * Used by watchdog's freshness check — if the latest event ID doesn't match
+ * the expected ID, the review has made progress and the watchdog is stale.
+ */
+export async function getLatestStepEvent(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<ReviewStepEvent | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as ReviewStepEvent) || null;
+}
+
+/**
+ * Update current_step and step_detail on reviews for dashboard display.
+ */
+export async function updateReviewCurrentStep(
+  id: string,
+  step: string,
+  detail: Record<string, unknown> | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET current_step = ${step},
+        step_detail = ${detail ? JSON.stringify(detail) : null}::jsonb
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Increment retry_count. Called by watchdog before dispatching auto_retry.
+ */
+export async function incrementRetryCount(
+  id: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET retry_count = retry_count + 1
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Mark a review as RUNNING and set started_at.
+ * Called by progress.ts on the first stepStarted() of a pipeline run.
+ */
+export async function markReviewRunning(
+  id: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET status = 'RUNNING',
+        started_at = now()
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Mark a review as FAILED with error details.
+ * Terminal state — review won't be auto-retried after this.
+ */
+export async function markReviewFailed(
+  id: string,
+  errorStep: string,
+  errorMessage: string,
+  errorStack: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET status = 'FAILED',
+        failed_at = now(),
+        error_step = ${errorStep},
+        error_message = ${errorMessage},
+        error_stack = ${errorStack}
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Mark a review as PAUSED_RATE_LIMITED.
+ * Non-terminal — review can be resumed via @parakh review or auto_retry.
+ */
+export async function markReviewPaused(
+  id: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET status = 'PAUSED_RATE_LIMITED'
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Get repo settings by looking up the review's repo first.
+ * Used by progress.ts to get stuck_timeout_seconds for watchdog scheduling.
+ */
+export async function getRepoSettingsByReviewId(
+  reviewId: string,
+  env: EnvWithDB
+): Promise<RepoSettings | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT rs.* FROM repo_settings rs
+    JOIN reviews r ON r.repo = rs.repo
+    WHERE r.id = ${reviewId}::uuid
+  `;
+  return (rows[0] as unknown as RepoSettings) || null;
 }

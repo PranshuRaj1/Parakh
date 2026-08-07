@@ -3,7 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# No queues configured for free-tier deploy
+[[queues.producers]]
+queue = "parakh-watchdog"
+binding = "WATCHDOG_QUEUE"
+
+[[queues.consumers]]
+queue = "parakh-watchdog"
+max_retries = 0
+max_batch_size = 1
 
 # Secrets (set via `wrangler secret put <NAME>`):
 # GITHUB_APP_ID

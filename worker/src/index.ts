@@ -25,6 +25,10 @@ export interface Env {
 
   // Gemini
   GEMINI_API_KEY: string;
+  GEMINI_API_KEYS?: string;
+
+  // Queues
+  WATCHDOG_QUEUE: Queue<JobPayload>;
 
   // Database
   DATABASE_URL: string;
@@ -69,6 +73,14 @@ export default {
     }
 
     return new Response('Not Found', { status: 404 });
+  },
+
+  /**
+   * Queue handler — processes messages dispatched via env.WATCHDOG_QUEUE
+   * and any other Cloudflare Queues bound to this worker.
+   */
+  async queue(batch: MessageBatch<JobPayload>, env: Env): Promise<void> {
+    await handleQueueBatch(batch, env);
   }
 };
 

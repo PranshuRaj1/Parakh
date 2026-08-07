@@ -1,11 +1,8 @@
 /**
  * Review Job — Core Review Pipeline
  *
- * Orchestrates the review process: fetch diff → Gemini review per file →
- * post-process severity → score → post comment → reaction.
- *
- * This module ORCHESTRATES the other modules (github, gemini, db, scoring).
- * It contains no auth, API, DB, or LLM logic itself.
+ * Orchestrates the review process with batched chunking, resumability, and
+ * concurrency-safe API key rotation.
  */
 
 import type { ReviewJobPayload, Finding, Rule } from '@parakh/shared';
@@ -17,15 +14,16 @@ import {
   NEGATIVE_THRESHOLD,
   REACTIONS,
   GEMINI_RATE_LIMITS,
+  MAX_FILES_PER_BATCH,
+  REVIEW_STATE_TTL_SECONDS,
+  REVIEW_LOCK_TTL_SECONDS,
 } from '@parakh/shared';
 import { getCachedToken } from '../github/auth.js';
 import {
   fetchDiff,
-  getPRFiles,
   postComment,
   addReaction,
   removeReaction,
-  getPRDetails,
 } from '../github/api.js';
 import {
   updateReviewStatus,
@@ -33,11 +31,15 @@ import {
   updateReviewReactions,
   getLatestReviewByPR,
   insertReview,
+  getReview,
+  markReviewPaused,
 } from '../db/reviews.js';
-import { getActiveRules, getRuleById, incrementEvidenceCount } from '../db/rules.js';
+import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { GeminiClient } from '../gemini/client.js';
+import { AllKeysExhaustedError } from '../gemini/keyPool.js';
+import { stepStarted, stepCompleted, resetProgressTracking } from './progress.js';
 import type { Env } from '../index.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -45,18 +47,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Check if a file path matches a rule's scope globs.
- * Simple glob matching — supports * and ** patterns.
- */
 function matchesScope(filePath: string, scope: Record<string, unknown>): boolean {
   const patterns = scope.include as string[] | undefined;
-  if (!patterns || patterns.length === 0) {
-    return true; // No scope = applies to all files
-  }
+  if (!patterns || patterns.length === 0) return true;
 
   return patterns.some((pattern) => {
-    // Convert glob to regex
     const regex = new RegExp(
       '^' +
       pattern
@@ -71,29 +66,18 @@ function matchesScope(filePath: string, scope: Record<string, unknown>): boolean
   });
 }
 
-/**
- * Parse a unified diff into per-file chunks.
- */
 function parseDiffByFile(diff: string): Map<string, string> {
   const files = new Map<string, string>();
-  const fileDiffs = diff.split(/^diff --git /m).slice(1); // skip empty first element
-
+  const fileDiffs = diff.split(/^diff --git /m).slice(1);
   for (const fileDiff of fileDiffs) {
     const lines = fileDiff.split('\n');
-    // Extract filename from "a/path b/path" line
     const firstLine = lines[0] || '';
     const match = firstLine.match(/b\/(.+)/);
-    if (match) {
-      files.set(match[1], fileDiff);
-    }
+    if (match) files.set(match[1], fileDiff);
   }
-
   return files;
 }
 
-/**
- * Format findings into a PR comment body.
- */
 function formatReviewComment(
   score: number,
   displayedScore: number,
@@ -115,20 +99,17 @@ function formatReviewComment(
     return comment;
   }
 
-  // Group findings by severity
   const grouped: Record<string, Finding[]> = {};
   for (const f of findings) {
     if (!grouped[f.severity]) grouped[f.severity] = [];
     grouped[f.severity].push(f);
   }
 
-  // Summary
   const counts = Object.entries(grouped)
     .map(([sev, items]) => `${severityEmoji[sev]} ${items.length} ${sev}`)
     .join(' · ');
   comment += `**Summary:** ${counts}\n\n`;
 
-  // Detail per severity level
   for (const severity of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']) {
     const items = grouped[severity];
     if (!items || items.length === 0) continue;
@@ -144,45 +125,126 @@ function formatReviewComment(
     comment += '\n';
   }
 
-
   return comment;
 }
 
-// ─── Main Pipeline ───────────────────────────────────────────────────────────
+// ─── Redis State Types & Helpers ─────────────────────────────────────────────
 
-/**
- * Execute the full review pipeline for a PR.
- *
- * Pipeline:
- * 1. Get installation token
- * 2. Update review status to REVIEWING
- * 3. Fetch PR diff + file list
- * 4. Fetch active rules for this repo
- * 5. For each changed file: filter rules by scope, call Gemini
- * 6. Post-process rule findings: compute severity from rule priority (DETERMINISTIC)
- * 7. Increment evidence_count per violation instance
- * 8. Compute score (DETERMINISTIC pure arithmetic)
- * 9. Update review record
- * 10. Remove 👀 reaction
- * 11. Post summary comment
- * 12. Post verdict reaction based on thresholds
- * 13. Update review to COMPLETED
- */
+const REVIEW_STATE_KEY = (repo: string, pr: number) => `pr_review_state:${repo}:${pr}`;
+const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:${pr}`;
+
+interface ReviewState {
+  reviewId: string;
+  allFiles: string[];
+  completedFiles: string[];
+  accumulatedFindings: Finding[];
+  batchIndex: number;
+  diffHash: string;
+}
+
+async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
+  const raw = await redisGet(REVIEW_STATE_KEY(repo, prNumber));
+  return raw ? JSON.parse(raw) as ReviewState : null;
+}
+
+async function saveReviewState(repo: string, prNumber: number, state: ReviewState, redisSet: (key: string, value: string, opts?: { ex?: number }) => Promise<unknown>): Promise<void> {
+  await redisSet(REVIEW_STATE_KEY(repo, prNumber), JSON.stringify(state), { ex: REVIEW_STATE_TTL_SECONDS });
+}
+
+async function sha256(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function acquireReviewLock(repo: string, prNumber: number, env: Env): Promise<boolean> {
+  const setNX = createRedisSetNX(env);
+  return setNX(REVIEW_LOCK_KEY(repo, prNumber), '1', REVIEW_LOCK_TTL_SECONDS);
+}
+
+async function releaseReviewLock(repo: string, prNumber: number, env: Env): Promise<void> {
+  const del = createRedisDel(env);
+  await del(REVIEW_LOCK_KEY(repo, prNumber));
+}
+
+// ─── Single File Review Logic ────────────────────────────────────────────────
+
+async function reviewSingleFile(
+  gemini: GeminiClient,
+  fileName: string,
+  fileChunks: Map<string, string>,
+  activeRules: Rule[],
+  env: Env
+): Promise<Finding[]> {
+  const fileDiff = fileChunks.get(fileName);
+  if (!fileDiff) return [];
+
+  const applicableRules = activeRules.filter(r =>
+    matchesScope(fileName, r.scope as Record<string, unknown>)
+  );
+
+  const result = await gemini.reviewDiff(fileName, fileDiff, applicableRules);
+  const findings: Finding[] = [];
+
+  for (const gf of result.genericFindings) {
+    findings.push({
+      severity: gf.severity,
+      file: gf.file || fileName,
+      line: gf.line,
+      body: gf.body,
+      suggestion: gf.suggestion || null,
+      rule_id: null,
+    });
+  }
+
+  for (const rf of result.ruleFindings) {
+    const rule = applicableRules.find(r => r.id === rf.rule_id);
+    const priority = rule?.priority || 'normal';
+    findings.push({
+      severity: resolveSeverityForRuleViolation(priority),
+      file: rf.file || fileName,
+      line: rf.line,
+      body: rf.body,
+      suggestion: rf.suggestion || null,
+      rule_id: rf.rule_id,
+    });
+    
+    // Increment evidence_count per violation instance
+    if (rule) {
+      await incrementEvidenceCount(rule.id, env);
+    }
+  }
+
+  return findings;
+}
+
+// ─── Main Pipeline ───────────────────────────────────────────────────────────
 
 export async function triggerReview(
   installationId: number,
   owner: string,
   repo: string,
   prNumber: number,
-  reason: 'opened' | 'synchronize' | 'manual_mention',
-  env: Env
+  reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry',
+  env: Env,
+  resumeReviewId?: string,
+  skipLock?: boolean
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
+
+  if (!skipLock) {
+    const locked = await acquireReviewLock(fullRepo, prNumber, env);
+    if (!locked) {
+      console.log(`[review] Skipping — review already in-flight for ${fullRepo}#${prNumber}`);
+      return;
+    }
+  }
+
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // On synchronize or manual_mention: clean up previous verdict reaction
-  if (reason === 'synchronize' || reason === 'manual_mention') {
+  // Clean up previous verdict reaction ONLY on genuinely fresh triggers.
+  if (!resumeReviewId) {
     const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
     if (previousReview?.verdict_reaction_id) {
       try {
@@ -193,31 +255,30 @@ export async function triggerReview(
     }
   }
 
-  // Post 👀 reaction SYNCHRONOUSLY
-  const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+  let reviewId: string;
+  if (resumeReviewId) {
+    reviewId = resumeReviewId;
+    await updateReviewStatus(reviewId, 'SEEN', env);
+  } else {
+    const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
 
-  // Post an acknowledgment comment only for webhook triggers
-  if (reason !== 'manual_mention') {
-    await postComment(
-      owner,
-      repo,
-      prNumber,
-      "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
-      token
-    );
-  }
+    if (reason !== 'manual_mention') {
+      await postComment(owner, repo, prNumber,
+        "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
+        token
+      );
+    }
 
-  // Insert new review record
-  const review = await insertReview(
-    {
+    const review = await insertReview({
       repo: fullRepo,
       pr_number: prNumber,
+      installation_id: installationId,
       status: 'SEEN',
       seen_reaction_id: seenReactionId,
       trigger_reason: reason,
-    },
-    env
-  );
+    }, env);
+    reviewId = review.id;
+  }
 
   const payload: ReviewJobPayload = {
     type: 'REVIEW',
@@ -225,7 +286,7 @@ export async function triggerReview(
     owner,
     repo,
     prNumber,
-    reviewId: review.id,
+    reviewId,
   };
 
   await executeReviewJobInternal(payload, env, token);
@@ -245,103 +306,130 @@ async function executeReviewJobInternal(
   env: Env,
   token: string
 ): Promise<void> {
-  const { owner, repo, prNumber, reviewId } = payload;
+  const { reviewId, owner, repo, prNumber } = payload;
   const fullRepo = `${owner}/${repo}`;
+  const redisGet = createRedisGet(env);
+  const redisSet = createRedisSet(env);
 
-  console.log(`[review] Starting review for ${fullRepo}#${prNumber}`);
+  try {
+    let state = await loadReviewState(fullRepo, prNumber, redisGet);
 
-  // 1. Get installation token (already provided)
+    await stepStarted(reviewId, 'FETCHING_DIFF', env);
+    const diff = await fetchDiff(owner, repo, prNumber, token);
+    const fileChunks = parseDiffByFile(diff);
+    const currentDiffHash = await sha256(diff);
+    await stepCompleted(reviewId, 'FETCHING_DIFF', env);
 
-  // 2. Update review status
-  await updateReviewStatus(reviewId, 'REVIEWING', env);
+    if (state && state.diffHash !== currentDiffHash) {
+      console.warn(`[review] Diff hash mismatch on resume — starting fresh`);
+      state = null;
+    }
 
-  // 3. Fetch diff
-  const diff = await fetchDiff(owner, repo, prNumber, token);
-  const fileChunks = parseDiffByFile(diff);
+    if (!state) {
+      state = {
+        reviewId,
+        allFiles: Array.from(fileChunks.keys()),
+        completedFiles: [],
+        accumulatedFindings: [],
+        batchIndex: 0,
+        diffHash: currentDiffHash,
+      };
+    }
 
-  if (fileChunks.size === 0) {
-    console.log(`[review] No file changes in diff for ${fullRepo}#${prNumber}`);
-    await finalizeReview(reviewId, 5, [], owner, repo, prNumber, token, env);
-    return;
-  }
+    await saveReviewState(fullRepo, prNumber, state, redisSet);
 
-  // 4. Fetch active rules
-  const activeRules = await getActiveRules(fullRepo, env);
-  console.log(`[review] ${activeRules.length} active rules for ${fullRepo}`);
+    const remainingFiles = state.allFiles.filter(f => !state.completedFiles.includes(f));
 
-  // 5. Review each file
-  const gemini = new GeminiClient(env.GEMINI_API_KEY);
-  const allFindings: Finding[] = [];
+    if (remainingFiles.length === 0) {
+      await finalizeReview(reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env);
+      return;
+    }
 
-  for (const [fileName, fileDiff] of fileChunks) {
-    // Filter rules by scope
-    const applicableRules = activeRules.filter((r) => matchesScope(fileName, r.scope as Record<string, unknown>));
+    await stepStarted(reviewId, 'FETCHING_RULES', env);
+    const activeRules = await getActiveRules(fullRepo, env);
+    await stepCompleted(reviewId, 'FETCHING_RULES', env);
+
+    const gemini = new GeminiClient(env);
+    const allFindings = [...state.accumulatedFindings];
+    const filesToProcess = [...remainingFiles];
+
+    while (filesToProcess.length > 0) {
+      const batch = filesToProcess.splice(0, MAX_FILES_PER_BATCH);
+
+      await stepStarted(reviewId, 'REVIEWING_FILES', env, {
+        batchIndex: state.batchIndex,
+        fileNames: batch,
+      });
+
+      const results = await Promise.allSettled(
+        batch.map(fileName => reviewSingleFile(gemini, fileName, fileChunks, activeRules, env))
+      );
+
+      const exhausted = results.find(
+        r => r.status === 'rejected' && r.reason instanceof AllKeysExhaustedError
+      );
+
+      if (exhausted) {
+        state.accumulatedFindings = allFindings;
+        await saveReviewState(fullRepo, prNumber, state, redisSet);
+        await markReviewPaused(reviewId, env);
+
+        await postComment(owner, repo, prNumber,
+          "⏳ All Gemini API keys are rate-limited right now. " +
+          "Reply `@parakh review` in a minute to pick this back up.",
+          token
+        );
+        return; 
+      }
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status === 'fulfilled') {
+          allFindings.push(...r.value);
+        } else {
+          console.error(`[review] Error reviewing ${batch[i]}:`, r.reason);
+        }
+        state.completedFiles.push(batch[i]);
+      }
+
+      await stepCompleted(reviewId, 'REVIEWING_FILES', env, {
+        batchIndex: state.batchIndex,
+        completedCount: state.completedFiles.length,
+        totalCount: state.allFiles.length,
+      });
+
+      state.batchIndex++;
+      state.accumulatedFindings = allFindings;
+      await saveReviewState(fullRepo, prNumber, state, redisSet);
+
+      if (filesToProcess.length > 0) {
+        await delay(GEMINI_RATE_LIMITS.PER_FILE_DELAY_MS);
+      }
+    }
+
+    await finalizeReview(reviewId, allFindings, owner, repo, prNumber, token, env);
+
+  } finally {
+    await releaseReviewLock(fullRepo, prNumber, env).catch(err =>
+      console.warn('[review] Failed to release lock:', err)
+    );
 
     try {
-      const result = await gemini.reviewDiff(fileName, fileDiff, applicableRules);
-
-      // 6a. Generic findings — severity from LLM (as-is)
-      for (const gf of result.genericFindings) {
-        allFindings.push({
-          severity: gf.severity,
-          file: gf.file || fileName,
-          line: gf.line,
-          body: gf.body,
-          suggestion: gf.suggestion || null,
-          rule_id: null,
-        });
-      }
-
-      // 6b. Rule findings — severity computed in code from rule priority
-      for (const rf of result.ruleFindings) {
-        // Look up the rule to get its priority
-        const rule = applicableRules.find((r) => r.id === rf.rule_id);
-        const priority = rule?.priority || 'normal';
-
-        // DETERMINISTIC: severity from code, not LLM
-        const severity = resolveSeverityForRuleViolation(priority);
-
-        allFindings.push({
-          severity,
-          file: rf.file || fileName,
-          line: rf.line,
-          body: rf.body,
-          suggestion: rf.suggestion || null,
-          rule_id: rf.rule_id,
-        });
-
-        // 7. Increment evidence_count per violation instance
-        if (rule) {
-          await incrementEvidenceCount(rule.id, env);
-        }
+      const review = await getReview(reviewId, env);
+      if (review?.status === 'COMPLETED') {
+        const redisDel = createRedisDel(env);
+        await redisDel(REVIEW_STATE_KEY(fullRepo, prNumber));
       }
     } catch (err) {
-      console.error(`[review] Error reviewing ${fileName}:`, err);
-      // Continue with other files — don't fail the whole review for one file
+      console.warn('[review] Failed to check/clean review state:', err);
     }
 
-    // Rate limiting — space out per-file calls
-    if (fileChunks.size > 1) {
-      await delay(GEMINI_RATE_LIMITS.PER_FILE_DELAY_MS);
-    }
+    resetProgressTracking(reviewId);
   }
-
-  // 8. Compute score (DETERMINISTIC)
-  const rawScore = computeScore(allFindings);
-  const score = displayScore(rawScore);
-
-  console.log(`[review] ${fullRepo}#${prNumber}: ${allFindings.length} findings, score ${score}/5`);
-
-  // 9-13. Finalize
-  await finalizeReview(reviewId, score, allFindings, owner, repo, prNumber, token, env);
 }
 
-/**
- * Finalize a review: update DB, remove 👀, post comment, post verdict reaction.
- */
 async function finalizeReview(
   reviewId: string,
-  score: number,
   findings: Finding[],
   owner: string,
   repo: string,
@@ -351,10 +439,11 @@ async function finalizeReview(
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
-  // 9. Update review record
+  const rawScore = computeScore(findings);
+  const score = displayScore(rawScore);
+
   await updateReviewResults(reviewId, score, findings, env);
 
-  // 10. Remove 👀 reaction
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
   if (review?.seen_reaction_id) {
     try {
@@ -364,9 +453,8 @@ async function finalizeReview(
     }
   }
 
-  // 11. Post summary comment
   const comment = formatReviewComment(
-    computeScore(findings), // raw score for breakdown display
+    rawScore,
     score,
     findings,
     fullRepo,
@@ -374,16 +462,13 @@ async function finalizeReview(
   );
   await postComment(owner, repo, prNumber, comment, token);
 
-  // 12. Post verdict reaction based on thresholds
   let verdictReactionId: number | null = null;
   if (score >= POSITIVE_THRESHOLD) {
     verdictReactionId = await addReaction(owner, repo, prNumber, REACTIONS.POSITIVE, token);
   } else if (score < NEGATIVE_THRESHOLD) {
     verdictReactionId = await addReaction(owner, repo, prNumber, REACTIONS.NEGATIVE, token);
   }
-  // 2.5 ≤ score < 4.0 → no reaction (mixed result, let inline comments speak)
 
-  // 13. Update review to COMPLETED with reaction IDs
   if (verdictReactionId !== null) {
     await updateReviewReactions(reviewId, env, undefined, verdictReactionId);
   }

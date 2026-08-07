@@ -65,7 +65,7 @@ export async function executeContradictionJob(
   console.log(`[contradiction] Found ${candidates.length} candidate(s) for ${ruleId}`);
 
   // 2. Classify relationship with each candidate
-  const gemini = new GeminiClient(env.GEMINI_API_KEY);
+  const gemini = new GeminiClient(env);
 
   // Get token for posting comments (only needed if we find something)
   let token: string | null = null;
