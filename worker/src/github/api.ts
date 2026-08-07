@@ -224,6 +224,67 @@ export async function removeReaction(
 }
 
 /**
+ * Add a reaction to a specific comment (top-level issue comment or inline
+ * review comment). Returns the reaction ID (needed for later removal).
+ *
+ * Same issue_comment vs pull_request_review_comment branch used by
+ * postComment/replyToReviewComment — reactions can't be edited in place on
+ * GitHub, only added or removed, so the current id is tracked for the swap.
+ */
+export async function addCommentReaction(
+  owner: string,
+  repo: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
+  content: '+1' | '-1' | 'eyes' | 'confused',
+  token: string
+): Promise<number> {
+  const path = commentType === 'pull_request_review_comment'
+    ? `pulls/comments/${commentId}/reactions`
+    : `issues/comments/${commentId}/reactions`;
+  const data = await githubFetch<{ id: number }>(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+    token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+      body: JSON.stringify({ content }),
+    }
+  );
+  return data.id;
+}
+
+/**
+ * Remove a reaction from a specific comment.
+ * Requires the reaction's own ID (returned by addCommentReaction).
+ */
+export async function removeCommentReaction(
+  owner: string,
+  repo: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
+  reactionId: number,
+  token: string
+): Promise<void> {
+  const path = commentType === 'pull_request_review_comment'
+    ? `pulls/comments/${commentId}/reactions/${reactionId}`
+    : `issues/comments/${commentId}/reactions/${reactionId}`;
+  const response = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+    {
+      method: 'DELETE',
+      headers: headers(token),
+    }
+  );
+
+  // 204 No Content is success for DELETE
+  if (!response.ok && response.status !== 204) {
+    const body = await response.text();
+    throw new Error(`Failed to remove comment reaction (${response.status}): ${body}`);
+  }
+}
+
+/**
  * Get PR details (for head SHA, etc.).
  */
 export async function getPRDetails(

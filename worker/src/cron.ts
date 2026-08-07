@@ -5,6 +5,7 @@
 import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning } from './db/reviews.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
+import { swapCommentReaction } from './jobs/review.js';
 import { createRedisGet, createRedisSet } from './redis.js';
 import type { Env } from './index.js';
 
@@ -54,6 +55,17 @@ export async function handleCronTrigger(env: Env): Promise<void> {
           token
         );
         console.log(`[cron] Swept and failed stalled review ${review.repo}#${review.pr_number} at stage ${stage}`);
+
+        // The review is now FAILED. If it was triggered by a comment, replace
+        // the in-progress 👀 on that comment with 😕 (no ❌ reaction exists on
+        // GitHub; -1 is reserved for the low-score verdict).
+        if (review.trigger_comment_id) {
+          try {
+            await swapCommentReaction(review, 'confused', owner, repo, token, env);
+          } catch (err) {
+            console.error(`[cron] Failed to swap trigger-comment reaction for ${reviewId}:`, err);
+          }
+        }
       } catch (err) {
         console.error(`[cron] Failed to post timeout comment for ${reviewId}:`, err);
       }
