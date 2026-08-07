@@ -33,7 +33,7 @@ import {
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const GENERATION_MODEL = 'gemini-2.5-flash';
-const EMBEDDING_MODEL = 'text-embedding-004';
+const EMBEDDING_MODEL = 'embedding-001';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
