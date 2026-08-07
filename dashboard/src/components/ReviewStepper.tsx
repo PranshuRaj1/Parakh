@@ -25,6 +25,7 @@ interface ProgressResponse {
   stepDetail: Record<string, unknown> | null;
   startedAt: string | null;
   eta: EtaResult | null;
+  activeStepLogs?: { at: string; code: string; detail: string }[];
   error?: string;
 }
 
@@ -71,7 +72,6 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
 
   const currentStepIndex = STEPS.findIndex(s => s.id === progress.currentStep);
   const isFailed = progress.status === 'FAILED';
-  const isPaused = progress.status === 'PAUSED_RATE_LIMITED';
 
   return (
     <div className="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto border border-gray-100">
@@ -92,9 +92,6 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
             if (isFailed) {
               icon = <AlertCircle className="h-5 w-5 text-red-500" />;
               textColor = "text-red-600 font-medium";
-            } else if (isPaused) {
-               icon = <AlertCircle className="h-5 w-5 text-yellow-500" />;
-               textColor = "text-yellow-600 font-medium";
             } else {
               icon = <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
               textColor = "text-blue-600 font-medium";
@@ -139,10 +136,30 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
         </div>
       )}
 
-      {isPaused && (
-        <div className="mt-8 p-4 bg-yellow-50 rounded-md border border-yellow-200">
-           <p className="text-sm text-yellow-800 font-medium">Paused (Rate Limited)</p>
-           <p className="text-sm text-yellow-600 mt-1">All Gemini API keys are currently exhausted. The review will automatically retry when keys refresh, or you can reply with `@parakh review` in the PR to retry manually.</p>
+      {progress.activeStepLogs && progress.activeStepLogs.length > 0 && (
+        <div className="mt-8 pt-4 border-t border-gray-100">
+           <div className="flex items-center justify-between mb-3">
+             <h4 className="text-sm font-medium text-gray-700">Live Stage Logs</h4>
+             <span className="flex h-2 w-2 relative">
+               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+             </span>
+           </div>
+           <div className="bg-gray-50 rounded-md border border-gray-200 p-3 max-h-48 overflow-y-auto">
+             <ul className="space-y-1.5 text-xs font-mono text-gray-600">
+                {progress.activeStepLogs.map((log, i) => (
+                   <li key={i} className="flex">
+                      <span className="text-gray-400 w-16 flex-shrink-0">
+                         {new Date(log.at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className={`font-semibold mr-2 ${log.code === 'RATE_LIMITED_BACKOFF' ? 'text-yellow-600' : 'text-blue-600'}`}>
+                         [{log.code}]
+                      </span>
+                      <span className="text-gray-700">{log.detail}</span>
+                   </li>
+                ))}
+             </ul>
+           </div>
         </div>
       )}
     </div>

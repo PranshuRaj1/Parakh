@@ -81,9 +81,7 @@ export default async function PullsPage({
                         </div>
                         <div>
                           <a 
-                            href={`https://github.com/${repo}/pull/${review.pr_number}`} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
+                            href={`/pulls/${repo}/${review.pr_number}`} 
                             className="text-lg font-medium text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                           >
                             PR #{review.pr_number}

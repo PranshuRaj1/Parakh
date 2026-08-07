@@ -73,18 +73,18 @@ export async function getAvgDurationByStep(repo: string | null): Promise<Map<str
   let rows;
   if (repo) {
     rows = await sql`
-      SELECT rse.step, AVG(rse.duration_ms) AS avg_ms
+      SELECT rse.stage as step, AVG(rse.duration_ms) AS avg_ms
       FROM review_step_events rse
       JOIN reviews r ON r.id = rse.review_id
-      WHERE rse.status = 'COMPLETED' AND rse.step != 'REVIEWING_FILES'
+      WHERE rse.outcome = 'COMPLETED' AND rse.stage != 'REVIEWING_FILES'
         AND r.repo = ${repo}
       GROUP BY rse.step;
     `;
   } else {
     rows = await sql`
-      SELECT rse.step, AVG(rse.duration_ms) AS avg_ms
+      SELECT rse.stage as step, AVG(rse.duration_ms) AS avg_ms
       FROM review_step_events rse
-      WHERE rse.status = 'COMPLETED' AND rse.step != 'REVIEWING_FILES'
+      WHERE rse.outcome = 'COMPLETED' AND rse.stage != 'REVIEWING_FILES'
       GROUP BY rse.step;
     `;
   }
@@ -101,17 +101,17 @@ export async function getAvgMsPerFile(repo: string | null): Promise<number> {
   let rows;
   if (repo) {
     rows = await sql`
-      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'batchSize')::int, 0)) AS avg_ms_per_file
+      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'filesProcessed')::int, 0)) AS avg_ms_per_file
       FROM review_step_events rse
       JOIN reviews r ON r.id = rse.review_id
-      WHERE rse.step = 'REVIEWING_FILES' AND rse.status = 'COMPLETED'
+      WHERE rse.stage = 'REVIEWING_FILES' AND rse.outcome = 'COMPLETED'
         AND r.repo = ${repo};
     `;
   } else {
     rows = await sql`
-      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'batchSize')::int, 0)) AS avg_ms_per_file
+      SELECT AVG(rse.duration_ms::float / NULLIF((rse.detail->>'filesProcessed')::int, 0)) AS avg_ms_per_file
       FROM review_step_events rse
-      WHERE rse.step = 'REVIEWING_FILES' AND rse.status = 'COMPLETED';
+      WHERE rse.stage = 'REVIEWING_FILES' AND rse.outcome = 'COMPLETED';
     `;
   }
   return Number(rows[0]?.avg_ms_per_file) || 0;
@@ -120,9 +120,9 @@ export async function getAvgMsPerFile(repo: string | null): Promise<number> {
 export async function getCompletedStepsForReview(reviewId: string): Promise<{ step: string; duration_ms: number | null }[]> {
   const sql = getSql();
   const rows = await sql`
-    SELECT step, duration_ms
+    SELECT stage as step, duration_ms
     FROM review_step_events
-    WHERE review_id = ${reviewId}::uuid AND status = 'COMPLETED'
+    WHERE review_id = ${reviewId}::uuid AND outcome = 'COMPLETED'
   `;
   return rows as { step: string; duration_ms: number | null }[];
 }
@@ -132,8 +132,8 @@ export async function getLatestReviewingFilesDetail(reviewId: string): Promise<{
   const rows = await sql`
     SELECT detail
     FROM review_step_events
-    WHERE review_id = ${reviewId}::uuid AND step = 'REVIEWING_FILES' AND status IN ('STARTED', 'COMPLETED')
-    ORDER BY created_at DESC
+    WHERE review_id = ${reviewId}::uuid AND stage = 'REVIEWING_FILES'
+    ORDER BY started_at DESC
     LIMIT 1
   `;
   if (!rows[0] || !rows[0].detail) return null;
@@ -150,7 +150,29 @@ export async function getStepEventsForReview(reviewId: string) {
     SELECT *
     FROM review_step_events
     WHERE review_id = ${reviewId}::uuid
-    ORDER BY created_at ASC
+    ORDER BY started_at ASC
   `;
   return rows;
+}
+
+export async function getActiveStepEvent(reviewId: string) {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT stage, attempt_number, reason_transitions
+    FROM review_step_events
+    WHERE review_id = ${reviewId}::uuid AND ended_at IS NULL
+    ORDER BY started_at DESC
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function getReviewByPr(repo: string, prNumber: number): Promise<Review | null> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT * FROM reviews WHERE repo = ${repo} AND pr_number = ${prNumber}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as Review) || null;
 }
