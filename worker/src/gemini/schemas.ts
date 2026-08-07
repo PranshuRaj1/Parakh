@@ -100,7 +100,7 @@ export const intentResponseSchema = {
   properties: {
     intent: {
       type: 'STRING' as SchemaType,
-      enum: ['CORRECTION', 'EXPLANATION', 'DISMISSAL', 'QUESTION'],
+      enum: ['CORRECTION', 'EXPLANATION', 'DISMISSAL', 'QUESTION', 'REVIEW_REQUEST', 'GENERAL'],
       description: 'The intent behind the user reply to the bot comment.',
     },
   },

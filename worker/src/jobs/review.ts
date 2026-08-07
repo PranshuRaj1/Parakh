@@ -27,10 +27,17 @@ import {
   removeReaction,
   getPRDetails,
 } from '../github/api.js';
-import { GeminiClient } from '../gemini/client.js';
+import {
+  updateReviewStatus,
+  updateReviewResults,
+  updateReviewReactions,
+  getLatestReviewByPR,
+  insertReview,
+} from '../db/reviews.js';
 import { getActiveRules, getRuleById, incrementEvidenceCount } from '../db/rules.js';
-import { updateReviewStatus, updateReviewResults, updateReviewReactions } from '../db/reviews.js';
+import { GeminiClient } from '../gemini/client.js';
 import type { Env } from '../index.js';
+import { createRedisGet, createRedisSet } from '../redis.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -161,18 +168,89 @@ function formatReviewComment(
  * 12. Post verdict reaction based on thresholds
  * 13. Update review to COMPLETED
  */
+
+export async function triggerReview(
+  installationId: number,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  reason: 'opened' | 'synchronize' | 'manual_mention',
+  env: Env
+): Promise<void> {
+  const fullRepo = `${owner}/${repo}`;
+  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+  const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+
+  // On synchronize or manual_mention: clean up previous verdict reaction
+  if (reason === 'synchronize' || reason === 'manual_mention') {
+    const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
+    if (previousReview?.verdict_reaction_id) {
+      try {
+        await removeReaction(owner, repo, prNumber, previousReview.verdict_reaction_id, token);
+      } catch (err) {
+        console.warn(`[review] Failed to remove previous verdict reaction:`, err);
+      }
+    }
+  }
+
+  // Post 👀 reaction SYNCHRONOUSLY
+  const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+
+  // Post an acknowledgment comment only for webhook triggers
+  if (reason !== 'manual_mention') {
+    await postComment(
+      owner,
+      repo,
+      prNumber,
+      "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
+      token
+    );
+  }
+
+  // Insert new review record
+  const review = await insertReview(
+    {
+      repo: fullRepo,
+      pr_number: prNumber,
+      status: 'SEEN',
+      seen_reaction_id: seenReactionId,
+      trigger_reason: reason,
+    },
+    env
+  );
+
+  const payload: ReviewJobPayload = {
+    type: 'REVIEW',
+    installationId,
+    owner,
+    repo,
+    prNumber,
+    reviewId: review.id,
+  };
+
+  await executeReviewJobInternal(payload, env, token);
+}
+
 export async function executeReviewJob(
   payload: ReviewJobPayload,
   env: Env
 ): Promise<void> {
-  const { installationId, owner, repo, prNumber, reviewId } = payload;
+  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+  const token = await getCachedToken(payload.installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+  await executeReviewJobInternal(payload, env, token);
+}
+
+async function executeReviewJobInternal(
+  payload: ReviewJobPayload,
+  env: Env,
+  token: string
+): Promise<void> {
+  const { owner, repo, prNumber, reviewId } = payload;
   const fullRepo = `${owner}/${repo}`;
 
   console.log(`[review] Starting review for ${fullRepo}#${prNumber}`);
 
-  // 1. Get installation token
-  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
-  const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+  // 1. Get installation token (already provided)
 
   // 2. Update review status
   await updateReviewStatus(reviewId, 'REVIEWING', env);
@@ -312,26 +390,4 @@ async function finalizeReview(
   await updateReviewStatus(reviewId, 'COMPLETED', env);
 
   console.log(`[review] Completed review for ${fullRepo}#${prNumber}: ${score}/5`);
-}
-
-// ─── Redis Helpers (duplicated from handler.ts — will refactor into shared util) ─
-
-function createRedisGet(env: Env): (key: string) => Promise<string | null> {
-  return async (key: string) => {
-    const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${key}`, {
-      headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
-    });
-    const data = (await response.json()) as { result: string | null };
-    return data.result;
-  };
-}
-
-function createRedisSet(env: Env): (key: string, value: string, opts?: { ex?: number }) => Promise<unknown> {
-  return async (key: string, value: string, opts?: { ex?: number }) => {
-    const args = opts?.ex ? `/${key}/${value}/EX/${opts.ex}` : `/${key}/${value}`;
-    const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
-      headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
-    });
-    return response.json();
-  };
 }

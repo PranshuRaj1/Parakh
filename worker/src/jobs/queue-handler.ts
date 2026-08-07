@@ -7,7 +7,7 @@
 
 import type { JobPayload } from '@parakh/shared';
 import { executeReviewJob } from './review.js';
-import { executeCorrectionJob } from './correction.js';
+import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
 import type { Env } from '../index.js';
 
@@ -30,9 +30,9 @@ export async function handleQueueBatch(
           message.ack();
           break;
 
-        case 'CORRECTION':
-          console.log(`[queue] Processing CORRECTION job: ${payload.owner}/${payload.repo}#${payload.prNumber}`);
-          await executeCorrectionJob(payload, env);
+        case 'COMMENT_RESPONSE':
+          console.log(`[queue] Processing COMMENT_RESPONSE job: ${payload.owner}/${payload.repo}#${payload.prNumber}`);
+          await executeCommentResponseJob(payload, env);
           message.ack();
           break;
 
