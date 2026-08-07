@@ -1,0 +1,16 @@
+name = "parakh-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# No queues configured for free-tier deploy
+
+# Secrets (set via `wrangler secret put <NAME>`):
+# GITHUB_APP_ID
+# GITHUB_APP_PRIVATE_KEY
+# GITHUB_WEBHOOK_SECRET
+# GEMINI_API_KEY
+# DATABASE_URL
+# UPSTASH_REDIS_URL
+# UPSTASH_REDIS_TOKEN
+# WORKER_API_SECRET

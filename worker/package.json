@@ -1,0 +1,23 @@
+{
+  "name": "@parakh/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "@neondatabase/serverless": "^0.10.0",
+    "@upstash/redis": "^1.34.0",
+    "@parakh/shared": "*"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0",
+    "typescript": "^5.7.0",
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "vitest": "^3.0.0"
+  }
+}

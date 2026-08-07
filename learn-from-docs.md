@@ -33,32 +33,27 @@ My opinion may change as I learn more. A quote I love, and one that is mine, is:
 ## What Greptile Does to Validate Code Changes
 
 1. **Deeply understand the product, the business, the codebase, and the intent of the change**
-
-   * Build internal knowledge for every part of the codebase.
-   * Store context about the architecture as well.
+   - Build internal knowledge for every part of the codebase.
+   - Store context about the architecture as well.
 
 2. **Understand the blast radius of the change**
-
-   * Changes can be harmless on their own but introduce a new bug two function calls away, in an unchanged part of the codebase.
+   - Changes can be harmless on their own but introduce a new bug two function calls away, in an unchanged part of the codebase.
 
 3. **Read changed files and related files, then evaluate architectural decisions and tradeoffs**
-
-   * Use a knowledge base to eliminate the tens of thousands of tokens an agent would otherwise spend relearning how the codebase works.
-   * Use fast open source models for simple but token heavy tasks, such as running searches and following traces, which do not need frontier intelligence.
+   - Use a knowledge base to eliminate the tens of thousands of tokens an agent would otherwise spend relearning how the codebase works.
+   - Use fast open source models for simple but token heavy tasks, such as running searches and following traces, which do not need frontier intelligence.
 
 4. **Run the code and simulate users**
-
-   * Test the application through browser and mobile agents.
-   * Simulate production traffic on backend APIs.
+   - Test the application through browser and mobile agents.
+   - Simulate production traffic on backend APIs.
 
 5. **Ensure the code is secure through agents and comprehensive security scans**
 
    Greptile’s approach is hybrid. It lets agents use deterministic scanners to reduce the entropy of the search space. AI then eliminates false positives and detects chained exploits.
 
 6. **Continuously learn from other patches and engineers’ comments**
-
-   * New pull requests create new problems. I learned this myself.
-   * Pull requests merged before or while my pull request is being reviewed can also create problems. Generally, teams discuss this on an engineering page or group. I feel our team was not connected to Greptile in this way.
+   - New pull requests create new problems. I learned this myself.
+   - Pull requests merged before or while my pull request is being reviewed can also create problems. Generally, teams discuss this on an engineering page or group. I feel our team was not connected to Greptile in this way.
 
 ## Models and Cost Efficiency
 
@@ -71,3 +66,23 @@ It is like having a WeGov solution for each problem, while choosing more efficie
 Now I really understand why we have data structure and algorithm classes in college, from improving an O(n squared) approach to an O(n log n) approach.
 
 It is interesting that we could have used only frontier models and created two or three agents that discuss with each other to find the exact location of what is wrong. That flow would have been simple, but it would also have been time consuming and expensive, especially in this era where model costs can quickly get out of hand.
+
+# MODEL INVERSION -> Asked Rodrigo a question, pretty sure its late night there so scheduled it for 9 AM SF timing. Once i get my answers I will write my thoughts here
+
+# TREX -> TEST, RUN, EXECUTE
+
+TREX doesn't start from scratch. It inherits what the Greptile reviewer agent already found, has its own context window, and is scoped to the specific problem it's been asked to investigate.
+
+The Greptile reviewer agent acts as an orchestrator. It reads the diff, identifies issues worth investigating, and spins up a dedicated TREX agent per issue, all running in parallel. The TREX agents have the liberty, the compute, and the knowledge of the orchestrator agent.
+
+![alt text](image-1.png)
+
+This is very intresting.
+
+"WOOOW" -> The first artifact that made us say "Wow" was video. If you push an animation change, TREX captures a video of it playing. You can see exactly what the animation looks like without opening a local environment.
+
+It's intresting specially while I learned how evals for frontend is very difiicult as it more subjective but still this is very nice aspect to check the implementation.
+
+Not every run needs to find something wrong to be useful.
+
+understandable trade-off : We intentionally deprioritize latency in our evaluation. A developer waiting on a review would rather wait a little longer and get something accurate than get a fast answer they can't trust.

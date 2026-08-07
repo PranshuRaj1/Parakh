@@ -1,0 +1,18 @@
+{
+  "name": "parakh",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "worker",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.4",
+    "pg": "^8.22.0"
+  }
+}
