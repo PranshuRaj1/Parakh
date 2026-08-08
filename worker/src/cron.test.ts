@@ -14,7 +14,7 @@ vi.mock('./redis.js', () => ({
   createRedisGet: vi.fn(),
   createRedisSet: vi.fn(),
 }));
-vi.mock('./jobs/review.js', () => ({ swapCommentReaction: vi.fn() }));
+vi.mock('./jobs/review.js', () => ({ swapCommentReaction: vi.fn(), releaseReviewLock: vi.fn() }));
 
 import { handleCronTrigger } from './cron.js';
 import {
@@ -25,7 +25,7 @@ import {
 } from './db/reviews.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
-import { swapCommentReaction } from './jobs/review.js';
+import { swapCommentReaction, releaseReviewLock } from './jobs/review.js';
 
 const mocked = {
   pruneExpiredReasoning: vi.mocked(pruneExpiredReasoning),
@@ -35,6 +35,7 @@ const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
   swapCommentReaction: vi.mocked(swapCommentReaction),
+  releaseReviewLock: vi.mocked(releaseReviewLock),
 };
 
 const env = {
@@ -79,6 +80,8 @@ describe('handleCronTrigger', () => {
 
     expect(mocked.dbTimeoutStage).toHaveBeenNthCalledWith(1, 'r1', 'FETCHING_DIFF', 2, env);
     expect(mocked.dbTimeoutStage).toHaveBeenNthCalledWith(2, 'r2', 'REVIEWING_FILES', 1, env);
+    expect(mocked.releaseReviewLock).toHaveBeenNthCalledWith(1, 'acme/app', 7, env);
+    expect(mocked.releaseReviewLock).toHaveBeenNthCalledWith(2, 'acme/app', 7, env);
     expect(mocked.postComment).toHaveBeenCalledTimes(2);
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7,

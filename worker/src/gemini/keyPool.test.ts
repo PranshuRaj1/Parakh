@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AllKeysExhaustedError, getKeyPool, isModelUnavailableError, isRateLimitError } from './keyPool.js';
+import {
+  AllKeysExhaustedError,
+  DailyQuotaExhaustedError,
+  getKeyPool,
+  isDailyQuotaError,
+  isModelUnavailableError,
+  isRateLimitError,
+} from './keyPool.js';
 
 describe('getKeyPool', () => {
   it('splits comma-separated keys, trimming whitespace and dropping empties', () => {
@@ -50,6 +57,36 @@ describe('isModelUnavailableError', () => {
   it('is distinct from rate-limit errors', () => {
     expect(isModelUnavailableError(new Error('429 quota exceeded'))).toBe(false);
     expect(isModelUnavailableError('plain')).toBe(false);
+  });
+});
+
+describe('isDailyQuotaError', () => {
+  it('detects daily-quota exhaustion signals', () => {
+    for (const msg of [
+      '429 RESOURCE_EXHAUSTED: Quota exceeded for project, 20 requests per day',
+      'daily limit exceeded',
+      'DailyLimitExceeded: quota exhausted for the day',
+      'quota exceeded for the day',
+    ]) {
+      expect(isDailyQuotaError(new Error(msg))).toBe(true);
+    }
+  });
+
+  it('returns false for transient rate limits and non-errors', () => {
+    expect(isDailyQuotaError(new Error('429 quota exceeded'))).toBe(false);
+    expect(isDailyQuotaError(new Error('rate limit exceeded'))).toBe(false);
+    expect(isDailyQuotaError('per day')).toBe(false);
+    expect(isDailyQuotaError(null)).toBe(false);
+  });
+});
+
+describe('DailyQuotaExhaustedError', () => {
+  it('is an AllKeysExhaustedError with a distinct name', () => {
+    const err = new DailyQuotaExhaustedError(new Error('quota for the day'));
+    expect(err).toBeInstanceOf(AllKeysExhaustedError);
+    expect(err.name).toBe('DailyQuotaExhaustedError');
+    expect(err.message).toContain('daily quota');
+    expect(err.lastError.message).toBe('quota for the day');
   });
 });
 

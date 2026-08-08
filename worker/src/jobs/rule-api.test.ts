@@ -6,11 +6,16 @@ const { generateEmbeddingMock, classifyPriorityMock } = vi.hoisted(() => ({
   classifyPriorityMock: vi.fn(),
 }));
 
-vi.mock('../gemini/client.js', () => ({
-  GeminiClient: class {
-    generateEmbedding = generateEmbeddingMock;
-    classifyPriority = classifyPriorityMock;
-  },
+vi.mock('../llm/factory.js', () => ({
+  createLLMClients: () => ({
+    llm: {
+      classifyPriority: classifyPriorityMock,
+    },
+    gemini: {
+      generateEmbedding: generateEmbeddingMock,
+    },
+    groq: {},
+  }),
 }));
 
 vi.mock('./contradiction.js', () => ({ executeContradictionJob: vi.fn() }));

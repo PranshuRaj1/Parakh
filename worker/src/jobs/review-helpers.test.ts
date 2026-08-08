@@ -5,6 +5,7 @@ import {
   formatReviewComment,
   appendDashboardLink,
   parseRetentionDays,
+  isIgnoredLockfile,
 } from './review.js';
 import type { Finding } from '@parakh/shared';
 
@@ -85,6 +86,25 @@ describe('parseDiffByFile', () => {
 
   it('returns an empty map for an empty diff', () => {
     expect(parseDiffByFile('').size).toBe(0);
+  });
+});
+
+describe('isIgnoredLockfile', () => {
+  it('matches lockfiles at the repo root', () => {
+    expect(isIgnoredLockfile('package-lock.json')).toBe(true);
+    expect(isIgnoredLockfile('yarn.lock')).toBe(true);
+    expect(isIgnoredLockfile('pnpm-lock.yaml')).toBe(true);
+  });
+
+  it('matches lockfiles nested in subdirectories', () => {
+    expect(isIgnoredLockfile('apps/web/package-lock.json')).toBe(true);
+    expect(isIgnoredLockfile('packages/foo/yarn.lock')).toBe(true);
+  });
+
+  it('does not match regular source files', () => {
+    expect(isIgnoredLockfile('src/cron.ts')).toBe(false);
+    expect(isIgnoredLockfile('package.json')).toBe(false);
+    expect(isIgnoredLockfile('docs/guide.md')).toBe(false);
   });
 });
 

@@ -3,10 +3,14 @@ import type { Env } from '../index.js';
 
 const { classifyRelationshipMock } = vi.hoisted(() => ({ classifyRelationshipMock: vi.fn() }));
 
-vi.mock('../gemini/client.js', () => ({
-  GeminiClient: class {
-    classifyRelationship = classifyRelationshipMock;
-  },
+vi.mock('../llm/factory.js', () => ({
+  createLLMClients: () => ({
+    llm: {
+      classifyRelationship: classifyRelationshipMock,
+    },
+    gemini: {},
+    groq: {},
+  }),
 }));
 
 vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));

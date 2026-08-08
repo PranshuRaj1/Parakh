@@ -74,7 +74,7 @@ describe('handleRetryReview', () => {
     await expect(res.json()).resolves.toEqual({ status: 'retry_enqueued' });
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
-      'r1', false, 'del'
+      'r1', 'del'
     );
     expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
   });
