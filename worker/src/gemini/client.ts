@@ -62,7 +62,7 @@ export interface ReviewResult {
  * thought parts — which would corrupt JSON.parse, so we must split manually.
  * Thinking parts are surfaced as `{ thought: true, text }` in the REST payload.
  */
-function extractResponseWithThinking(
+export function extractResponseWithThinking(
   response: { candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> } }> }
 ): { jsonText: string; thinking: string } {
   const parts = response.candidates?.[0]?.content?.parts ?? [];

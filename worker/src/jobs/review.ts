@@ -65,31 +65,51 @@ function delay(ms: number): Promise<void> {
 
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
 
-function parseRetentionDays(raw?: string): number {
+export function parseRetentionDays(raw?: string): number {
   const n = parseInt(raw ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_REASONING_RETENTION_DAYS;
 }
 
-function matchesScope(filePath: string, scope: Record<string, unknown>): boolean {
+function globToRegExp(pattern: string): RegExp {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        // Globstar matches zero or more path segments.
+        if (pattern[i + 2] === '/') {
+          source += '(?:.*/)?';
+          i += 2;
+        } else {
+          source += '.*';
+          i++;
+        }
+      } else {
+        // Bare * never crosses a path separator.
+        source += '[^/]*';
+      }
+    } else if (ch === '?') {
+      source += '[^/]';
+    } else if ('.+()[]{}$^|\\'.includes(ch)) {
+      source += '\\' + ch;
+    } else {
+      source += ch;
+    }
+  }
+  return new RegExp(source + '$');
+}
+
+export function matchesScope(filePath: string, scope: Record<string, unknown>): boolean {
   const patterns = scope.include as string[] | undefined;
   if (!patterns || patterns.length === 0) return true;
 
   return patterns.some((pattern) => {
-    const regex = new RegExp(
-      '^' +
-      pattern
-        .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-        .replace(/\*/g, '[^/]*')
-        .replace(/<<<GLOBSTAR>>>/g, '.*')
-        .replace(/\?/g, '[^/]')
-        .replace(/\./g, '\\.') +
-      '$'
-    );
+    const regex = globToRegExp(pattern);
     return regex.test(filePath);
   });
 }
 
-function parseDiffByFile(diff: string): Map<string, string> {
+export function parseDiffByFile(diff: string): Map<string, string> {
   const files = new Map<string, string>();
   const fileDiffs = diff.split(/^diff --git /m).slice(1);
   for (const fileDiff of fileDiffs) {
@@ -101,7 +121,7 @@ function parseDiffByFile(diff: string): Map<string, string> {
   return files;
 }
 
-function appendDashboardLink(
+export function appendDashboardLink(
   comment: string,
   repo: string,
   prNumber: number,
@@ -114,7 +134,7 @@ function appendDashboardLink(
   return `${comment}\n---\n🔍 *Want the model's reasoning? See per-file analysis on the [Parakh dashboard](${base}/pulls/${owner}/${repoName}/${prNumber}).*\n`;
 }
 
-function formatReviewComment(
+export function formatReviewComment(
   score: number,
   displayedScore: number,
   findings: Finding[],
