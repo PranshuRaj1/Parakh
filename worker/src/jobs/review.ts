@@ -242,7 +242,7 @@ async function reviewSingleFile(
     console.error(`[review] Error reviewing ${fileName}:`, err);
     if (captureReasoning) {
       await saveReviewReasoning(reviewId, fileName, {
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         errorMessage: sanitizeErrorText(message),
         retentionDays,
       }, env).catch(e => console.warn('[review] Failed to save per-file reasoning:', e));
@@ -252,7 +252,7 @@ async function reviewSingleFile(
 
   if (captureReasoning && result.thinking) {
     await saveReviewReasoning(reviewId, fileName, {
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       thinking: result.thinking,
       retentionDays,
     }, env).catch(e => console.warn('[review] Failed to save reasoning:', e));

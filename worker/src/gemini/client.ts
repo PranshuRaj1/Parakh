@@ -34,12 +34,12 @@ import {
   buildPriorityPrompt,
   buildReplyPrompt,
 } from './prompts.js';
-import { getKeyPool, isRateLimitError, AllKeysExhaustedError } from './keyPool.js';
+import { getKeyPool, isRateLimitError, isModelUnavailableError, AllKeysExhaustedError } from './keyPool.js';
 import { sanitizeErrorText } from '../jobs/sanitize.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const GENERATION_MODEL = 'gemini-2.5-flash';
+const GENERATION_MODEL = 'gemini-3-flash-preview';
 const EMBEDDING_MODEL = 'text-embedding-004';
 
 // ─── Reasoning Capture Config ────────────────────────────────────────────────
@@ -141,7 +141,19 @@ export class GeminiClient {
         this.sharedKeyHint = keyIndex;
         return result;
       } catch (err) {
-        if (!isRateLimitError(err)) throw err;
+        if (!isRateLimitError(err)) {
+          // A key that can't serve the current model (e.g. 404 "model not
+          // available to new users") should be skipped, not allowed to abort
+          // the whole call — otherwise one bad key silently kills every job.
+          if (isModelUnavailableError(err)) {
+            console.warn(
+              `[gemini] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${GENERATION_MODEL}, trying next...`
+            );
+            lastError = err as Error;
+            continue;
+          }
+          throw err;
+        }
         lastError = err as Error;
         console.warn(
           `[gemini] Key ${keyIndex + 1}/${this.keys.length} rate-limited, ` +
