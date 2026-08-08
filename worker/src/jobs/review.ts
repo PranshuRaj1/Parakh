@@ -476,9 +476,20 @@ async function executeReviewJobInternal(
   let lastReasonDetail: string | null = null;
 
   try {
-    let state = await loadReviewState(fullRepo, prNumber, redisGet);
+    // Redelivery guard: if a previous delivery already finished this review,
+    // don't re-run the pipeline (avoids duplicate Gemini work + double post).
     const dbReview = await getReview(reviewId, env);
-    stageAttempt = dbReview?.stage_attempt || 1;
+    if (!dbReview) {
+      console.error(`[review] No review row found for ${reviewId} — skipping`);
+      return;
+    }
+    if (dbReview.status === 'COMPLETED') {
+      console.log(`[review] Review ${reviewId} already COMPLETED — skipping redelivery`);
+      return;
+    }
+    stageAttempt = dbReview.stage_attempt || 1;
+
+    let state = await loadReviewState(fullRepo, prNumber, redisGet);
 
     currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
@@ -663,6 +674,14 @@ async function finalizeReview(
   stageAttempt: number
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
+
+  // Idempotency guard: if another delivery already finalized this review
+  // (double completion from a redelivery), bail before posting anything again.
+  const current = await getReview(reviewId, env);
+  if (current?.status === 'COMPLETED') {
+    console.log(`[review] finalize skipped — review ${reviewId} already COMPLETED`);
+    return;
+  }
 
   await startStage(reviewId, 'SCORING', stageAttempt, env);
   const rawScore = computeScore(findings);

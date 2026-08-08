@@ -9,9 +9,12 @@ interface ReviewStepEvent {
   review_id: string;
   step: string;
   status: 'STARTED' | 'COMPLETED' | 'FAILED';
+  outcome: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
   detail: Record<string, unknown> | null;
   duration_ms: number | null;
-  created_at: string;
+  started_at: string;
 }
 
 interface FailureData {
@@ -21,6 +24,9 @@ interface FailureData {
   retryCount: number;
   githubDeliveryId: string | null;
   failedAt: string;
+  realErrorStep: string | null;
+  realErrorMessage: string | null;
+  sweptByCron: boolean;
   timeline: ReviewStepEvent[];
 }
 
@@ -91,6 +97,26 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
           <pre className="text-sm text-red-600 whitespace-pre-wrap font-mono break-all bg-red-50 p-3 rounded">
             {data.errorMessage}
           </pre>
+
+          {data.sweptByCron && (
+            <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              ⚠️ This review stalled and was swept by the cron watchdog — &quot;Stage
+              timed out&quot; reflects the last recorded stage, not an underlying
+              error. No step event captured a real failure.
+            </p>
+          )}
+
+          {data.realErrorMessage && (
+            <div className="mt-4 bg-red-50 border border-red-200 rounded p-3">
+              <h4 className="text-xs font-semibold text-red-800 uppercase tracking-wide">
+                Real Terminal Error
+              </h4>
+              <p className="mt-1 text-sm text-red-700 font-mono break-all">
+                At <span className="font-semibold">{data.realErrorStep}</span>:{' '}
+                {data.realErrorMessage}
+              </p>
+            </div>
+          )}
 
           {data.errorStack && (
             <div className="mt-4">

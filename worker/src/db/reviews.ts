@@ -300,10 +300,17 @@ export async function dbStartStage(
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
   await sql.transaction([
-    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null)
+    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null).
+    //    Idempotent against the partial unique index
+    //    one_open_stage_attempt_per_review (review_id, stage, attempt_number)
+    //    WHERE ended_at IS NULL. A redelivered/re-entrant execution (queue
+    //    at-least-once, worker eviction) reuses the still-open event instead of
+    //    crashing with a duplicate key.
     sql`
       INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
       VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)
+      ON CONFLICT (review_id, stage, attempt_number) WHERE ended_at IS NULL
+      DO UPDATE SET started_at = now(), detail = EXCLUDED.detail
     `,
     // 2. Update reviews live pointer
     sql`
