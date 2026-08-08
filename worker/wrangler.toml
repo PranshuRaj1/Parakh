@@ -9,7 +9,7 @@ binding = "WATCHDOG_QUEUE"
 
 [[queues.consumers]]
 queue = "parakh-watchdog"
-max_retries = 3
+max_retries = 50
 max_batch_size = 1
 
 # Secrets (set via `wrangler secret put <NAME>`):
@@ -18,6 +18,9 @@ max_batch_size = 1
 # GITHUB_WEBHOOK_SECRET
 # GEMINI_API_KEY
 # GEMINI_API_KEYS (comma-separated failover pool)
+# GROQ_API_KEY / GROQ_API_KEYS (comma-separated fallback pool, optional)
+# GROQ_GENERATION_MODEL (optional, default llama-3.3-70b-versatile)
+# LLM_PRIMARY (optional, default "gemini") / LLM_FALLBACK (optional, default "groq"; "none" disables)
 # REASONING_CAPTURE_ENABLED (optional, default "true"; set "false" to disable reasoning capture)
 # REASONING_THINKING_BUDGET (optional, default 1024 — max thinking tokens per review call)
 # REASONING_RETENTION_DAYS (optional, default 14 — prune stored reasoning after this)
@@ -26,6 +29,12 @@ max_batch_size = 1
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN
 # WORKER_API_SECRET
+
+[vars]
+# Groq fallback model + provider routing (keys themselves are secrets).
+GROQ_GENERATION_MODEL = "llama-3.3-70b-versatile"
+LLM_PRIMARY = "gemini"
+LLM_FALLBACK = "groq"
 
 [observability.logs]
 enabled = true

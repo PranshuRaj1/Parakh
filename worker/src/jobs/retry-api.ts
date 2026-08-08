@@ -41,7 +41,6 @@ export async function handleRetryReview(
           'manual_mention',
           env,
           review.id,
-          false,
           review.github_delivery_id ?? undefined
         ).catch(err => {
           console.error('[retry-api] Failed to execute triggerReview:', err);

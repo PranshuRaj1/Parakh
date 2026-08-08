@@ -31,13 +31,16 @@ export async function insertReview(
     seen_reaction_id?: number;
     trigger_reason?: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
     github_delivery_id?: string | null;
+    head_sha?: string | null;
+    base_sha?: string | null;
   },
   env: EnvWithDB
 ): Promise<Review> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
     INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
-                         seen_reaction_id, trigger_reason, github_delivery_id)
+                         seen_reaction_id, trigger_reason, github_delivery_id,
+                         head_sha, base_sha)
     VALUES (
       ${review.repo},
       ${review.pr_number},
@@ -47,12 +50,33 @@ export async function insertReview(
       ${review.findings ? JSON.stringify(review.findings) : null}::jsonb,
       ${review.seen_reaction_id ?? null},
       ${review.trigger_reason ?? 'opened'},
-      ${review.github_delivery_id ?? null}
+      ${review.github_delivery_id ?? null},
+      ${review.head_sha ?? null},
+      ${review.base_sha ?? null}
     )
     RETURNING *
   `;
 
   return rows[0] as unknown as Review;
+}
+
+/**
+ * Persist the SHA pin (head/base) once captured, so every subsequent
+ * attempt/redelivery fetches the SAME immutable diff.
+ */
+export async function updateReviewShaPin(
+  id: string,
+  headSha: string,
+  baseSha: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET head_sha = ${headSha},
+        base_sha = ${baseSha}
+    WHERE id = ${id}
+  `;
 }
 
 // ─── Repo Settings Queries ───────────────────────────────────────────────────
@@ -724,6 +748,43 @@ export async function getReviewReasoningForReview(
     ORDER BY created_at ASC
   `;
   return rows as unknown as ReviewReasoning[];
+}
+
+/**
+ * Bulk upsert reasoning rows for a review in ONE query (one subrequest).
+ *
+ * The per-file saveReviewReasoning() path was 1 DB subrequest per file —
+ * for a 13-file review that alone is 13 of the 50-subrequest free-plan budget.
+ * Batching to a single INSERT keeps reasoning capture without blowing the cap.
+ */
+export async function saveReviewReasonings(
+  reviewId: string,
+  rows: Array<{ file: string; model?: string | null; thinking?: string | null; errorMessage?: string | null; retentionDays?: number }>,
+  env: EnvWithDB
+): Promise<void> {
+  if (rows.length === 0) return;
+  const sql = getDb(env.DATABASE_URL);
+  const retentionDays = Math.max(1, Math.floor(rows[0]?.retentionDays ?? 14));
+
+  const files = rows.map(r => r.file);
+  const models = rows.map(r => r.model ?? null);
+  const thinkings = rows.map(r => r.thinking ?? null);
+  const errors = rows.map(r => r.errorMessage ?? null);
+
+  await sql`
+    INSERT INTO review_reasoning (review_id, file, model, thinking, error_message, expires_at)
+    SELECT ${reviewId}::uuid, f.file, f.model, f.thinking, f.error_message,
+           now() + make_interval(days => ${retentionDays})
+    FROM UNNEST(${files}::text[], ${models}::text[], ${thinkings}::text[], ${errors}::text[])
+      AS f(file, model, thinking, error_message)
+    ON CONFLICT (review_id, file)
+    DO UPDATE SET
+      model = EXCLUDED.model,
+      thinking = EXCLUDED.thinking,
+      error_message = EXCLUDED.error_message,
+      expires_at = EXCLUDED.expires_at,
+      created_at = now()
+  `;
 }
 
 /**

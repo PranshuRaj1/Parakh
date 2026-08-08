@@ -5,7 +5,7 @@
 import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning } from './db/reviews.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
-import { swapCommentReaction } from './jobs/review.js';
+import { swapCommentReaction, releaseReviewLock } from './jobs/review.js';
 import { createRedisGet, createRedisSet } from './redis.js';
 import type { Env } from './index.js';
 
@@ -36,6 +36,13 @@ export async function handleCronTrigger(env: Env): Promise<void> {
 
     const [owner, repo] = review.repo.split('/');
     const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+
+    // Also release the Redis lock so new triggers can proceed immediately.
+    try {
+      await releaseReviewLock(review.repo, review.pr_number, env);
+    } catch (err) {
+      console.warn(`[cron] Failed to release lock for stalled review ${reviewId}:`, err);
+    }
 
     if (review.installation_id) {
       try {

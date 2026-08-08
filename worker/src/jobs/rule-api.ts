@@ -16,7 +16,7 @@
  */
 
 import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
-import { GeminiClient } from '../gemini/client.js';
+import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
@@ -34,13 +34,15 @@ export async function handleCreateRule(
     throw new Error('Missing required fields: repo, body');
   }
 
-  const gemini = new GeminiClient(env);
+  // Embeddings are Gemini-only (Groq has no embeddings API), so those use the
+  // raw GeminiClient; priority classification routes through the LLM facade.
+  const { llm, gemini } = createLLMClients(env);
 
   // 2. Generate embedding
   const embedding = await gemini.generateEmbedding(request.body);
 
   // 3. Classify priority (or use override from request)
-  const priority = request.priority || await gemini.classifyPriority(request.body);
+  const priority = request.priority || await llm.classifyPriority(request.body);
 
   // 4. Insert rule as ACTIVE
   const rule = await insertRule(

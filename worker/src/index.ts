@@ -28,6 +28,18 @@ export interface Env {
   // Gemini
   GEMINI_API_KEY: string;
   GEMINI_API_KEYS?: string;
+  // Env override for the generation model (default gemini-2.5-flash).
+  GEMINI_GENERATION_MODEL?: string;
+
+  // Groq (secondary provider / fallback). GROQ_API_KEYS is a comma-separated
+  // pool like GEMINI_API_KEYS; each key is its own rate-limit bucket.
+  GROQ_API_KEY?: string;
+  GROQ_API_KEYS?: string;
+  GROQ_GENERATION_MODEL?: string;
+
+  // Provider routing (defaults: primary gemini, fallback groq).
+  LLM_PRIMARY?: string;
+  LLM_FALLBACK?: string;
 
   // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
   // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps

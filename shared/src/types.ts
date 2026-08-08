@@ -73,6 +73,10 @@ export interface Review {
   trigger_comment_type: 'issue_comment' | 'pull_request_review_comment' | null;
   /** ID of whichever reaction is currently live on the trigger comment (👀, then 👍/👎/😕). */
   trigger_comment_reaction_id: number | null;
+  /** Head SHA of the PR captured at review-start — pins the reviewed diff. */
+  head_sha: string | null;
+  /** Base SHA captured at review-start — used for compare/{base}.../{head} diff. */
+  base_sha: string | null;
   created_at: string;
 }
 

@@ -17,9 +17,9 @@
 
 import type { ContradictionJobPayload } from '@parakh/shared';
 import { CONTRADICTION_SIMILARITY_THRESHOLD, CONTRADICTION_MAX_CANDIDATES } from '@parakh/shared';
-import { GeminiClient } from '../gemini/client.js';
 import { getCachedToken } from '../github/auth.js';
 import { postComment } from '../github/api.js';
+import { createLLMClients } from '../llm/factory.js';
 import {
   findSimilarRules,
   updateRuleStatus,
@@ -65,7 +65,7 @@ export async function executeContradictionJob(
   console.log(`[contradiction] Found ${candidates.length} candidate(s) for ${ruleId}`);
 
   // 2. Classify relationship with each candidate
-  const gemini = new GeminiClient(env);
+  const { llm } = createLLMClients(env);
 
   // Get token for posting comments (only needed if we find something)
   let token: string | null = null;
@@ -78,7 +78,7 @@ export async function executeContradictionJob(
   };
 
   for (const candidate of candidates) {
-    const relationship = await gemini.classifyRelationship(
+    const relationship = await llm.classifyRelationship(
       { body: ruleBody },
       { body: candidate.body }
     );

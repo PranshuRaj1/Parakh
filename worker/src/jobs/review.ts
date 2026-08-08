@@ -21,6 +21,8 @@ import {
 import { getCachedToken } from '../github/auth.js';
 import {
   fetchDiff,
+  fetchDiffPinned,
+  getPRDetails,
   postComment,
   addReaction,
   removeReaction,
@@ -37,11 +39,20 @@ import {
   getReview,
   setTriggerCommentContext,
   updateTriggerCommentReactionId,
+  updateReviewShaPin,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
-import { saveReviewReasoning } from '../db/reviews.js';
-import { GeminiClient, type ReviewResult } from '../gemini/client.js';
-import { AllKeysExhaustedError } from '../gemini/keyPool.js';
+import { saveReviewReasonings } from '../db/reviews.js';
+import { type ReviewResult } from '../gemini/client.js';
+import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
+import type { LLMClient } from '../llm/provider.js';
+import { createLLMClients } from '../llm/factory.js';
+import {
+  SubrequestBudget,
+  SubrequestBudgetExceededError,
+  SUBREQUEST_BUDGET_LIMIT,
+  FINALIZE_BUDGET_RESERVE,
+} from './subrequest-budget.js';
 import { sanitizeErrorText } from './sanitize.js';
 import {
   startStage,
@@ -51,6 +62,7 @@ import {
   updateReasonDetail,
   heartbeat,
   withTimeout,
+  StageTimeoutError,
   STAGE_TIMEOUTS_MS,
   getReviewingFilesTimeout
 } from './stage-tracker.js';
@@ -64,6 +76,20 @@ function delay(ms: number): Promise<void> {
 }
 
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
+
+/** If no file completes within this window, the attempt is considered stalled
+ *  (e.g. every key rate-limited) and fails fast so the queue can resume. */
+const NO_PROGRESS_STALL_MS = 10 * 60_000;
+
+/** Concurrent files reviewed within a batch (env FILE_CONCURRENCY overrides). */
+const DEFAULT_FILE_CONCURRENCY = 2;
+
+/**
+ * Fixed subrequests spent before the file loop (acquire lock, getReview,
+ * getCachedToken, fetchDiff, loadRules, stage start/completes). Conservative
+ * upper bound so the per-file budget accounting has accurate headroom.
+ */
+const STARTUP_SUBREQUESTS_ESTIMATE = 12;
 
 export function parseRetentionDays(raw?: string): number {
   const n = parseInt(raw ?? '', 10);
@@ -119,6 +145,31 @@ export function parseDiffByFile(diff: string): Map<string, string> {
     if (match) files.set(match[1], fileDiff);
   }
   return files;
+}
+
+/**
+ * Generated lockfiles can be thousands of lines (and are machine-generated,
+ * so review them anyway), so skip them. Reviewing them burns dozens of Gemini
+ * subrequests and can trip the Worker subrequest limit on large diffs.
+ */
+const IGNORED_LOCKFILE_NAMES = [
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  'bun.lock',
+  'bun.lockb',
+  'Cargo.lock',
+  'composer.lock',
+  'Gemfile.lock',
+  'poetry.lock',
+  'Pipfile.lock',
+];
+
+export function isIgnoredLockfile(filePath: string): boolean {
+  return IGNORED_LOCKFILE_NAMES.some(
+    (name) => filePath === name || filePath.endsWith(`/${name}`)
+  );
 }
 
 export function appendDashboardLink(
@@ -220,15 +271,32 @@ async function acquireReviewLock(repo: string, prNumber: number, env: Env): Prom
   return setNX(REVIEW_LOCK_KEY(repo, prNumber), '1', REVIEW_LOCK_TTL_SECONDS);
 }
 
-async function releaseReviewLock(repo: string, prNumber: number, env: Env): Promise<void> {
+/** Extend the lock TTL so long reviews keep their exclusive hold. */
+async function refreshReviewLock(repo: string, prNumber: number, env: Env): Promise<void> {
+  const set = createRedisSet(env);
+  await set(REVIEW_LOCK_KEY(repo, prNumber), '1', { ex: REVIEW_LOCK_TTL_SECONDS });
+}
+
+export async function releaseReviewLock(repo: string, prNumber: number, env: Env): Promise<void> {
   const del = createRedisDel(env);
   await del(REVIEW_LOCK_KEY(repo, prNumber));
 }
 
 // ─── Single File Review Logic ────────────────────────────────────────────────
 
+interface ReasoningEntry {
+  file: string;
+  model?: string | null;
+  thinking?: string | null;
+  errorMessage?: string | null;
+  retentionDays?: number;
+}
+
+/** Throttle live per-file progress writes to every N files to save subrequests. */
+const DETAIL_UPDATE_EVERY = 5;
+
 async function reviewSingleFile(
-  gemini: GeminiClient,
+  llm: LLMClient,
   fileName: string,
   fileChunks: Map<string, string>,
   activeRules: Rule[],
@@ -238,7 +306,9 @@ async function reviewSingleFile(
   fileIndex: number,
   totalFiles: number,
   captureReasoning: boolean,
-  retentionDays: number
+  retentionDays: number,
+  reasoningBuffer: ReasoningEntry[],
+  budget: SubrequestBudget
 ): Promise<Finding[]> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return [];
@@ -249,33 +319,43 @@ async function reviewSingleFile(
 
   // Live per-file progress: "file 3/8: src/foo.ts" on the reviews row.
   // Uses the light update so we don't append a reason_transitions per file.
-  await updateReasonDetail(reviewId, 'PROCESSING', `file ${fileIndex}/${totalFiles}: ${fileName}`, env);
+  // Throttled to every DETAIL_UPDATE_EVERY files + the last file so a large PR
+  // doesn't burn one DB subrequest per file (13 files → ~3 writes).
+  if (fileIndex % DETAIL_UPDATE_EVERY === 0 || fileIndex === totalFiles) {
+    await updateReasonDetail(reviewId, 'PROCESSING', `file ${fileIndex}/${totalFiles}: ${fileName}`, env);
+    budget.spend(1);
+  }
 
   let result: ReviewResult;
   try {
-    result = await gemini.reviewDiff(fileName, fileDiff, applicableRules);
+    // The real Gemini/Groq calls happen inside the provider's key rotation,
+    // which spends from the budget per actual attempt — so no spend here.
+    result = await llm.reviewDiff(fileName, fileDiff, applicableRules);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError) throw err;
+    if (err instanceof SubrequestBudgetExceededError) throw err;
     // Non-rate-limit per-file failure: persist it so the dashboard can show
     // exactly which file broke and why (failure-mode tie-in).
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[review] Error reviewing ${fileName}:`, err);
     if (captureReasoning) {
-      await saveReviewReasoning(reviewId, fileName, {
-        model: 'gemini-3-flash-preview',
+      reasoningBuffer.push({
+        file: fileName,
+        model: llm.modelName,
         errorMessage: sanitizeErrorText(message),
         retentionDays,
-      }, env).catch(e => console.warn('[review] Failed to save per-file reasoning:', e));
+      });
     }
     return [];
   }
 
   if (captureReasoning && result.thinking) {
-    await saveReviewReasoning(reviewId, fileName, {
-      model: 'gemini-3-flash-preview',
+    reasoningBuffer.push({
+      file: fileName,
+      model: llm.modelName,
       thinking: result.thinking,
       retentionDays,
-    }, env).catch(e => console.warn('[review] Failed to save reasoning:', e));
+    });
   }
 
   const findings: Finding[] = [];
@@ -305,6 +385,7 @@ async function reviewSingleFile(
     
     // Increment evidence_count per violation instance
     if (rule) {
+      budget.spend(1); // DB write
       await incrementEvidenceCount(rule.id, env);
     }
   }
@@ -322,81 +403,105 @@ export async function triggerReview(
   reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry',
   env: Env,
   resumeReviewId?: string,
-  skipLock?: boolean,
   githubDeliveryId?: string,
   commentId?: number,
   commentType?: 'issue_comment' | 'pull_request_review_comment',
   commentReactionId?: number
-): Promise<void> {
+): Promise<boolean> {
   const fullRepo = `${owner}/${repo}`;
 
-  if (!skipLock) {
-    const locked = await acquireReviewLock(fullRepo, prNumber, env);
-    if (!locked) {
-      console.log(`[review] Skipping — review already in-flight for ${fullRepo}#${prNumber}`);
-      return;
-    }
-  }
-
-  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
-  const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
-
-  // Clean up previous verdict reaction ONLY on genuinely fresh triggers.
-  if (!resumeReviewId) {
-    const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
-    if (previousReview?.verdict_reaction_id) {
-      try {
-        await removeReaction(owner, repo, prNumber, previousReview.verdict_reaction_id, token);
-      } catch (err) {
-        console.warn(`[review] Failed to remove previous verdict reaction:`, err);
-      }
-    }
+  // Pre-enqueue dedupe: never create two REVIEW jobs for the same PR at once.
+  // The authoritative guard lives in executeReviewJobInternal (execution-time
+  // acquire), so this lock is held only until the message is enqueued.
+  const locked = await acquireReviewLock(fullRepo, prNumber, env);
+  if (!locked) {
+    console.log(`[review] Skipping — review already in-flight for ${fullRepo}#${prNumber}`);
+    return false;
   }
 
   let reviewId: string;
-  if (resumeReviewId) {
-    reviewId = resumeReviewId;
-    await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
-  } else {
-    const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+  try {
+    const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+    const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-    if (reason !== 'manual_mention') {
-      await postComment(owner, repo, prNumber,
-        "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
-        token
-      );
+    // Capture the SHA pin (head/base) so the reviewed diff is immutable for
+    // the whole run, regardless of later pushes. Best-effort: if this fails,
+    // executeReviewJobInternal re-captures it as a fallback.
+    let headSha: string | null = null;
+    let baseSha: string | null = null;
+    if (!resumeReviewId) {
+      try {
+        const details = await getPRDetails(owner, repo, prNumber, token);
+        headSha = details.head?.sha ?? null;
+        baseSha = details.base?.sha ?? null;
+      } catch (err) {
+        console.warn(`[review] Failed to capture SHA pin for ${fullRepo}#${prNumber}:`, err);
+      }
     }
 
-    const review = await insertReview({
-      repo: fullRepo,
-      pr_number: prNumber,
-      installation_id: installationId,
-      status: 'QUEUED',
-      seen_reaction_id: seenReactionId,
-      trigger_reason: reason,
-      github_delivery_id: githubDeliveryId,
-    }, env);
-    reviewId = review.id;
-
-    // manual_mention fresh starts carry the trigger comment (+ its 👀 reaction
-    // id when it was added). Persist so finalizeReview/swap can find them on
-    // the same row.
-    if (commentId !== undefined && commentType !== undefined) {
-      await setTriggerCommentContext(reviewId, commentId, commentType, commentReactionId ?? null, env);
+    // Clean up previous verdict reaction ONLY on genuinely fresh triggers.
+    if (!resumeReviewId) {
+      const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
+      if (previousReview?.verdict_reaction_id) {
+        try {
+          await removeReaction(owner, repo, prNumber, previousReview.verdict_reaction_id, token);
+        } catch (err) {
+          console.warn(`[review] Failed to remove previous verdict reaction:`, err);
+        }
+      }
     }
+
+    if (resumeReviewId) {
+      reviewId = resumeReviewId;
+      await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
+    } else {
+      const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+
+      if (reason !== 'manual_mention') {
+        await postComment(owner, repo, prNumber,
+          "Okay, I have seen this PR! Let me review it and get back to you shortly. 🕵️‍♂️",
+          token
+        );
+      }
+
+      const review = await insertReview({
+        repo: fullRepo,
+        pr_number: prNumber,
+        installation_id: installationId,
+        status: 'QUEUED',
+        seen_reaction_id: seenReactionId,
+        trigger_reason: reason,
+        github_delivery_id: githubDeliveryId,
+        head_sha: headSha,
+        base_sha: baseSha,
+      }, env);
+      reviewId = review.id;
+
+      // manual_mention fresh starts carry the trigger comment (+ its 👀 reaction
+      // id when it was added). Persist so finalizeReview/swap can find them on
+      // the same row.
+      if (commentId !== undefined && commentType !== undefined) {
+        await setTriggerCommentContext(reviewId, commentId, commentType, commentReactionId ?? null, env);
+      }
+    }
+
+    const payload: ReviewJobPayload = {
+      type: 'REVIEW',
+      installationId,
+      owner,
+      repo,
+      prNumber,
+      reviewId,
+    };
+
+    // We push this to the Queue so it runs asynchronously with proper timeouts!
+    await env.WATCHDOG_QUEUE.send(payload);
+    return true;
+  } finally {
+    // The execution acquires the lock again as its authoritative guard, so we
+    // can release immediately after enqueueing.
+    await releaseReviewLock(fullRepo, prNumber, env).catch(() => {});
   }
-
-  const payload: ReviewJobPayload = {
-    type: 'REVIEW',
-    installationId,
-    owner,
-    repo,
-    prNumber,
-    reviewId,
-  };
-
-  // We push this to the Queue so it runs asynchronously with proper timeouts!
-  await env.WATCHDOG_QUEUE.send(payload);
 }
 
 // ─── Trigger Comment Reactions & Reply ───────────────────────────────────────
@@ -472,17 +577,19 @@ async function postCommentReply(
 
 export async function executeReviewJob(
   payload: ReviewJobPayload,
-  env: Env
+  env: Env,
+  attempts = 1
 ): Promise<void> {
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(payload.installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
-  await executeReviewJobInternal(payload, env, token);
+  await executeReviewJobInternal(payload, env, token, attempts);
 }
 
 async function executeReviewJobInternal(
   payload: ReviewJobPayload,
   env: Env,
-  token: string
+  token: string,
+  attempts = 1
 ): Promise<void> {
   const { reviewId, owner, repo, prNumber } = payload;
   const fullRepo = `${owner}/${repo}`;
@@ -494,6 +601,7 @@ async function executeReviewJobInternal(
   let stageAttempt = 1;
   let lastReasonCode: StageReasonCode | null = null;
   let lastReasonDetail: string | null = null;
+  let lockHeld = false;
 
   try {
     // Redelivery guard: if a previous delivery already finished this review,
@@ -507,15 +615,75 @@ async function executeReviewJobInternal(
       console.log(`[review] Review ${reviewId} already COMPLETED — skipping redelivery`);
       return;
     }
-    stageAttempt = dbReview.stage_attempt || 1;
+    if (dbReview.status === 'FAILED') {
+      console.log(`[review] Review ${reviewId} already FAILED — skipping redelivery`);
+      return;
+    }
+    // attempt number = the queue delivery count (1 = first delivery, 2+ =
+    // redelivery). Using it as the stage attempt gives each delivery its own
+    // attempt_number in review_step_events, which the unique index
+    // (review_id, stage, attempt_number WHERE ended_at IS NULL) requires when
+    // a previous crashed delivery left an open event row.
+    stageAttempt = attempts > 1 ? attempts : (dbReview.stage_attempt || 1);
+
+    // Execution-time lock: the authoritative guard for one active execution per
+    // PR. triggerReview only held the lock around enqueueing; here we acquire it
+    // so a redelivered/racing job SKIPS when another execution is provably alive
+    // (fresh heartbeat) instead of running the pipeline twice.
+    const lockAcquired = await acquireReviewLock(fullRepo, prNumber, env);
+    if (!lockAcquired) {
+      if (attempts > 1) {
+        // Redelivery: Queues only delivers a message to one consumer at a time,
+        // so a redelivery means the previous execution has ended (retry/timeout).
+        // Its heartbeat may still look fresh (it wrote one right before dying in
+        // a subrequest-limit crash), so trust the delivery count, not the
+        // heartbeat, and steal the lock to resume instead of silently dropping.
+        await refreshReviewLock(fullRepo, prNumber, env);
+        console.warn(`[review] Redelivery #${attempts} — stole lock for ${fullRepo}#${prNumber}`);
+      } else {
+        const heartbeatAge = dbReview.worker_heartbeat_at
+          ? Date.now() - new Date(dbReview.worker_heartbeat_at).getTime()
+          : Number.POSITIVE_INFINITY;
+        if (heartbeatAge < REVIEW_LOCK_TTL_SECONDS * 1000) {
+          console.log(`[review] Skipping ${reviewId} — lock held, heartbeat ${Math.round(heartbeatAge / 1000)}s fresh`);
+          return;
+        }
+        // Lock survived its TTL with no fresh heartbeat → previous execution is
+        // dead. Steal the lock so this run proceeds.
+        await refreshReviewLock(fullRepo, prNumber, env);
+        console.warn(`[review] Stole stale lock for ${fullRepo}#${prNumber}`);
+      }
+    }
+    lockHeld = true;
+
+    // Diff SHA pin (immutable target): capture at review-start in triggerReview,
+    // fall back to fetching here. Keeps the reviewed diff stable across retries
+    // even if the branch moves.
+    let headSha: string | null = dbReview.head_sha ?? null;
+    let baseSha: string | null = dbReview.base_sha ?? null;
+    if (!headSha || !baseSha) {
+      try {
+        const details = await getPRDetails(owner, repo, prNumber, token);
+        headSha = details.head?.sha ?? headSha;
+        baseSha = details.base?.sha ?? baseSha;
+        if (headSha) {
+          await updateReviewShaPin(reviewId, headSha, baseSha, env);
+        }
+      } catch (err) {
+        console.warn(`[review] Failed to capture SHA pin fallback for ${fullRepo}#${prNumber}:`, err);
+      }
+    }
 
     let state = await loadReviewState(fullRepo, prNumber, redisGet);
 
     currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
-    const diff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async (signal) => {
-      const res = await fetchDiff(owner, repo, prNumber, token);
-      return res;
+    const diff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async () => {
+      // Compare pinned base…head when available; otherwise fall back to the PR
+      // diff (unpinned, but still correct for a fresh single-shot review).
+      return headSha && baseSha
+        ? fetchDiffPinned(owner, repo, baseSha, headSha, token)
+        : fetchDiff(owner, repo, prNumber, token);
     });
     const fileChunks = parseDiffByFile(diff);
     const currentDiffHash = await sha256(diff);
@@ -527,9 +695,10 @@ async function executeReviewJobInternal(
     }
 
     if (!state) {
+      const allFiles = Array.from(fileChunks.keys()).filter((f) => !isIgnoredLockfile(f));
       state = {
         reviewId,
-        allFiles: Array.from(fileChunks.keys()),
+        allFiles,
         completedFiles: [],
         accumulatedFindings: [],
         batchIndex: 0,
@@ -554,12 +723,26 @@ async function executeReviewJobInternal(
     });
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
-    const gemini = new GeminiClient(env);
+    // Budget guard: counts the subrequests we control (DB, Redis, GitHub,
+    // Gemini, Groq). Free plan caps an invocation at 50 total; this stops us
+    // well under that and lets the queue redelivery resume from per-file state
+    // instead of dying with "Too many subrequests".
+    const budget = new SubrequestBudget(SUBREQUEST_BUDGET_LIMIT);
+    // Startup overhead (token, lock, getReview, fetchDiff, rules, stages) that
+    // happens before the loop — conservative estimate so the loop doesn't
+    // exceed the real cap even if our counting misses an edge.
+    budget.spend(STARTUP_SUBREQUESTS_ESTIMATE);
+
+    // Provider stack: Gemini primary, Groq fallback (configurable). The budget
+    // is attached so every REAL key attempt (incl. rotation retries + fallback)
+    // counts against the guard — the key to not undercounting during storms.
+    const { llm } = createLLMClients(env, budget);
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 
     const captureReasoning = env.REASONING_CAPTURE_ENABLED !== 'false';
     const retentionDays = parseRetentionDays(env.REASONING_RETENTION_DAYS);
+    const reasoningBuffer: ReasoningEntry[] = [];
     let filesProcessedInThisAttempt = 0;
 
     currentStage = 'REVIEWING_FILES';
@@ -568,58 +751,108 @@ async function executeReviewJobInternal(
       fileNames: filesToProcess.slice(0, MAX_FILES_PER_BATCH),
     });
     const filesTimeout = getReviewingFilesTimeout(filesToProcess.length);
-    
+
+    const stageStartedAt = Date.now();
+
     await withTimeout('REVIEWING_FILES', filesTimeout, async (signal) => {
       while (filesToProcess.length > 0) {
         if (signal.aborted) break;
 
+        // Fail fast if no file completed within the stall budget (e.g. every
+        // Gemini key rate-limited for minutes): end the attempt so a fresh
+        // delivery resumes instead of idling until the stage times out.
+        if (filesProcessedInThisAttempt === 0 && Date.now() - stageStartedAt > NO_PROGRESS_STALL_MS) {
+          const err = new Error(`No file completed within ${Math.round(NO_PROGRESS_STALL_MS / 60000)}m — every Gemini key rate-limited?`);
+          err.name = 'StageTimeoutError';
+          throw err;
+        }
+
         const batch = filesToProcess.splice(0, MAX_FILES_PER_BATCH);
 
-        // Keep lease alive
+        // Keep lease alive and extend the execution lock.
+        budget.spend(2); // heartbeat + refreshReviewLock
         await heartbeat(reviewId, env);
+        await refreshReviewLock(fullRepo, prNumber, env);
 
         lastReasonCode = 'PROCESSING';
         lastReasonDetail = `Reviewing batch ${state!.batchIndex} (${state!.completedFiles.length}/${state!.allFiles.length} files done)`;
+        budget.spend(1); // updateReason
         await updateReason(reviewId, 'PROCESSING', lastReasonDetail, env);
 
-        // Files are processed SEQUENTIALLY within a batch. Concurrent batches
-        // used to burst 5 generations at once against free-tier keys, tripping
-        // the per-minute ceiling and discarding the whole batch on a 429 —
+        // Small bounded concurrency (default 2) to make progress under modest
+        // key pools without bursting all generations at once. A full burst used
+        // to trip the per-minute ceiling and discard the whole batch on a 429 —
         // which looped in backoff until the stage timed out with 0 files done.
+        const concurrency = Math.min(DEFAULT_FILE_CONCURRENCY, batch.length);
+        let cursor = 0;
         let exhaustedAllKeys = false;
+        const exhaustedIndices: number[] = [];
 
-        for (let i = 0; i < batch.length; i++) {
-          if (signal.aborted) {
-            filesToProcess.unshift(...batch.slice(i));
-            break;
-          }
-          const fileName = batch[i];
-          try {
-            const findings = await reviewSingleFile(
-              gemini, fileName, fileChunks, activeRules, env, signal,
-              reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
-              captureReasoning, retentionDays
-            );
-            allFindings.push(...findings);
-            state!.completedFiles.push(fileName);
-            filesProcessedInThisAttempt++;
-            lastReasonCode = 'PROCESSING';
-            lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
-          } catch (err) {
-            if (err instanceof AllKeysExhaustedError) {
-              // This file + the rest of the batch go back for the retry pass.
-              exhaustedAllKeys = true;
-              filesToProcess.unshift(...batch.slice(i));
-              break;
+        const reviewWorker = async () => {
+          while (!exhaustedAllKeys && !signal.aborted) {
+            const i = cursor++;
+            if (i >= batch.length) return;
+            const fileName = batch[i];
+            try {
+              const findings = await reviewSingleFile(
+                llm, fileName, fileChunks, activeRules, env, signal,
+                reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
+                captureReasoning, retentionDays, reasoningBuffer, budget
+              );
+              allFindings.push(...findings);
+              state!.completedFiles.push(fileName);
+              filesProcessedInThisAttempt++;
+              lastReasonCode = 'PROCESSING';
+              lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
+              // Per-file state save: progress survives a crash/budget checkpoint,
+              // so a redelivery resumes from the exact file rather than 1/N.
+              budget.spend(1); // saveReviewState
+              state!.accumulatedFindings = allFindings;
+              await saveReviewState(fullRepo, prNumber, state!, redisSet);
+            } catch (err) {
+              if (err instanceof DailyQuotaExhaustedError) {
+                // Daily quota won't recover in 60s — backoff-thrashing is
+                // pointless. Park the review (FAILED) so the queue stops
+                // redelivering; the user re-triggers later. Throw so it
+                // surfaces to the pipeline catch below.
+                throw err;
+              }
+              if (err instanceof AllKeysExhaustedError) {
+                // This file + the rest of the batch go back for the retry pass.
+                exhaustedAllKeys = true;
+                exhaustedIndices.push(i);
+                return;
+              }
+              if (err instanceof SubrequestBudgetExceededError) {
+                // Budget checkpoint — don't mark the file done; abort the batch
+                // so the queue redelivers and resumes from the last per-file
+                // save. The budget is shared, so every concurrent worker will
+                // trip it too; only one needs to propagate.
+                throw err;
+              }
+              // Non-rate-limit failure: keep existing resume semantics (mark
+              // done, no findings); reviewSingleFile already persisted the error.
+              console.error(`[review] Error reviewing ${fileName}:`, err);
+              state!.completedFiles.push(fileName);
+              filesProcessedInThisAttempt++;
+              lastReasonCode = 'RETRYING_AFTER_FAILURE';
+              lastReasonDetail = `file ${fileName} failed: ${err instanceof Error ? sanitizeErrorText(err.message) : String(err)}`;
+              budget.spend(1); // saveReviewState
+              state!.accumulatedFindings = allFindings;
+              await saveReviewState(fullRepo, prNumber, state!, redisSet);
             }
-            // Non-rate-limit failure: keep existing resume semantics (mark
-            // done, no findings); reviewSingleFile already persisted the error.
-            console.error(`[review] Error reviewing ${fileName}:`, err);
-            state!.completedFiles.push(fileName);
-            filesProcessedInThisAttempt++;
-            lastReasonCode = 'RETRYING_AFTER_FAILURE';
-            lastReasonDetail = `file ${fileName} failed: ${err instanceof Error ? sanitizeErrorText(err.message) : String(err)}`;
           }
+        };
+
+        await Promise.all(Array.from({ length: concurrency }, () => reviewWorker()));
+
+        if (exhaustedAllKeys) {
+          // Return files that were never claimed (cursor → end) plus the file
+          // that exhausted the keys, so the backoff pass retries them.
+          const returnIndices = [...exhaustedIndices];
+          for (let k = cursor; k < batch.length; k++) returnIndices.push(k);
+          returnIndices.sort((a, b) => a - b);
+          filesToProcess.unshift(...returnIndices.map(k => batch[k]));
         }
 
         if (exhaustedAllKeys) {
@@ -647,6 +880,40 @@ async function executeReviewJobInternal(
       }
     });
     
+    // Guard the finalize step: it needs ~15 subrequests (SCORING, REACTING,
+    // POSTING_COMMENT, reactions). If this delivery already burned most of the
+    // budget, checkpoint instead of tripping Cloudflare's hard cap mid-post.
+    if (!budget.hasRoomFor(FINALIZE_BUDGET_RESERVE)) {
+      // Best-effort flush so a checkpointed delivery keeps its reasoning rows
+      // (idempotent per-file upsert). State (findings) is already saved.
+      try {
+        if (reasoningBuffer.length > 0) {
+          await saveReviewReasonings(reviewId, reasoningBuffer, env);
+          reasoningBuffer.length = 0;
+        }
+      } catch (e) {
+        console.warn('[review] Failed to flush reasoning before checkpoint:', e);
+      }
+      await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+        checkpoint: true,
+        filesProcessed: filesProcessedInThisAttempt,
+        completedCount: state.completedFiles.length,
+        totalCount: state.allFiles.length,
+      });
+      throw new SubrequestBudgetExceededError(SUBREQUEST_BUDGET_LIMIT);
+    }
+
+    // Persist captured model reasoning as a single batched INSERT — idempotent
+    // per (review_id, file), so a redelivery re-flushing is harmless.
+    try {
+      if (reasoningBuffer.length > 0) {
+        await saveReviewReasonings(reviewId, reasoningBuffer, env);
+        reasoningBuffer.length = 0;
+      }
+    } catch (e) {
+      console.warn('[review] Failed to flush reasoning:', e);
+    }
+
     await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
       batchIndex: state.batchIndex,
       filesProcessed: filesProcessedInThisAttempt,
@@ -657,6 +924,24 @@ async function executeReviewJobInternal(
     await finalizeReview(reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt);
 
   } catch (err) {
+    if (err instanceof SubrequestBudgetExceededError) {
+      // Budget checkpoint: the stage event stays open on purpose — the next
+      // delivery reuses it (attempt number bumps, unique index scopes to
+      // ended_at IS NULL) and resumes from the per-file Redis state. Not a
+      // failure, so don't failStage.
+      console.warn(`[review] ${err.message} — checkpointing ${fullRepo}#${prNumber} for redelivery`);
+      throw err;
+    }
+    if (err instanceof DailyQuotaExhaustedError) {
+      // Every provider key has hit its DAILY quota — it won't recover in the
+      // queue's retry window, so a redelivery would just fail again. Park the
+      // review (terminal FAILED) so the queue acks and stops delivering; the
+      // user re-triggers when quota resets.
+      const failureMessage = err.message;
+      await failStage(reviewId, currentStage, stageAttempt, 'DAILY_QUOTA', new Error(failureMessage), true, env);
+      console.warn(`[review] ${fullRepo}#${prNumber} parked — ${failureMessage}`);
+      return;
+    }
     const errorCode = err instanceof Error && err.name === 'StageTimeoutError' ? 'STAGE_TIMEOUT' : 'UNKNOWN';
     // Attribute the failure to the real stage and explain WHY (e.g. the
     // rate-limit backoff loop) instead of a generic "Stage timed out".
@@ -667,9 +952,11 @@ async function executeReviewJobInternal(
     await failStage(reviewId, currentStage, stageAttempt, errorCode, new Error(failureMessage), false, env);
     throw err; // allow Cloudflare Queue to retry
   } finally {
-    await releaseReviewLock(fullRepo, prNumber, env).catch(err =>
-      console.warn('[review] Failed to release lock:', err)
-    );
+    if (lockHeld) {
+      await releaseReviewLock(fullRepo, prNumber, env).catch(err =>
+        console.warn('[review] Failed to release lock:', err)
+      );
+    }
 
     try {
       const review = await getReview(reviewId, env);
