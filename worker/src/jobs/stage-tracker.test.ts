@@ -43,8 +43,8 @@ describe('getReviewingFilesTimeout', () => {
     expect(getReviewingFilesTimeout(2)).toBe(65_000);
   });
 
-  it('caps at the absolute ceiling (5 minutes)', () => {
-    expect(getReviewingFilesTimeout(100)).toBe(300_000);
-    expect(getReviewingFilesTimeout(1000)).toBe(300_000);
+  it('scales without an absolute ceiling — long reviews are bounded by budget', () => {
+    expect(getReviewingFilesTimeout(100)).toBe(5_000 + 30_000 * 100);
+    expect(getReviewingFilesTimeout(1000)).toBe(5_000 + 30_000 * 1000);
   });
 });
