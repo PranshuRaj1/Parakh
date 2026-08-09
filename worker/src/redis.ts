@@ -12,7 +12,7 @@ export function createRedisGet(env: Env): (key: string) => Promise<string | null
 
 export function createRedisSet(env: Env): (key: string, value: string, opts?: { ex?: number }) => Promise<unknown> {
   return async (key: string, value: string, opts?: { ex?: number }) => {
-    const args = opts?.ex ? `/${encodeURIComponent(key)}/${value}/EX/${opts.ex}` : `/${encodeURIComponent(key)}/${value}`;
+    const args = opts?.ex ? `/${encodeURIComponent(key)}/${encodeURIComponent(value)}/EX/${opts.ex}` : `/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
     });
