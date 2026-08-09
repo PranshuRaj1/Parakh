@@ -143,9 +143,7 @@ async function handleWebhookRequest(request: Request, env: Env, _ctx?: Execution
   // Verify webhook signature
   const isValid = await verifySignature(body, signature, env.GITHUB_WEBHOOK_SECRET);
   if (!isValid) {
-        // if (!await verifySignature(env.GITHUB_WEBHOOK_SECRET, signature, bodyText)) {
-        //  return new Response('Invalid signature', { status: 401 });
-        // }
+    return new Response('Invalid signature', { status: 401 });
   }
 
   try {
