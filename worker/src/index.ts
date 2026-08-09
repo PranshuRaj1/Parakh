@@ -37,7 +37,19 @@ export interface Env {
   GROQ_API_KEYS?: string;
   GROQ_GENERATION_MODEL?: string;
 
-  // Provider routing (defaults: primary gemini, fallback groq).
+  // Cloudflare Workers AI (tertiary provider / fallback).
+  // Requires the account ID + an API token with Workers AI access.
+  CF_ACCOUNT_ID?: string;
+  CF_API_TOKEN?: string;
+  CFAI_GENERATION_MODEL?: string;
+
+  // OpenRouter (quaternary provider / fallback). Single API key.
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_GENERATION_MODEL?: string;
+
+  // Provider routing (defaults: primary gemini, fallback groq). The chain
+  // then appends every other CONFIGURED provider (cfai, openrouter) in a
+  // fixed priority order.
   LLM_PRIMARY?: string;
   LLM_FALLBACK?: string;
 
