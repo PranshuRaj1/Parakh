@@ -92,21 +92,36 @@ export function isRateLimitError(err: unknown): boolean {
 export const DAILY_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 /**
+ * How long a review stays PAUSED_DAILY_QUOTA before the cron auto-resumes it.
+ * Gemini free-tier daily quotas reset at UTC midnight; a 12h park always
+ * crosses that boundary regardless of when it was hit.
+ */
+export const DAILY_QUOTA_PAUSE_AFTER_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+/**
  * Detect a DAILY quota exhaustion error (free-tier "X requests / day" cap),
  * distinct from a transient 60s rate limit. Gemini's free tier reports these
  * as 429 RESOURCE_EXHAUSTED with a "per day" hint; distinguishing them lets us
- * park the key for hours instead of seconds and, when every key is hit, park
- * the review instead of thrashing in backoff.
+ * park the key for 6h instead of 60s and, when every key is hit, park the
+ * review instead of thrashing in backoff.
+ *
+ * Also matches a bare `quotaExceeded`/`QUOTA_EXCEEDED` status (no "day" text)
+ * when the message contains a day-scale hint, and the SDK's structured
+ * `error.status` carried into the message by the provider wrappers.
  */
 export function isDailyQuotaError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
-  return msg.includes('per day')
+  const quotaExceeded = msg.includes('quotaexceeded')
+    || msg.includes('quota exceeded')
+    || msg.includes('resource exhausted');
+  const dayHint = msg.includes('per day')
     || msg.includes('daily limit')
     || msg.includes('dailylimit')
-    || msg.includes('20 requests')
     || msg.includes('quota exhausted for the day')
-    || (msg.includes('quota') && msg.includes('day'));
+    || msg.includes('requests per day')
+    || msg.includes('per 1000 requests');
+  return dayHint || (quotaExceeded && msg.includes('day'));
 }
 
 /**

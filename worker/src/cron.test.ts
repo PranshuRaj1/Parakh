@@ -6,6 +6,7 @@ vi.mock('./db/reviews.js', () => ({
   dbSweepStalledReviews: vi.fn(),
   dbTimeoutStage: vi.fn(),
   getReview: vi.fn(),
+  dbFindResumableDailyQuotaReviews: vi.fn(),
 }));
 
 vi.mock('./github/auth.js', () => ({ getCachedToken: vi.fn() }));
@@ -14,7 +15,11 @@ vi.mock('./redis.js', () => ({
   createRedisGet: vi.fn(),
   createRedisSet: vi.fn(),
 }));
-vi.mock('./jobs/review.js', () => ({ swapCommentReaction: vi.fn() }));
+vi.mock('./jobs/review.js', () => ({
+  swapCommentReaction: vi.fn(),
+  releaseReviewLock: vi.fn(),
+  triggerReview: vi.fn(),
+}));
 
 import { handleCronTrigger } from './cron.js';
 import {
@@ -22,19 +27,27 @@ import {
   dbSweepStalledReviews,
   dbTimeoutStage,
   getReview,
+  dbFindResumableDailyQuotaReviews,
 } from './db/reviews.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
-import { swapCommentReaction } from './jobs/review.js';
+import {
+  swapCommentReaction,
+  releaseReviewLock,
+  triggerReview,
+} from './jobs/review.js';
 
 const mocked = {
   pruneExpiredReasoning: vi.mocked(pruneExpiredReasoning),
   dbSweepStalledReviews: vi.mocked(dbSweepStalledReviews),
   dbTimeoutStage: vi.mocked(dbTimeoutStage),
   getReview: vi.mocked(getReview),
+  dbFindResumableDailyQuotaReviews: vi.mocked(dbFindResumableDailyQuotaReviews),
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
   swapCommentReaction: vi.mocked(swapCommentReaction),
+  releaseReviewLock: vi.mocked(releaseReviewLock),
+  triggerReview: vi.mocked(triggerReview),
 };
 
 const env = {

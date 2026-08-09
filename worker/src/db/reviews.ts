@@ -422,6 +422,94 @@ export async function dbFailStage(
   await sql.transaction(queries);
 }
 
+/**
+ * Park a review because every LLM provider key hit its DAILY quota.
+ *
+ * Closes the open stage event as FAILED (code DAILY_QUOTA) WITHOUT setting
+ * status = 'FAILED', then sets the review row to PAUSED_DAILY_QUOTA with a
+ * resume timestamp. The 1-minute cron re-triggers it after that timestamp.
+ */
+export async function dbMarkDailyQuotaPaused(
+  reviewId: string,
+  stage: string,
+  attempt: number,
+  errorMessage: string,
+  resumeAt: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql.transaction([
+    sql`
+      UPDATE review_step_events
+      SET ended_at = now(),
+          duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
+          outcome = 'FAILED',
+          error_code = 'DAILY_QUOTA',
+          error_message = ${errorMessage},
+          error_stack = null
+      WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
+    `,
+    sql`
+      UPDATE reviews
+      SET status = 'PAUSED_DAILY_QUOTA',
+          failed_at = now(),
+          error_step = ${stage},
+          error_message = ${errorMessage},
+          daily_quota_resume_at = ${resumeAt},
+          worker_heartbeat_at = null
+      WHERE id = ${reviewId}
+    `,
+  ]);
+}
+
+/**
+ * Find PAUSED_DAILY_QUOTA reviews whose resume timestamp has elapsed
+ * (or is missing), so the cron can re-enqueue them for review.
+ */
+export async function dbFindResumableDailyQuotaReviews(env: EnvWithDB): Promise<Review[]> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM reviews
+    WHERE status = 'PAUSED_DAILY_QUOTA'
+      AND (daily_quota_resume_at IS NULL OR daily_quota_resume_at <= now())
+    ORDER BY failed_at ASC
+  `;
+  return rows as unknown as Review[];
+}
+
+// ─── Per-file Review Telemetry ─────────────────────────────────────────────────
+
+export interface ReviewFileEventRecord {
+  reviewId: string;
+  file: string;
+  status: 'COMPLETED' | 'FAILED';
+  provider?: string | null;
+  model?: string | null;
+  findingsCount: number;
+  errorMessage?: string | null;
+}
+
+/**
+ * Record one row of per-file review telemetry (provider, model, outcome).
+ * One row per file keeps the dashboard's per-file drill cheap and gives us
+ * provider-usage signals without relying on reasoning capture.
+ */
+export async function recordReviewFileEvent(rec: ReviewFileEventRecord, env: EnvWithDB): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    INSERT INTO review_file_events (review_id, file, status, provider, model, findings_count, error_message)
+    VALUES (
+      ${rec.reviewId},
+      ${rec.file},
+      ${rec.status},
+      ${rec.provider ?? null},
+      ${rec.model ?? null},
+      ${rec.findingsCount},
+      ${rec.errorMessage ?? null}
+    )
+  `;
+}
+
 export async function dbTimeoutStage(
   reviewId: string,
   stage: string,

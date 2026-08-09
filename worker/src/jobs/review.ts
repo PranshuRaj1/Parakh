@@ -40,11 +40,13 @@ import {
   setTriggerCommentContext,
   updateTriggerCommentReactionId,
   updateReviewShaPin,
+  dbMarkDailyQuotaPaused,
+  recordReviewFileEvent,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasonings } from '../db/reviews.js';
 import { type ReviewResult } from '../gemini/client.js';
-import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
+import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTER_MS } from '../gemini/keyPool.js';
 import type { LLMClient } from '../llm/provider.js';
 import { createLLMClients } from '../llm/factory.js';
 import {
@@ -338,6 +340,22 @@ async function reviewSingleFile(
     // exactly which file broke and why (failure-mode tie-in).
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[review] Error reviewing ${fileName}:`, err);
+    // Per-file telemetry row — FAILED, best-effort (a DB failure here must not
+    // mask the original per-file error).
+    try {
+      budget.spend(1);
+      await recordReviewFileEvent({
+        reviewId,
+        file: fileName,
+        status: 'FAILED',
+        provider: llm.servedProvider,
+        model: llm.modelName,
+        findingsCount: 0,
+        errorMessage: sanitizeErrorText(message),
+      }, env);
+    } catch (telemetryErr) {
+      console.warn(`[review] Failed to record file event for ${fileName}:`, telemetryErr);
+    }
     if (captureReasoning) {
       reasoningBuffer.push({
         file: fileName,
@@ -356,6 +374,22 @@ async function reviewSingleFile(
       thinking: result.thinking,
       retentionDays,
     });
+  }
+
+  // Per-file telemetry row — COMPLETED, with the provider that served it and
+  // the finding count so large-PR progress is pixel-verifiable.
+  try {
+    budget.spend(1);
+    await recordReviewFileEvent({
+      reviewId,
+      file: fileName,
+      status: 'COMPLETED',
+      provider: llm.servedProvider,
+      model: llm.modelName,
+      findingsCount: result.genericFindings.length + result.ruleFindings.length,
+    }, env);
+  } catch (telemetryErr) {
+    console.warn(`[review] Failed to record file event for ${fileName}:`, telemetryErr);
   }
 
   const findings: Finding[] = [];
@@ -740,7 +774,7 @@ async function executeReviewJobInternal(
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 
-    const captureReasoning = env.REASONING_CAPTURE_ENABLED !== 'false';
+    const captureReasoning = env.REASONING_CAPTURE_ENABLED === 'true';
     const retentionDays = parseRetentionDays(env.REASONING_RETENTION_DAYS);
     const reasoningBuffer: ReasoningEntry[] = [];
     let filesProcessedInThisAttempt = 0;
@@ -934,12 +968,16 @@ async function executeReviewJobInternal(
     }
     if (err instanceof DailyQuotaExhaustedError) {
       // Every provider key has hit its DAILY quota — it won't recover in the
-      // queue's retry window, so a redelivery would just fail again. Park the
-      // review (terminal FAILED) so the queue acks and stops delivering; the
-      // user re-triggers when quota resets.
+      // queue's retry window, so a redelivery would just fail again. Instead
+      // of a terminal FAILED (which needs a manual re-trigger), park as
+      // PAUSED_DAILY_QUOTA and let the 1-minute cron auto-resume it after the
+      // resume window. The queue message acks (we return, not throw).
       const failureMessage = err.message;
-      await failStage(reviewId, currentStage, stageAttempt, 'DAILY_QUOTA', new Error(failureMessage), true, env);
-      console.warn(`[review] ${fullRepo}#${prNumber} parked — ${failureMessage}`);
+      const resumeAt = new Date(Date.now() + DAILY_QUOTA_PAUSE_AFTER_MS).toISOString();
+      await dbMarkDailyQuotaPaused(reviewId, currentStage, stageAttempt, failureMessage, resumeAt, env);
+      console.warn(
+        `[review] ${fullRepo}#${prNumber} daily-quota parked (resume ~${new Date(resumeAt).toISOString()}) — ${failureMessage}`
+      );
       return;
     }
     const errorCode = err instanceof Error && err.name === 'StageTimeoutError' ? 'STAGE_TIMEOUT' : 'UNKNOWN';

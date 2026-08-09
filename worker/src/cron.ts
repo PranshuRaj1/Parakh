@@ -2,7 +2,8 @@
  * Cron sweeps for stalled reviews
  */
 
-import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning } from './db/reviews.js';
+import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning, dbFindResumableDailyQuotaReviews } from './db/reviews.js';
+import { triggerReview } from './jobs/review.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
 import { swapCommentReaction, releaseReviewLock } from './jobs/review.js';
@@ -21,6 +22,36 @@ export async function handleCronTrigger(env: Env): Promise<void> {
     }
   } catch (err) {
     console.error(`[cron] Failed to prune expired reasoning:`, err);
+  }
+
+  // Auto-resume reviews paused for DAILY quota once their resume window has
+  // elapsed. Re-enqueuing a REVIEW job picks up from the per-file Redis state.
+  try {
+    const paused = await dbFindResumableDailyQuotaReviews(env);
+    for (const review of paused) {
+      const [owner, repo] = review.repo.split('/');
+      if (!owner || !repo || !review.installation_id) {
+        console.warn(`[cron] Skipping resumable review ${review.id} — missing repo/installation`);
+        continue;
+      }
+      try {
+        await triggerReview(
+          review.installation_id,
+          owner,
+          repo,
+          review.pr_number,
+          'auto_retry',
+          env,
+          review.id,
+          review.github_delivery_id ?? undefined
+        );
+        console.log(`[cron] Re-enqueued daily-quota-paused review ${review.repo}#${review.pr_number}`);
+      } catch (err) {
+        console.error(`[cron] Failed to resume daily-quota review ${review.id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error(`[cron] Failed to find daily-quota resumes:`, err);
   }
 
   const stalled = await dbSweepStalledReviews(STALL_TIMEOUT_SECONDS, env);
