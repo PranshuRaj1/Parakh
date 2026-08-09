@@ -72,6 +72,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
+  mocked.triggerReview.mockResolvedValue(true);
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null });
 });
 
@@ -106,7 +107,7 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
-      'existing-review', true, 'del'
+      'existing-review', 'del'
     );
   });
 
@@ -121,7 +122,7 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
-      undefined, true, 'del', 100, 'issue_comment', 777
+      undefined, 'del', 100, 'issue_comment', 777
     );
   });
 
@@ -134,7 +135,7 @@ describe('executeCommentResponseJob', () => {
 
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
-      undefined, true, 'del', 100, 'issue_comment', undefined
+      undefined, 'del', 100, 'issue_comment', undefined
     );
   });
 

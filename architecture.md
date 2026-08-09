@@ -283,6 +283,58 @@ guarantees there *will be a next attempt*.
 
 ---
 
+## Iteration 8 — The comment → review pipeline guard (the "reviews stopped appearing" incident)
+
+The comment pipeline (`@parakh review` → queue → classify → trigger a review) was
+*working* at the webhook and queue layers, but the review it was supposed to
+start was never created. The dashboard showed nothing new; the bot went silent.
+
+### 8.1 An unguarded reaction call could kill the enqueue
+
+`triggerReview` posted the PR-level 👀 reaction like this:
+
+```ts
+const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+```
+
+That call was **not** wrapped. A single GitHub hiccup (transient 5xx, rate
+limit, network blip) made it throw, which made `triggerReview` throw *before*
+the review was ever enqueued. The `COMMENT_RESPONSE` queue job would retry on
+every delivery, forever, without ever creating a review or posting a reply.
+
+The trigger-comment reaction had already been made best-effort; the PR-level
+one was the exception, and the exception is what found the incident.
+
+**The fix:** wrap it in `try/catch` and persist `undefined` on failure, exactly
+like the trigger-comment reaction. A reaction is cosmetic; enqueueing the
+review is not.
+
+### 8.2 The classifier could swallow a bare "@parakh review"
+
+The intent prompt said `@parakh review` was *usually* a review request but left
+wiggle room for the model to file a bare `@parakh review` under `GENERAL` (and
+then silently do nothing — `GENERAL` deliberately gets no reply).
+
+**The fix:** the prompt now asserts that calling the bot's name together with
+the word "review" is **always** a `REVIEW_REQUEST`, so the request can't be
+dropped as chit-chat.
+
+### 8.3 Why the old tests missed it
+
+The unit tests mocked `triggerReview` *itself*, so they verified the classifier
+calls it — not that it succeeds end-to-end. Nothing exercised the real wiring
+where the unguarded reaction sat.
+
+**The fix (this repo's new safety net):** a `worker/src/smoke/pipeline-smoke.test.ts`
+suite that runs the **real** webhook → queue → classify → `triggerReview` chain
+with only the leaf deps (GitHub API / DB / Redis / LLM) mocked. Its crown-jewel
+case makes `addReaction` throw and asserts the REVIEW job is *still* enqueued —
+an exact replay of the incident. It runs automatically on every `git push` via
+`.githooks/pre-push` (`npm run test:pipeline`), so a broken comment→review
+wiring blocks the push before it ever reaches production.
+
+---
+
 ## What the pipeline looks like now
 
 ```
@@ -343,6 +395,8 @@ cron (every minute):
 | `worker/src/db/reviews.ts` | All DB access: reviews, stage events, SHA pin, reasoning, sweep |
 | `worker/src/gemini/keyPool.ts` | Gemini key rotation, rate-limit / model-unavailable detection |
 | `worker/src/jobs/comment-response.ts` | `@parakh` mention → intent classification → trigger |
+| `worker/src/smoke/pipeline-smoke.test.ts` | Pre-push smoke: real webhook→queue→triggerReview wiring, leaf deps mocked; catches a broken comment→review chain |
+| `.githooks/pre-push` | Runs the smoke test before every `git push` (aborts on failure) |
 | `worker/src/cron.ts` | Watchdog: prune reasoning, sweep stalled reviews, free locks |
 | `db/migrations/` | Schema, applied in order by `db/migrate.ts` |
 
@@ -358,3 +412,13 @@ cron (every minute):
    enough to need more deliveries than the queue allows, it will eventually
    be given up on. The cron sweep posts a "stuck — reply `@parakh review`"
    comment so a human can re-trigger it.
+4. **Cosmetic side effects must never be on the critical path to enqueueing.**
+   A reaction/comment/emoji failure should warn and continue — if it can
+   throw, it will find the worst possible moment (a GitHub hiccup right when
+   someone asks for a review).
+5. **Mock the leaves, not the wiring.** Unit tests that mock `triggerReview`
+   can't catch a break *inside* it. The smoke suite runs the real queue chain
+   so safety comes from exercising the actual path, not assuming it.
+6. **Run the smoke test before you push.** `git push` is the last gate before
+   production. `.githooks/pre-push` runs `npm run test:pipeline` and blocks a
+   push that would ship a broken comment→review pipeline.

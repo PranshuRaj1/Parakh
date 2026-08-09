@@ -48,7 +48,7 @@ describe('handleQueueBatch', () => {
 
     await handleQueueBatch(batch, env);
 
-    expect(reviewJob).toHaveBeenCalledWith(batch.messages[0].body, env);
+    expect(reviewJob).toHaveBeenCalledWith(batch.messages[0].body, env, 1);
     expect(commentJob).toHaveBeenCalledWith(batch.messages[1].body, env);
     expect(contradictionJob).toHaveBeenCalledWith(batch.messages[2].body, env);
     for (const m of batch.messages) {
