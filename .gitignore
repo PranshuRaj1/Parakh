@@ -8,6 +8,7 @@ out/
 
 # Environment files
 .env
+.env.moved
 .env.local
 .env.*.local
 .dev.vars
