@@ -489,7 +489,14 @@ export async function triggerReview(
       reviewId = resumeReviewId;
       await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
     } else {
-      const seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+      // Best-effort: a reaction failure must NOT crash triggerReview — the
+      // queue job would retry endlessly without ever enqueueing the review.
+      let seenReactionId: number | null = null;
+      try {
+        seenReactionId = await addReaction(owner, repo, prNumber, REACTIONS.SEEN, token);
+      } catch (err) {
+        console.warn(`[review] Failed to add seen reaction for ${fullRepo}#${prNumber}:`, err);
+      }
 
       if (reason !== 'manual_mention') {
         await postComment(owner, repo, prNumber,
@@ -503,7 +510,7 @@ export async function triggerReview(
         pr_number: prNumber,
         installation_id: installationId,
         status: 'QUEUED',
-        seen_reaction_id: seenReactionId,
+        seen_reaction_id: seenReactionId ?? undefined,
         trigger_reason: reason,
         github_delivery_id: githubDeliveryId,
         head_sha: headSha,

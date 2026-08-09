@@ -101,7 +101,7 @@ Classify the reply into exactly one of these six categories:
 
 - **QUESTION**: The developer is asking a follow-up question about the bot's suggestion. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "Would using X fix this?".
 
-- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. Examples: "@parakh review this again", "please re-review", "can you check this PR now?".
+- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. A comment that calls the bot's name (e.g. "@parakh") together with the word "review" is ALWAYS a REVIEW_REQUEST. Examples: "@parakh review", "@parakh review this again", "please re-review", "can you check this PR now?".
 
 - **GENERAL**: The comment is a general conversation, casual acknowledgment, or doesn't fit the above categories. Examples: "lol nice catch", "thanks", "will fix", "I see what you mean", or chatter between developers.
 `;
