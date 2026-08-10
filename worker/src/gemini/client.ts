@@ -136,6 +136,17 @@ export class GeminiClient implements LLMProvider {
     REASONING_CAPTURE_ENABLED?: string;
     REASONING_THINKING_BUDGET?: string;
   }, cooldowns?: CooldownStore) {
+    this.parseEnvironment(env);
+    this.cooldowns = cooldowns ?? new MemoryCooldownStore();
+  }
+
+  private parseEnvironment(env: {
+    GEMINI_API_KEYS?: string;
+    GEMINI_API_KEY?: string;
+    GEMINI_GENERATION_MODEL?: string;
+    REASONING_CAPTURE_ENABLED?: string;
+    REASONING_THINKING_BUDGET?: string;
+  }) {
     this.keys = getKeyPool(env);
     this.generationModel = env.GEMINI_GENERATION_MODEL ?? DEFAULT_GEMINI_GENERATION_MODEL;
     // Reasoning capture is OFF unless explicitly enabled — thinking tokens
@@ -143,7 +154,6 @@ export class GeminiClient implements LLMProvider {
     this.reasoningEnabled = env.REASONING_CAPTURE_ENABLED === 'true';
     const rawBudget = parseInt(env.REASONING_THINKING_BUDGET ?? '', 10);
     this.thinkingBudget = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : DEFAULT_THINKING_BUDGET;
-    this.cooldowns = cooldowns ?? new MemoryCooldownStore();
   }
 
   /**
@@ -174,7 +184,7 @@ export class GeminiClient implements LLMProvider {
    * The hint is updated only on success, so it gravitates toward
    * the last key that actually worked.
    */
-  private async withKeyRotation<T>(fn: (apiKey: string) => Promise<T>): Promise<T> {
+  private async withKeyRotation<T>(action: (apiKey: string) => Promise<T>): Promise<T> {
     // Inherit parked keys persisted by a previous delivery/client (Redis).
     // Idempotent — subsequent calls on the same client are no-ops.
     await this.cooldowns.load();
@@ -200,7 +210,7 @@ export class GeminiClient implements LLMProvider {
         // Count THIS real outgoing call against the subrequest budget (the
         // pipeline attaches one; the guard otherwise undercounts during storms).
         this.budget?.spend(1);
-        const result = await fn(apiKey);
+        const result = await action(apiKey);
         // Success — update hint so future calls start from this key
         this.sharedKeyHint = keyIndex;
         this.cooldowns.clear(keyIndex);
@@ -246,24 +256,32 @@ export class GeminiClient implements LLMProvider {
     // nothing changed, so success paths cost nothing extra.
     await this.cooldowns.flush();
 
-    // Every key is now accounted for: parked at loop start, failed just now, or
-    // skipped as model-unavailable. Decide whether retrying can EVER succeed.
+    }
+
+    await this.cooldowns.flush();
+    this.throwExhaustionError(coolingDown, failed, unavailable, dailyQuotaBlocked, dailyQuotaFailures, lastError);
+    return null as never; // unreachable
+  }
+
+  private throwExhaustionError(
+    coolingDown: number,
+    failed: number,
+    unavailable: number,
+    dailyQuotaBlocked: number,
+    dailyQuotaFailures: number,
+    lastError: Error | null
+  ): never {
     const accounted = coolingDown + failed + unavailable;
     const usableKeys = accounted - unavailable;
     const dailyQuotaKeys = dailyQuotaBlocked + dailyQuotaFailures;
+
     if (accounted === this.keys.length) {
       if (usableKeys === 0) {
-        // No key in the pool can serve the configured model. Retrying burns one
-        // guaranteed 404 (a subrequest) per key per call — surface a clear
-        // exhaustion instead of a misleading "rate limited" one.
         throw new AllKeysExhaustedError(
           lastError ?? new Error(`No key can serve ${this.generationModel}`),
           `No Gemini API key can serve model ${this.generationModel}`
         );
       }
-      // Daily-quota exhaustion always wins over plain rate-limit at the gate:
-      // a daily quota does NOT recover in 60s, so the review should park
-      // instead of burning a queue delivery in backoff.
       if (dailyQuotaKeys === usableKeys) {
         throw new DailyQuotaExhaustedError(
           lastError ?? new Error('All Gemini API keys exhausted their daily quota')
