@@ -40,8 +40,13 @@ const CFAI_API_BASE = 'https://api.cloudflare.com/client/v4/accounts';
 export const DEFAULT_CFAI_GENERATION_MODEL =
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
-/** Embedding model for rule similarity — BGE large (1024-dim). */
-const CFAI_EMBEDDING_MODEL = '@cf/baai/bge-large-en-v1.5';
+/**
+ * Embedding model for rule similarity — BGE base (768-dim).
+ * Must match the `vector(768)` rules.embedding column and Gemini's
+ * text-embedding-004 (also 768-dim). bge-large-en-v1.5 is 1024-dim and
+ * would fail to insert into the 768-dim column.
+ */
+const CFAI_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 
 function jsonStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -206,7 +211,7 @@ export class CfaAiClient implements LLMProvider {
     return this.run(this.generationModel, buildReplyPrompt(context, question));
   }
 
-  /** Generate a 1024-dim embedding via bge-large-en-v1.5. */
+  /** Generate a 768-dim embedding via bge-base-en-v1.5. */
   async generateEmbedding(text: string): Promise<number[]> {
     this.budget?.spend(1);
 
@@ -236,7 +241,7 @@ export class CfaAiClient implements LLMProvider {
         ? first
         : (first as { embedding?: number[] })?.embedding;
     if (!vector || vector.length === 0) {
-      throw new Error('[cfai] Empty embedding result from bge-large-en-v1.5');
+      throw new Error('[cfai] Empty embedding result from bge-base-en-v1.5');
     }
     return vector;
   }
