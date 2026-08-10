@@ -26,6 +26,7 @@ import {
   DAILY_QUOTA_COOLDOWN_MS,
 } from '../gemini/keyPool.js';
 import { MemoryCooldownStore, type CooldownStore } from '../gemini/cooldown-store.js';
+import { parseJson } from '../llm/parse-json.js';
 import type { LLMProvider } from '../llm/provider.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
@@ -71,6 +72,10 @@ export class GroqClient implements LLMProvider {
     return this.generationModel;
   }
 
+  get providerName(): 'groq' {
+    return 'groq';
+  }
+
   // ── Key Rotation ────────────────────────────────────────────────────
 
   /**
@@ -88,6 +93,7 @@ export class GroqClient implements LLMProvider {
     let dailyQuotaBlocked = 0;
     let failed = 0;
     let dailyQuotaFailures = 0;
+    let unavailable = 0;
 
     for (let attempt = 0; attempt < this.keys.length; attempt++) {
       const keyIndex = (startIndex + attempt) % this.keys.length;
@@ -100,21 +106,26 @@ export class GroqClient implements LLMProvider {
       const apiKey = this.keys[keyIndex];
 
       try {
-        this.budget?.spend(1);
         const result = await fn(apiKey);
+        this.budget?.spend(1);
         this.sharedKeyHint = keyIndex;
         this.cooldowns.clear(keyIndex);
         await this.cooldowns.flush();
         return result;
       } catch (err) {
+        // Model-access errors MUST be classified before the rate-limit checks —
+        // a 404 "model not supported" can never serve this model and would
+        // otherwise corrupt the daily-quota / exhaustion accounting.
+        if (isModelUnavailableError(err)) {
+          unavailable++;
+          lastError = err as Error;
+          console.warn(
+            `[groq] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${this.generationModel}, trying next...`
+          );
+          continue;
+        }
         if (!isRateLimitError(err)) {
-          if (isModelUnavailableError(err)) {
-            console.warn(
-              `[groq] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${this.generationModel}, trying next...`
-            );
-            lastError = err as Error;
-            continue;
-          }
+          await this.cooldowns.flush();
           throw err;
         }
         lastError = err as Error;
@@ -133,14 +144,23 @@ export class GroqClient implements LLMProvider {
 
     await this.cooldowns.flush();
 
-    // Every key is either parked in cooldown or failed just now. If ALL of
-    // them are daily-quota'd, retrying is pointless.
-    const accounted = coolingDown + failed;
+    // Every key is now accounted for: parked at loop start, failed just now, or
+    // skipped as model-unavailable. Decide whether retrying can EVER succeed.
+    const accounted = coolingDown + failed + unavailable;
+    const usableKeys = accounted - unavailable;
     const dailyQuotaKeys = dailyQuotaBlocked + dailyQuotaFailures;
-    if (accounted === this.keys.length && dailyQuotaKeys === accounted) {
-      throw new DailyQuotaExhaustedError(
-        lastError ?? new Error('All Groq API keys exhausted their daily quota')
-      );
+    if (accounted === this.keys.length) {
+      if (usableKeys === 0) {
+        throw new AllKeysExhaustedError(
+          lastError ?? new Error(`No key can serve ${this.generationModel}`),
+          `No Groq API key can serve model ${this.generationModel}`
+        );
+      }
+      if (dailyQuotaKeys === usableKeys) {
+        throw new DailyQuotaExhaustedError(
+          lastError ?? new Error('All Groq API keys exhausted their daily quota')
+        );
+      }
     }
     throw new AllKeysExhaustedError(
       lastError ?? new Error('All Groq API keys are cooling down from rate limits')
@@ -201,10 +221,7 @@ export class GroqClient implements LLMProvider {
 
   /** Parse model JSON output, tolerating fenced code blocks. */
   private parseJson<T>(raw: string): T {
-    const trimmed = raw.trim();
-    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-    const candidate = fenced ? fenced[1] : trimmed;
-    return JSON.parse(candidate) as T;
+    return parseJson<T>(raw);
   }
 
   // ── LLMProvider ─────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ export async function handleRetryReview(
       });
     }
 
-    if (!['FAILED', 'PAUSED_RATE_LIMITED'].includes(review.status)) {
+    if (!['FAILED', 'PAUSED_RATE_LIMITED', 'PAUSED_DAILY_QUOTA'].includes(review.status)) {
       return new Response(
         JSON.stringify({ error: `cannot retry a review with status ${review.status}` }),
         { status: 409, headers: { 'Content-Type': 'application/json' } }

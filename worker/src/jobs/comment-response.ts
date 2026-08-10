@@ -5,6 +5,7 @@ import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
+import { saveCorrectionAsRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
 export async function executeCommentResponseJob(
@@ -103,10 +104,22 @@ export async function executeCommentResponseJob(
       break;
     }
 
-    case 'CORRECTION':
-      // TODO: wire to correction.ts once memory write is re-enabled
-      await postReply("Got it — noted. (Not saved to memory yet — that's next.)");
+    case 'CORRECTION': {
+      try {
+        const rule = await saveCorrectionAsRule(
+          { installationId, owner, repo, prNumber, commentBody },
+          env
+        );
+        const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+        await postReply(
+          `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
+        );
+      } catch (err) {
+        console.error('[comment-response] Failed to save CORRECTION as rule:', err);
+        await postReply("Couldn't save that right now — please try again.");
+      }
       break;
+    }
 
     case 'EXPLANATION':
     case 'DISMISSAL':

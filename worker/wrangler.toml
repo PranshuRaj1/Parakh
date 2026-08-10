@@ -20,8 +20,11 @@ max_batch_size = 1
 # GEMINI_API_KEYS (comma-separated failover pool)
 # GROQ_API_KEY / GROQ_API_KEYS (comma-separated fallback pool, optional)
 # GROQ_GENERATION_MODEL (optional, default llama-3.3-70b-versatile)
+# CF_ACCOUNT_ID (optional — enables Cloudflare Workers AI tertiary fallback)
+# CF_API_TOKEN (optional secret, Workers AI access — enables CF AI fallback)
+# OPENROUTER_API_KEY (optional secret — enables OpenRouter quaternary fallback)
 # LLM_PRIMARY (optional, default "gemini") / LLM_FALLBACK (optional, default "groq"; "none" disables)
-# REASONING_CAPTURE_ENABLED (optional, default "true"; set "false" to disable reasoning capture)
+# REASONING_CAPTURE_ENABLED (optional, default "false"; set "true" to enable)
 # REASONING_THINKING_BUDGET (optional, default 1024 — max thinking tokens per review call)
 # REASONING_RETENTION_DAYS (optional, default 14 — prune stored reasoning after this)
 # DASHBOARD_BASE_URL (optional — adds a dashboard reasoning link to PR comments)
@@ -31,10 +34,27 @@ max_batch_size = 1
 # WORKER_API_SECRET
 
 [vars]
+# Generation model for the Gemini pool. Must be a model EVERY key in
+# GEMINI_API_KEYS can serve (verified against gemini-3-flash-preview).
+# Kept as an explicit var so a code refactor can never silently fall back
+# to a model the newer keys 404 on.
+GEMINI_GENERATION_MODEL = "gemini-3-flash-preview"
+# Reasoning capture (model thinking) is OFF by default for PR reviews —
+# thinking tokens cost 2x and roughly halve daily throughput. Opt back in
+# per PR by setting REASONING_CAPTURE_ENABLED="true" here or as a secret.
+REASONING_CAPTURE_ENABLED = "false"
 # Groq fallback model + provider routing (keys themselves are secrets).
 GROQ_GENERATION_MODEL = "llama-3.3-70b-versatile"
+# Provider routing: primary → fallback → (configured) cfai → (configured)
+# openrouter. LLM_PRIMARY/LLM_FALLBACK pick the first two; the others are
+# appended automatically when their credentials are present as secrets.
 LLM_PRIMARY = "gemini"
 LLM_FALLBACK = "groq"
+# Optional tertiary/quaternary generation models (no secrets on the vars side).
+CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"
+# Cloudflare Workers AI account (non-secret). Tokens live in secrets.
+CF_ACCOUNT_ID = "25946c5b0c7365597e6229f17f194da6"
 
 [observability.logs]
 enabled = true

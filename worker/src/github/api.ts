@@ -261,22 +261,26 @@ export async function addCommentReaction(
   repo: string,
   commentId: number,
   commentType: 'issue_comment' | 'pull_request_review_comment',
-  content: '+1' | '-1' | 'eyes' | 'confused',
+  reactionContent: '+1' | '-1' | 'eyes' | 'confused',
   token: string
 ): Promise<number> {
   const path = commentType === 'pull_request_review_comment'
     ? `pulls/comments/${commentId}/reactions`
     : `issues/comments/${commentId}/reactions`;
-  const data = await githubFetch<{ id: number }>(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
-    token,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
-      body: JSON.stringify({ content }),
-    }
-  );
-  return data.id;
+  try {
+    const data = await githubFetch<{ id: number }>(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+      token,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+        body: JSON.stringify({ content: reactionContent }),
+      }
+    );
+    return data.id;
+  } catch (err) {
+    throw new Error(`Failed to add comment reaction to ${commentType} ${commentId}`, { cause: err });
+  }
 }
 
 /**
@@ -286,16 +290,12 @@ export async function addCommentReaction(
 export async function removeCommentReaction(
   owner: string,
   repo: string,
-  commentId: number,
-  commentType: 'issue_comment' | 'pull_request_review_comment',
   reactionId: number,
   token: string
 ): Promise<void> {
-  const path = commentType === 'pull_request_review_comment'
-    ? `pulls/comments/${commentId}/reactions/${reactionId}`
-    : `issues/comments/${commentId}/reactions/${reactionId}`;
+
   const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/reactions/${reactionId}`,
     {
       method: 'DELETE',
       headers: headers(token),
@@ -303,7 +303,7 @@ export async function removeCommentReaction(
   );
 
   // 204 No Content is success for DELETE
-  if (!response.ok && response.status !== 204) {
+  if (!response.ok) {
     const body = await response.text();
     throw new Error(`Failed to remove comment reaction (${response.status}): ${body}`);
   }

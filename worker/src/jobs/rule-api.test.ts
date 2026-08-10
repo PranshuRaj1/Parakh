@@ -13,10 +13,9 @@ vi.mock('../llm/factory.js', () => ({
   createLLMClients: () => ({
     llm: {
       classifyPriority: mockClassifyPriority,
-    },
-    gemini: {
       generateEmbedding: mockGenerateEmbedding,
     },
+    gemini: {},
     groq: {},
   }),
 }));

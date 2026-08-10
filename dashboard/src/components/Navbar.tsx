@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import { BrainCircuit, GitPullRequest, LogOut } from 'lucide-react';
+import Logo from './Logo';
 
 export default function Navbar() {
   const { data: session, status } = useSession();
@@ -15,8 +16,8 @@ export default function Navbar() {
         <div className="flex justify-between h-16">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
-              <Link href="/" className="text-xl font-bold tracking-tight">
-                Parakh
+              <Link href="/" className="flex items-center">
+                <Logo className="h-8 w-auto" />
               </Link>
             </div>
             {session && (

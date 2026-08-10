@@ -97,11 +97,16 @@ Classify the reply into exactly one of these six categories:
 
 - **EXPLANATION**: The developer is explaining why their code is correct as-is, without asserting a new standard. They're providing context the bot lacked. Examples: "This is intentional because of X", "We're doing it this way because the API requires it", "That's handled by the middleware already".
 
-- **DISMISSAL**: The developer is dismissing the bot's comment as unhelpful, irrelevant, or wrong without providing a corrective standard. Examples: "Not relevant", "Ignore this", "This is fine", "👎", "Nah".
+- **DISMISSAL**: The developer is dismissing the bot's comment as unhelpful, irrelevant, or wrong WITHOUT providing a corrective standard or forward-looking instruction. Examples: "Not relevant", "Ignore this", "This is fine", "👎", "Nah".
+
+## Disambiguation Rules
+
+- **Forward-looking standards always win.** If the comment tells the bot how to behave in FUTURE reviews — e.g. it contains phrases like "in any future review", "stop flagging X", "never raise X", "don't flag X", "always do Y", "from now on" — classify it as **CORRECTION**, even if the tone is dismissive ("useless", "stop", "annoying", "don't"). The corrective standard is the forward-looking instruction.
+- A dismissal is only **DISMISSAL** if it contains NO such standard. "This is useless" alone is DISMISSAL; "This is useless, stop flagging EOF newlines in future reviews" is CORRECTION.
 
 - **QUESTION**: The developer is asking a follow-up question about the bot's suggestion. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "Would using X fix this?".
 
-- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. Examples: "@parakh review this again", "please re-review", "can you check this PR now?".
+- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. A comment that calls the bot's name (e.g. "@parakh") together with the word "review" is ALWAYS a REVIEW_REQUEST. Examples: "@parakh review", "@parakh review this again", "please re-review", "can you check this PR now?".
 
 - **GENERAL**: The comment is a general conversation, casual acknowledgment, or doesn't fit the above categories. Examples: "lol nice catch", "thanks", "will fix", "I see what you mean", or chatter between developers.
 `;

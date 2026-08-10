@@ -34,12 +34,14 @@ export async function handleCreateRule(
     throw new Error('Missing required fields: repo, body');
   }
 
-  // Embeddings are Gemini-only (Groq has no embeddings API), so those use the
-  // raw GeminiClient; priority classification routes through the LLM facade.
-  const { llm, gemini } = createLLMClients(env);
+  // Embeddings and priority classification both route through the LLM client
+  // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini
+  // is exhausted. (Groq/OpenRouter have no embeddings API — the chain skips
+  // providers that don't implement generateEmbedding.)
+  const { llm } = createLLMClients(env);
 
   // 2. Generate embedding
-  const embedding = await gemini.generateEmbedding(request.body);
+  const embedding = await llm.generateEmbedding(request.body);
 
   // 3. Classify priority (or use override from request)
   const priority = request.priority || await llm.classifyPriority(request.body);

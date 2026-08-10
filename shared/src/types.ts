@@ -10,7 +10,7 @@ export type RulePriority = 'high' | 'normal';
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
 /** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with stage tracking. */
-export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_DAILY_QUOTA';
 
 export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADING_RULES' | 'REVIEWING_FILES' | 'SCORING' | 'POSTING_COMMENT' | 'REACTING';
 
@@ -67,6 +67,8 @@ export interface Review {
   error_message: string | null;
   error_stack: string | null;
   github_delivery_id: string | null;
+  /** When the review may auto-resume after a daily-quota pause (null = not paused). */
+  daily_quota_resume_at: string | null;
   /** ID of the comment whose `@parakh review` triggered this review (manual_mention only). */
   trigger_comment_id: number | null;
   /** Where the trigger comment lives: top-level issue comment or inline review comment. */

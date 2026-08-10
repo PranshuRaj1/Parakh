@@ -26,7 +26,7 @@ export interface Env {
   GITHUB_APP_BOT_USER_ID: string;
 
   // Gemini
-  GEMINI_API_KEY: string;
+  GEMINI_API_KEY?: string;
   GEMINI_API_KEYS?: string;
   // Env override for the generation model (default gemini-2.5-flash).
   GEMINI_GENERATION_MODEL?: string;
@@ -37,7 +37,19 @@ export interface Env {
   GROQ_API_KEYS?: string;
   GROQ_GENERATION_MODEL?: string;
 
-  // Provider routing (defaults: primary gemini, fallback groq).
+  // Cloudflare Workers AI (tertiary provider / fallback).
+  // Requires the account ID + an API token with Workers AI access.
+  CF_ACCOUNT_ID?: string;
+  CF_API_TOKEN?: string;
+  CFAI_GENERATION_MODEL?: string;
+
+  // OpenRouter (quaternary provider / fallback). Single API key.
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_GENERATION_MODEL?: string;
+
+  // Provider routing (defaults: primary gemini, fallback groq). The chain
+  // then appends every other CONFIGURED provider (cfai, openrouter) in a
+  // fixed priority order.
   LLM_PRIMARY?: string;
   LLM_FALLBACK?: string;
 
@@ -131,9 +143,7 @@ async function handleWebhookRequest(request: Request, env: Env, _ctx?: Execution
   // Verify webhook signature
   const isValid = await verifySignature(body, signature, env.GITHUB_WEBHOOK_SECRET);
   if (!isValid) {
-        // if (!await verifySignature(env.GITHUB_WEBHOOK_SECRET, signature, bodyText)) {
-        //  return new Response('Invalid signature', { status: 401 });
-        // }
+    return new Response('Invalid signature', { status: 401 });
   }
 
   try {

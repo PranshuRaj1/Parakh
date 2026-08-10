@@ -8,6 +8,7 @@ out/
 
 # Environment files
 .env
+.env.moved
 .env.local
 .env.*.local
 .dev.vars
@@ -53,3 +54,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 scratch/
+
+SCRATCH_LARGE_PR_FAILURES.md
+diff.patch

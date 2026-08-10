@@ -131,17 +131,29 @@ export class GeminiClient implements LLMProvider {
 
   constructor(env: {
     GEMINI_API_KEYS?: string;
-    GEMINI_API_KEY: string;
+    GEMINI_API_KEY?: string;
     GEMINI_GENERATION_MODEL?: string;
     REASONING_CAPTURE_ENABLED?: string;
     REASONING_THINKING_BUDGET?: string;
   }, cooldowns?: CooldownStore) {
+    this.parseEnvironment(env);
+    this.cooldowns = cooldowns ?? new MemoryCooldownStore();
+  }
+
+  private parseEnvironment(env: {
+    GEMINI_API_KEYS?: string;
+    GEMINI_API_KEY?: string;
+    GEMINI_GENERATION_MODEL?: string;
+    REASONING_CAPTURE_ENABLED?: string;
+    REASONING_THINKING_BUDGET?: string;
+  }) {
     this.keys = getKeyPool(env);
     this.generationModel = env.GEMINI_GENERATION_MODEL ?? DEFAULT_GEMINI_GENERATION_MODEL;
-    this.reasoningEnabled = env.REASONING_CAPTURE_ENABLED !== 'false';
+    // Reasoning capture is OFF unless explicitly enabled — thinking tokens
+    // cost 2x input and ~halve daily throughput, so it is a per-review opt-in.
+    this.reasoningEnabled = env.REASONING_CAPTURE_ENABLED === 'true';
     const rawBudget = parseInt(env.REASONING_THINKING_BUDGET ?? '', 10);
     this.thinkingBudget = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : DEFAULT_THINKING_BUDGET;
-    this.cooldowns = cooldowns ?? new MemoryCooldownStore();
   }
 
   /**
@@ -156,6 +168,10 @@ export class GeminiClient implements LLMProvider {
     return this.generationModel;
   }
 
+  get providerName(): 'gemini' {
+    return 'gemini';
+  }
+
   // ── Key Rotation ────────────────────────────────────────────────────
 
   /**
@@ -168,16 +184,18 @@ export class GeminiClient implements LLMProvider {
    * The hint is updated only on success, so it gravitates toward
    * the last key that actually worked.
    */
-  private async withKeyRotation<T>(fn: (apiKey: string) => Promise<T>): Promise<T> {
+  private async withKeyRotation<T>(action: (apiKey: string) => Promise<T>): Promise<T> {
     // Inherit parked keys persisted by a previous delivery/client (Redis).
     // Idempotent — subsequent calls on the same client are no-ops.
     await this.cooldowns.load();
     const startIndex = this.sharedKeyHint;
+    // Carries the final failed key attempt into the exhaustion error for diagnostics.
     let lastError: Error | null = null;
     let coolingDown = 0;
     let dailyQuotaBlocked = 0;
     let failed = 0;
     let dailyQuotaFailures = 0;
+    let unavailable = 0;
 
     for (let attempt = 0; attempt < this.keys.length; attempt++) {
       const keyIndex = (startIndex + attempt) % this.keys.length;
@@ -193,7 +211,7 @@ export class GeminiClient implements LLMProvider {
         // Count THIS real outgoing call against the subrequest budget (the
         // pipeline attaches one; the guard otherwise undercounts during storms).
         this.budget?.spend(1);
-        const result = await fn(apiKey);
+        const result = await action(apiKey);
         // Success — update hint so future calls start from this key
         this.sharedKeyHint = keyIndex;
         this.cooldowns.clear(keyIndex);
@@ -202,17 +220,21 @@ export class GeminiClient implements LLMProvider {
         await this.cooldowns.flush();
         return result;
       } catch (err) {
+        // Model-access errors (404 "model not supported for this key") must be
+        // classified BEFORE the rate-limit checks — some providers surface them
+        // with 429/quota-like text that would otherwise count the key toward
+        // "daily quota exhausted". A key that 404s on this model can NEVER
+        // serve it, so skip it and never let it abort the whole call.
+        if (isModelUnavailableError(err)) {
+          unavailable++;
+          lastError = err as Error;
+          console.warn(
+            `[gemini] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${this.generationModel}, trying next...`
+          );
+          continue;
+        }
         if (!isRateLimitError(err)) {
-          // A key that can't serve the current model (e.g. 404 "model not
-          // available to new users") should be skipped, not allowed to abort
-          // the whole call — otherwise one bad key silently kills every job.
-          if (isModelUnavailableError(err)) {
-            console.warn(
-              `[gemini] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${this.generationModel}, trying next...`
-            );
-            lastError = err as Error;
-            continue;
-          }
+
           throw err;
         }
         lastError = err as Error;
@@ -235,16 +257,34 @@ export class GeminiClient implements LLMProvider {
     // Persist parked state so a fresh client/delivery inherits it. No-op when
     // nothing changed, so success paths cost nothing extra.
     await this.cooldowns.flush();
+    this.throwExhaustionError(coolingDown, failed, unavailable, dailyQuotaBlocked, dailyQuotaFailures, lastError);
+    return null as never; // unreachable
+  }
 
-    // Every key is either parked in cooldown or failed just now. If ALL of
-    // them are daily-quota'd, retrying is pointless: the review should park
-    // instead of burning a queue delivery in backoff.
-    const accounted = coolingDown + failed;
+  private throwExhaustionError(
+    coolingDown: number,
+    failed: number,
+    unavailable: number,
+    dailyQuotaBlocked: number,
+    dailyQuotaFailures: number,
+    lastError: Error | null
+  ): never {
+    const accounted = coolingDown + failed + unavailable;
+    const usableKeys = accounted - unavailable;
     const dailyQuotaKeys = dailyQuotaBlocked + dailyQuotaFailures;
-    if (accounted === this.keys.length && dailyQuotaKeys === accounted) {
-      throw new DailyQuotaExhaustedError(
-        lastError ?? new Error('All Gemini API keys exhausted their daily quota')
-      );
+
+    if (accounted === this.keys.length) {
+      if (usableKeys === 0) {
+        throw new AllKeysExhaustedError(
+          lastError ?? new Error(`No key can serve ${this.generationModel}`),
+          `No Gemini API key can serve model ${this.generationModel}`
+        );
+      }
+      if (dailyQuotaKeys === usableKeys) {
+        throw new DailyQuotaExhaustedError(
+          lastError ?? new Error('All Gemini API keys exhausted their daily quota')
+        );
+      }
     }
     throw new AllKeysExhaustedError(
       lastError ?? new Error('All Gemini API keys are cooling down from rate limits')

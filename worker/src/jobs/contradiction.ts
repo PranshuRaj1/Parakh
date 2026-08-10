@@ -67,12 +67,15 @@ export async function executeContradictionJob(
   // 2. Classify relationship with each candidate
   const { llm } = createLLMClients(env);
 
-  // Get token for posting comments (only needed if we find something)
+  // Get token for posting comments (only needed if we find something).
+  // Uses the payload installationId (real for comment-taught rules) so
+  // supersede/duplicate/refinement notices actually post to the PR. The
+  // dashboard path passes installationId 0 + prNumber 0, so it never posts.
   let token: string | null = null;
   const getToken = async () => {
     if (!token) {
       const redis = { get: createRedisGet(env), set: createRedisSet(env) };
-      token = await getCachedToken(0, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+      token = await getCachedToken(payload.installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
     }
     return token;
   };
@@ -163,7 +166,7 @@ export async function executeContradictionJob(
 
 function createRedisGet(env: Env): (key: string) => Promise<string | null> {
   return async (key: string) => {
-    const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${key}`, {
+    const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
     });
     const data = (await response.json()) as { result: string | null };
@@ -173,7 +176,7 @@ function createRedisGet(env: Env): (key: string) => Promise<string | null> {
 
 function createRedisSet(env: Env): (key: string, value: string, opts?: { ex?: number }) => Promise<unknown> {
   return async (key: string, value: string, opts?: { ex?: number }) => {
-    const args = opts?.ex ? `/${key}/${value}/EX/${opts.ex}` : `/${key}/${value}`;
+    const args = opts?.ex ? `/${encodeURIComponent(key)}/${encodeURIComponent(value)}/EX/${opts.ex}` : `/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
     });

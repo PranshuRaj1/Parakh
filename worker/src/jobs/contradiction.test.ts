@@ -67,7 +67,7 @@ const env = {
   UPSTASH_REDIS_TOKEN: 't',
 } as unknown as Env;
 
-function payload(overrides: Partial<{ prNumber: number }> = {}) {
+function payload(overrides: Partial<{ prNumber: number; installationId: number }> = {}) {
   return {
     type: 'CONTRADICTION' as const,
     installationId: 0,
@@ -122,10 +122,12 @@ describe('executeContradictionJob', () => {
     mocked.findSimilarRules.mockResolvedValue([candidate('old-rule')]);
     classifyRelationshipMock.mockResolvedValue('CONTRADICTION');
 
-    await executeContradictionJob(payload({ prNumber: 7 }), env);
+    await executeContradictionJob(payload({ prNumber: 7, installationId: 5 }), env);
 
     expect(mocked.updateRuleStatus).toHaveBeenCalledWith('old-rule', 'SUPERSEDED', env, 'new-rule');
     expect(mocked.setRuleSupersedes).toHaveBeenCalledWith('new-rule', 'old-rule', env);
+    // token is fetched for the payload's installation, not a hardcoded 0
+    expect(mocked.getCachedToken).toHaveBeenCalledWith(5, '123', 'key', expect.any(Object));
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7,
       expect.stringContaining('Superseded rule'),
