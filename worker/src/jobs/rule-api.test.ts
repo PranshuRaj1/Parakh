@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { generateEmbeddingMock, classifyPriorityMock } = vi.hoisted(() => ({
-  generateEmbeddingMock: vi.fn(),
-  classifyPriorityMock: vi.fn(),
+const { mockGenerateEmbedding, mockClassifyPriority } = vi.hoisted(() => ({
+  mockGenerateEmbedding: vi.fn(),
+  mockClassifyPriority: vi.fn(),
 }));
 
+// Stub the LLM factory so rule creation can run without a real model call:
+// classifyPriority is used when no priority override is supplied, and
+// generateEmbedding produces the embedding vector stored on the new rule.
 vi.mock('../llm/factory.js', () => ({
   createLLMClients: () => ({
     llm: {
-      classifyPriority: classifyPriorityMock,
+      classifyPriority: mockClassifyPriority,
     },
     gemini: {
-      generateEmbedding: generateEmbeddingMock,
+      generateEmbedding: mockGenerateEmbedding,
     },
     groq: {},
   }),
@@ -45,8 +48,8 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   mocked.executeContradictionJob.mockReset().mockResolvedValue(undefined);
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-1' } as never);
-  generateEmbeddingMock.mockReset().mockResolvedValue([0.1, 0.2]);
-  classifyPriorityMock.mockReset().mockResolvedValue('normal');
+  mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
+  mockClassifyPriority.mockReset().mockResolvedValue('normal');
 });
 
 describe('handleCreateRule', () => {
@@ -58,7 +61,7 @@ describe('handleCreateRule', () => {
   it('uses the supplied priority override without asking the LLM', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets', priority: 'high' }, env, makeCtx());
 
-    expect(classifyPriorityMock).not.toHaveBeenCalled();
+    expect(mockClassifyPriority).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high' }),
       env
@@ -67,7 +70,7 @@ describe('handleCreateRule', () => {
 
   it('classifies priority when not supplied', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
-    expect(classifyPriorityMock).toHaveBeenCalledWith('Never store secrets');
+    expect(mockClassifyPriority).toHaveBeenCalledWith('Never store secrets');
   });
 
   it('inserts the rule with the generated embedding and enqueues a contradiction check', async () => {
@@ -78,7 +81,7 @@ describe('handleCreateRule', () => {
       ctx
     );
 
-    expect(generateEmbeddingMock).toHaveBeenCalledWith('Never store secrets');
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('Never store secrets');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',

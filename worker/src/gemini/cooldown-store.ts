@@ -55,6 +55,14 @@ export class MemoryCooldownStore implements CooldownStore {
  * Redis-backed store. `load()` reads the whole map once; `flush()` writes it
  * back only when something changed — so a full key pool parked during a storm
  * costs ONE Redis GET + ONE Redis SET per delivery, not 7.
+ *
+ * Tradeoff: the entire map is persisted as a single JSON blob under one key,
+ * so `load()` → mutate → `flush()` is a read-modify-write that can clobber a
+ * concurrent writer's update. This is acceptable because cooldowns are
+ * best-effort state: a lost update only means a rate-limited key gets retried
+ * once, and only one worker processes a given queue delivery at a time. The
+ * whole-blob rewrite is asserted in cooldown-store.test.ts to keep the design
+ * explicit.
  */
 export class RedisCooldownStore extends MemoryCooldownStore {
   private loaded = false;

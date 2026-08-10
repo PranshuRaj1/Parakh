@@ -59,12 +59,12 @@ describe('handleQueueBatch', () => {
 
   it('passes the queue delivery count through to the review job', async () => {
     reviewJob.mockResolvedValue(undefined);
-    const retried = makeMessage({ type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' });
-    retried.attempts = 3;
+    const batch = makeBatch([{ type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' }]);
+    batch.messages[0].attempts = 3;
 
-    await handleQueueBatch({ queue: 'watchdog', messages: [retried] } as unknown as Parameters<typeof handleQueueBatch>[0], env);
+    await handleQueueBatch(batch, env);
 
-    expect(reviewJob).toHaveBeenCalledWith(retried.body, env, 3);
+    expect(reviewJob).toHaveBeenCalledWith(batch.messages[0].body, env, 3);
   });
 
   it('acks unknown job types without dispatching', async () => {

@@ -7,14 +7,30 @@ const { classifyIntentMock, draftReplyMock } = vi.hoisted(() => ({
   draftReplyMock: vi.fn(),
 }));
 
+// Stub the LLM factory: classifyIntent + draftReply drive the comment-response
+// paths under test. gemini/groq get full LLMProvider-shaped vi.fn()s so any
+// future call into them fails loudly instead of a silent TypeError on {}.
 vi.mock('../llm/factory.js', () => ({
   createLLMClients: () => ({
     llm: {
       classifyIntent: classifyIntentMock,
       draftReply: draftReplyMock,
     },
-    gemini: {},
-    groq: {},
+    gemini: {
+      reviewDiff: vi.fn(),
+      classifyIntent: vi.fn(),
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
+      draftReply: vi.fn(),
+      generateEmbedding: vi.fn(),
+    },
+    groq: {
+      reviewDiff: vi.fn(),
+      classifyIntent: vi.fn(),
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
+      draftReply: vi.fn(),
+    },
   }),
 }));
 
@@ -153,7 +169,7 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
     );
-    expect(mocked.addCommentReaction).toHaveBeenCalled();
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
   });
 
   it('acknowledges CORRECTION and EXPLANATION/DISMISSAL intents with canned replies', async () => {

@@ -74,18 +74,23 @@ describe('handleCronTrigger', () => {
     ]);
     mocked.getReview
       .mockResolvedValueOnce(stalledReview())
-      .mockResolvedValueOnce(stalledReview({ id: 'r2' }));
+      .mockResolvedValueOnce(stalledReview({ id: 'r2', pr_number: 8 }));
 
     await handleCronTrigger(env);
 
     expect(mocked.dbTimeoutStage).toHaveBeenNthCalledWith(1, 'r1', 'FETCHING_DIFF', 2, env);
     expect(mocked.dbTimeoutStage).toHaveBeenNthCalledWith(2, 'r2', 'REVIEWING_FILES', 1, env);
     expect(mocked.releaseReviewLock).toHaveBeenNthCalledWith(1, 'acme/app', 7, env);
-    expect(mocked.releaseReviewLock).toHaveBeenNthCalledWith(2, 'acme/app', 7, env);
+    expect(mocked.releaseReviewLock).toHaveBeenNthCalledWith(2, 'acme/app', 8, env);
     expect(mocked.postComment).toHaveBeenCalledTimes(2);
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7,
       expect.stringContaining('Review stuck at **FETCHING_DIFF**'),
+      'token'
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 8,
+      expect.stringContaining('Review stuck at **REVIEWING_FILES**'),
       'token'
     );
   });

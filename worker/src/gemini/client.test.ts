@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from './keyPool.js';
 
 const { keyCalls } = vi.hoisted(() => ({ keyCalls: [] as string[] }));
+
+beforeEach(() => {
+  keyCalls.length = 0;
+});
 
 vi.mock('@google/generative-ai', () => ({
   GoogleGenerativeAI: class {
@@ -92,7 +96,6 @@ describe('extractResponseWithThinking', () => {
 
 describe('GeminiClient key rotation', () => {
   it('falls through to the next key when the first is rate-limited', async () => {
-    keyCalls.length = 0;
     const client = new GeminiClient(makeEnv('bad,good'));
     const result = await client.reviewDiff('file.ts', 'diff', []);
     expect(result.genericFindings).toEqual([]);
@@ -101,21 +104,18 @@ describe('GeminiClient key rotation', () => {
   });
 
   it('throws AllKeysExhaustedError when every key is rate-limited', async () => {
-    keyCalls.length = 0;
     const client = new GeminiClient(makeEnv('bad,bad'));
     await expect(client.reviewDiff('file.ts', 'diff', [])).rejects.toBeInstanceOf(AllKeysExhaustedError);
     expect(keyCalls).toEqual(['bad', 'bad']);
   });
 
   it('propagates non-rate-limit errors without trying other keys', async () => {
-    keyCalls.length = 0;
     const client = new GeminiClient(makeEnv('broken,good'));
     await expect(client.reviewDiff('file.ts', 'diff', [])).rejects.toThrow('Invalid argument');
     expect(keyCalls).toEqual(['broken']);
   });
 
   it('skips keys that cannot serve the model instead of aborting the call', async () => {
-    keyCalls.length = 0;
     const client = new GeminiClient(makeEnv('unavail,good'));
     const result = await client.reviewDiff('file.ts', 'diff', []);
     expect(result.genericFindings).toEqual([]);
@@ -125,7 +125,6 @@ describe('GeminiClient key rotation', () => {
 
 describe('GeminiClient cooldown store', () => {
   it('parks a rate-limited key so a fresh client does not retry it immediately', async () => {
-    keyCalls.length = 0;
     const cooldowns = new MemoryCooldownStore();
     const first = new GeminiClient(makeEnv('bad,good'), cooldowns);
     const result = await first.reviewDiff('file.ts', 'diff', []);
@@ -143,7 +142,6 @@ describe('GeminiClient cooldown store', () => {
   });
 
   it('clears the park on success so the key is usable again', async () => {
-    keyCalls.length = 0;
     const cooldowns = new MemoryCooldownStore();
     // Simulate a prior delivery parking index 0, now past its cooldown.
     cooldowns.park(0, { until: Date.now() - 1000, dailyQuota: false });
@@ -157,7 +155,6 @@ describe('GeminiClient cooldown store', () => {
   });
 
   it('throws DailyQuotaExhaustedError when every key is daily-quota-parked', async () => {
-    keyCalls.length = 0;
     const cooldowns = new MemoryCooldownStore();
     const client = new GeminiClient(makeEnv('daily,daily'), cooldowns);
     await expect(client.reviewDiff('file.ts', 'diff', [])).rejects.toBeInstanceOf(DailyQuotaExhaustedError);
@@ -165,9 +162,9 @@ describe('GeminiClient cooldown store', () => {
   });
 
   it('keeps AllKeysExhaustedError for a transient 60s rate-limit storm', async () => {
-    keyCalls.length = 0;
     const cooldowns = new MemoryCooldownStore();
     const client = new GeminiClient(makeEnv('bad,bad'), cooldowns);
     await expect(client.reviewDiff('file.ts', 'diff', [])).rejects.toBeInstanceOf(AllKeysExhaustedError);
+    expect(keyCalls).toEqual(['bad', 'bad']);
   });
 });

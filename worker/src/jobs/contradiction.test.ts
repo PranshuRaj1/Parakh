@@ -3,13 +3,29 @@ import type { Env } from '../index.js';
 
 const { classifyRelationshipMock } = vi.hoisted(() => ({ classifyRelationshipMock: vi.fn() }));
 
+// Stub the LLM factory: only classifyRelationship drives the contradiction
+// paths under test. gemini/groq get full LLMProvider-shaped vi.fn()s so any
+// future call into them fails loudly instead of a silent TypeError on {}.
 vi.mock('../llm/factory.js', () => ({
   createLLMClients: () => ({
     llm: {
       classifyRelationship: classifyRelationshipMock,
     },
-    gemini: {},
-    groq: {},
+    gemini: {
+      reviewDiff: vi.fn(),
+      classifyIntent: vi.fn(),
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
+      draftReply: vi.fn(),
+      generateEmbedding: vi.fn(),
+    },
+    groq: {
+      reviewDiff: vi.fn(),
+      classifyIntent: vi.fn(),
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
+      draftReply: vi.fn(),
+    },
   }),
 }));
 
