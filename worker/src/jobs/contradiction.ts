@@ -67,12 +67,15 @@ export async function executeContradictionJob(
   // 2. Classify relationship with each candidate
   const { llm } = createLLMClients(env);
 
-  // Get token for posting comments (only needed if we find something)
+  // Get token for posting comments (only needed if we find something).
+  // Uses the payload installationId (real for comment-taught rules) so
+  // supersede/duplicate/refinement notices actually post to the PR. The
+  // dashboard path passes installationId 0 + prNumber 0, so it never posts.
   let token: string | null = null;
   const getToken = async () => {
     if (!token) {
       const redis = { get: createRedisGet(env), set: createRedisSet(env) };
-      token = await getCachedToken(0, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+      token = await getCachedToken(payload.installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
     }
     return token;
   };

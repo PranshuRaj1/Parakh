@@ -29,12 +29,14 @@ vi.mock('../redis.js', () => ({
   createRedisSet: vi.fn(),
 }));
 vi.mock('./review.js', () => ({ triggerReview: vi.fn() }));
+vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
 
 import { executeCommentResponseJob } from './comment-response.js';
 import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { triggerReview } from './review.js';
+import { saveCorrectionAsRule } from './correction.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
@@ -44,6 +46,7 @@ const mocked = {
   replyToReviewComment: vi.mocked(replyToReviewComment),
   addCommentReaction: vi.mocked(addCommentReaction),
   triggerReview: vi.mocked(triggerReview),
+  saveCorrectionAsRule: vi.mocked(saveCorrectionAsRule),
 };
 
 const env = {
@@ -73,6 +76,7 @@ beforeEach(() => {
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
+  mocked.saveCorrectionAsRule.mockReset();
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null });
 });
 
@@ -139,13 +143,35 @@ describe('executeCommentResponseJob', () => {
     );
   });
 
-  it('acknowledges CORRECTION and EXPLANATION/DISMISSAL intents with canned replies', async () => {
+  it('saves CORRECTION intents as active rules and confirms', async () => {
     classifyIntentMock.mockResolvedValueOnce('CORRECTION');
-    await executeCommentResponseJob(payload(), env);
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('noted'), 'token'
-    );
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-9', body: 'never flag EOF newlines', priority: 'normal',
+    } as never);
 
+    await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues' },
+      env
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+    );
+  });
+
+  it('replies gracefully when saving a CORRECTION fails', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockRejectedValue(new Error('embedding failed'));
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token'
+    );
+  });
+
+  it('acknowledges EXPLANATION/DISMISSAL intents with canned replies', async () => {
     for (const intent of ['EXPLANATION', 'DISMISSAL'] as Intent[]) {
       classifyIntentMock.mockResolvedValueOnce(intent);
       await executeCommentResponseJob(payload(), env);
