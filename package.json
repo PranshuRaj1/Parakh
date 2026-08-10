@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
+    "setup:hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",

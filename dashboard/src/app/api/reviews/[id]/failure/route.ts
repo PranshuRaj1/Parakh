@@ -9,12 +9,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   const { id } = await params;
-  const review = await getReview(id);
-  if (!review || review.status !== 'FAILED') {
-    return NextResponse.json({ error: 'not failed' }, { status: 404 });
+  let review;
+  let stepRows;
+  try {
+    review = await getReview(id);
+    if (!review || review.status !== 'FAILED') {
+      return NextResponse.json({ error: 'not failed' }, { status: 404 });
+    }
+    stepRows = await getStepEventsForReview(id);
+  } catch (err) {
+    console.error(`[dashboard] Failed to load failure detail for review ${id}:`, err);
+    return NextResponse.json({ error: 'failed to load review' }, { status: 500 });
   }
-
-  const stepRows = await getStepEventsForReview(id);
 
   // The reviews row's error_step/error_message is usually the cron watchdog's
   // repaint of a stale row ("Stage timed out" at the last-seen stage). The real

@@ -16,7 +16,7 @@
  */
 
 import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
-import { GeminiClient } from '../gemini/client.js';
+import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
@@ -34,13 +34,17 @@ export async function handleCreateRule(
     throw new Error('Missing required fields: repo, body');
   }
 
-  const gemini = new GeminiClient(env);
+  // Embeddings and priority classification both route through the LLM client
+  // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini
+  // is exhausted. (Groq/OpenRouter have no embeddings API — the chain skips
+  // providers that don't implement generateEmbedding.)
+  const { llm } = createLLMClients(env);
 
   // 2. Generate embedding
-  const embedding = await gemini.generateEmbedding(request.body);
+  const embedding = await llm.generateEmbedding(request.body);
 
   // 3. Classify priority (or use override from request)
-  const priority = request.priority || await gemini.classifyPriority(request.body);
+  const priority = request.priority || await llm.classifyPriority(request.body);
 
   // 4. Insert rule as ACTIVE
   const rule = await insertRule(

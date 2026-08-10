@@ -25,8 +25,8 @@ export async function handleQueueBatch(
     try {
       switch (payload.type) {
         case 'REVIEW':
-          console.log(`[queue] Processing REVIEW job: ${payload.owner}/${payload.repo}#${payload.prNumber}`);
-          await executeReviewJob(payload, env);
+          console.log(`[queue] Processing REVIEW job: ${payload.owner}/${payload.repo}#${payload.prNumber} (attempt ${message.attempts})`);
+          await executeReviewJob(payload, env, message.attempts);
           message.ack();
           break;
 

@@ -10,7 +10,7 @@ export type RulePriority = 'high' | 'normal';
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
 /** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with stage tracking. */
-export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_DAILY_QUOTA';
 
 export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADING_RULES' | 'REVIEWING_FILES' | 'SCORING' | 'POSTING_COMMENT' | 'REACTING';
 
@@ -67,12 +67,18 @@ export interface Review {
   error_message: string | null;
   error_stack: string | null;
   github_delivery_id: string | null;
+  /** When the review may auto-resume after a daily-quota pause (null = not paused). */
+  daily_quota_resume_at: string | null;
   /** ID of the comment whose `@parakh review` triggered this review (manual_mention only). */
   trigger_comment_id: number | null;
   /** Where the trigger comment lives: top-level issue comment or inline review comment. */
   trigger_comment_type: 'issue_comment' | 'pull_request_review_comment' | null;
   /** ID of whichever reaction is currently live on the trigger comment (👀, then 👍/👎/😕). */
   trigger_comment_reaction_id: number | null;
+  /** Head SHA of the PR captured at review-start — pins the reviewed diff. */
+  head_sha: string | null;
+  /** Base SHA captured at review-start — used for compare/{base}.../{head} diff. */
+  base_sha: string | null;
   created_at: string;
 }
 

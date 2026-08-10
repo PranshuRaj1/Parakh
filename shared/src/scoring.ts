@@ -13,6 +13,12 @@ export const SEVERITY_WEIGHTS: Record<Severity, number> = {
   LOW: -0.1,
 };
 
+/** Repeated lower-severity findings should not overwhelm the score. */
+const SEVERITY_PENALTY_CAPS: Partial<Record<Severity, number>> = {
+  MEDIUM: 1.5,
+  LOW: 0.4,
+};
+
 /**
  * Deterministic mapping from rule priority to the severity assigned to its violations.
  * This is the code-level enforcement: rule violations never get LLM-assigned severity.
@@ -38,10 +44,12 @@ export const PRIORITY_TO_SEVERITY: Record<RulePriority, Severity> = {
  * computeScore([{severity:'HIGH',...}, {severity:'LOW',...}, {severity:'LOW',...}]) // 3.55
  */
 export function computeScore(findings: Finding[]): number {
-  const penalty = findings.reduce(
-    (sum, f) => sum + Math.abs(SEVERITY_WEIGHTS[f.severity]),
-    0
-  );
+  const penalties = findings.reduce<Partial<Record<Severity, number>>>((totals, finding) => {
+    totals[finding.severity] = (totals[finding.severity] ?? 0) + Math.abs(SEVERITY_WEIGHTS[finding.severity]);
+    return totals;
+  }, {});
+  const penalty = Object.entries(penalties).reduce((sum, [severity, total]) =>
+    sum + Math.min(total ?? 0, SEVERITY_PENALTY_CAPS[severity as Severity] ?? Infinity), 0);
   return Math.max(0, Math.min(5, 5 - penalty));
 }
 

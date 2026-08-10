@@ -3,8 +3,9 @@ import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
-import { GeminiClient } from '../gemini/client.js';
+import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
+import { saveCorrectionAsRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
 export async function executeCommentResponseJob(
@@ -48,13 +49,13 @@ export async function executeCommentResponseJob(
     }
   };
 
-  const gemini = new GeminiClient(env);
+  const { llm } = createLLMClients(env);
 
   // For issue comments (top-level), there is no parentBotComment context passed directly.
   // We can pass an empty string to the LLM classifier for now, or fetch the parent if needed.
   // The classifier handles empty parentBotComment properly via the prompt update.
   const parentBotComment = ''; 
-  const intent = await gemini.classifyIntent(commentBody, parentBotComment);
+  const intent = await llm.classifyIntent(commentBody, parentBotComment);
 
   console.log(`[comment-response] Classified intent: ${intent}`);
 
@@ -64,16 +65,18 @@ export async function executeCommentResponseJob(
       const existingReview = await getResumableReview(fullRepo, prNumber, env);
 
       if (existingReview) {
-        await postReply("On it — resuming the previous review 👀");
-        await triggerReview(
+        const enqueued = await triggerReview(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
           existingReview.id,  // resumeReviewId — reuses existing row
-          true,               // skipLock
           githubDeliveryId    // githubDeliveryId
         );
+        if (enqueued) {
+          await postReply("On it — resuming the previous review 👀");
+        } else {
+          await postReply("⚠️ A review is already in progress, please wait and try again.");
+        }
       } else {
-        await postReply("On it — re-reviewing 👀");
         // Mark the trigger comment with 👀 while the review runs, then pass the
         // reaction through so triggerReview can persist it on the new row.
         // Best-effort: a reaction failure must not block the review itself.
@@ -83,24 +86,40 @@ export async function executeCommentResponseJob(
         } catch (err) {
           console.warn(`[comment-response] Failed to add 👀 reaction on trigger comment:`, err);
         }
-        await triggerReview(
+        const enqueued = await triggerReview(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
           undefined,          // resumeReviewId
-          true,               // skipLock
           githubDeliveryId,   // githubDeliveryId
           commentId,          // commentId
           commentType,        // commentType
           reactionId          // commentReactionId
         );
+        if (enqueued) {
+          await postReply("On it — re-reviewing 👀");
+        } else {
+          await postReply("⚠️ A review is already in progress, please wait and try again.");
+        }
       }
       break;
     }
 
-    case 'CORRECTION':
-      // TODO: wire to correction.ts once memory write is re-enabled
-      await postReply("Got it — noted. (Not saved to memory yet — that's next.)");
+    case 'CORRECTION': {
+      try {
+        const rule = await saveCorrectionAsRule(
+          { installationId, owner, repo, prNumber, commentBody },
+          env
+        );
+        const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+        await postReply(
+          `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
+        );
+      } catch (err) {
+        console.error('[comment-response] Failed to save CORRECTION as rule:', err);
+        await postReply("Couldn't save that right now — please try again.");
+      }
       break;
+    }
 
     case 'EXPLANATION':
     case 'DISMISSAL':
@@ -108,7 +127,7 @@ export async function executeCommentResponseJob(
       break;
 
     case 'QUESTION':
-      const replyBody = await gemini.draftReply(parentBotComment, commentBody);
+      const replyBody = await llm.draftReply(parentBotComment, commentBody);
       await postReply(replyBody);
       break;
 

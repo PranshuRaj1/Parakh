@@ -23,6 +23,7 @@ interface WebhookEvent {
   pull_request?: {
     number: number;
     head: { sha: string };
+    base: { sha: string };
     user: { login: string };
   };
   comment?: {
@@ -148,6 +149,8 @@ async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: E
       seen_reaction_id: seenReactionId,
       trigger_reason: action === 'synchronize' ? 'synchronize' : 'opened',
       github_delivery_id: deliveryId,
+      head_sha: pull_request.head?.sha ?? null,
+      base_sha: pull_request.base?.sha ?? null,
     },
     env
   );

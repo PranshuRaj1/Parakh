@@ -83,6 +83,31 @@ export async function fetchDiff(
 }
 
 /**
+ * Fetch the raw diff BETWEEN two pinned refs (base...head).
+ * The PR's live diff endpoint always reflects the latest head; pinning the
+ * SHA pair at review-start makes the diff immutable for the whole run.
+ */
+export async function fetchDiffPinned(
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+  token: string
+): Promise<string> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`;
+  const response = await fetch(url, {
+    headers: headers(token, 'application/vnd.github.diff'),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to fetch pinned diff (${response.status}): ${body}`);
+  }
+
+  return response.text();
+}
+
+/**
  * Get the list of files changed in a pull request.
  */
 export async function getPRFiles(
@@ -265,19 +290,12 @@ export async function addCommentReaction(
 export async function removeCommentReaction(
   owner: string,
   repo: string,
-  commentId: number,
-  commentType: 'issue_comment' | 'pull_request_review_comment',
   reactionId: number,
   token: string
 ): Promise<void> {
-  if (!Number.isSafeInteger(reactionId) || reactionId <= 0) {
-    throw new Error('reactionId must be a positive integer');
-  }
-  const path = commentType === 'pull_request_review_comment'
-    ? `pulls/comments/${commentId}/reactions/${reactionId}`
-    : `issues/comments/${commentId}/reactions/${reactionId}`;
+
   const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/reactions/${reactionId}`,
     {
       method: 'DELETE',
       headers: headers(token),
@@ -285,7 +303,7 @@ export async function removeCommentReaction(
   );
 
   // 204 No Content is success for DELETE
-  if (!response.ok && response.status !== 204) {
+  if (!response.ok) {
     const body = await response.text();
     throw new Error(`Failed to remove comment reaction (${response.status}): ${body}`);
   }
@@ -299,7 +317,7 @@ export async function getPRDetails(
   repo: string,
   prNumber: number,
   token: string
-): Promise<{ head: { sha: string }; user: { login: string } }> {
+): Promise<{ head: { sha: string }; base: { sha: string }; user: { login: string } }> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}`;
-  return githubFetch<{ head: { sha: string }; user: { login: string } }>(url, token);
+  return githubFetch<{ head: { sha: string }; base: { sha: string }; user: { login: string } }>(url, token);
 }
