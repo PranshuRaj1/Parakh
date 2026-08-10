@@ -34,7 +34,7 @@ import {
   buildPriorityPrompt,
   buildReplyPrompt,
 } from './prompts.js';
-import { getKeyPool, isRateLimitError, isModelUnavailableError, AllKeysExhaustedError } from './keyPool.js';
+import { getKeyPool, isRateLimitError, isKeyModelUnavailableError, AllKeysExhaustedError } from './keyPool.js';
 import { sanitizeErrorText } from '../jobs/sanitize.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
@@ -129,7 +129,9 @@ export class GeminiClient {
    */
   private async withKeyRotation<T>(fn: (apiKey: string) => Promise<T>): Promise<T> {
     const startIndex = this.sharedKeyHint;
+    // Carries the final failed key attempt into the exhaustion error for diagnostics.
     let lastError: Error | null = null;
+    let unavailableKeys = 0;
 
     for (let attempt = 0; attempt < this.keys.length; attempt++) {
       const keyIndex = (startIndex + attempt) % this.keys.length;
@@ -145,11 +147,12 @@ export class GeminiClient {
           // A key that can't serve the current model (e.g. 404 "model not
           // available to new users") should be skipped, not allowed to abort
           // the whole call — otherwise one bad key silently kills every job.
-          if (isModelUnavailableError(err)) {
+          if (isKeyModelUnavailableError(err)) {
             console.warn(
               `[gemini] Key ${keyIndex + 1}/${this.keys.length} cannot serve ${GENERATION_MODEL}, trying next...`
             );
             lastError = err as Error;
+            unavailableKeys++;
             continue;
           }
           throw err;
@@ -162,7 +165,10 @@ export class GeminiClient {
       }
     }
 
-    throw new AllKeysExhaustedError(lastError!);
+    if (unavailableKeys === this.keys.length) {
+      console.error(`[gemini] None of the configured keys can serve ${GENERATION_MODEL}`);
+    }
+    throw new AllKeysExhaustedError(lastError ?? new Error('No Gemini API key is configured'));
   }
 
   // ── Diff Review ──────────────────────────────────────────────────────

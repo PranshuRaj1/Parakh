@@ -55,9 +55,9 @@ export function isRateLimitError(err: unknown): boolean {
  * per-key problems — a different key in the pool may still work — so the
  * rotation loop should skip the offending key instead of aborting the call.
  */
-export function isModelUnavailableError(err: unknown): boolean {
+export function isKeyModelUnavailableError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  const msg = err.message.toLowerCase();
+  const msg = err.message?.toLowerCase?.() ?? '';
   return msg.includes('404')
     || msg.includes('not found')
     || msg.includes('no longer available')

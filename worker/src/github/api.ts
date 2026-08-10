@@ -236,22 +236,26 @@ export async function addCommentReaction(
   repo: string,
   commentId: number,
   commentType: 'issue_comment' | 'pull_request_review_comment',
-  content: '+1' | '-1' | 'eyes' | 'confused',
+  reactionContent: '+1' | '-1' | 'eyes' | 'confused',
   token: string
 ): Promise<number> {
   const path = commentType === 'pull_request_review_comment'
     ? `pulls/comments/${commentId}/reactions`
     : `issues/comments/${commentId}/reactions`;
-  const data = await githubFetch<{ id: number }>(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
-    token,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
-      body: JSON.stringify({ content }),
-    }
-  );
-  return data.id;
+  try {
+    const data = await githubFetch<{ id: number }>(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+      token,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+        body: JSON.stringify({ content: reactionContent }),
+      }
+    );
+    return data.id;
+  } catch (err) {
+    throw new Error(`Failed to add comment reaction to ${commentType} ${commentId}`, { cause: err });
+  }
 }
 
 /**
@@ -266,6 +270,9 @@ export async function removeCommentReaction(
   reactionId: number,
   token: string
 ): Promise<void> {
+  if (!Number.isSafeInteger(reactionId) || reactionId <= 0) {
+    throw new Error('reactionId must be a positive integer');
+  }
   const path = commentType === 'pull_request_review_comment'
     ? `pulls/comments/${commentId}/reactions/${reactionId}`
     : `issues/comments/${commentId}/reactions/${reactionId}`;

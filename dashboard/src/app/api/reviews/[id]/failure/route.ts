@@ -24,7 +24,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     step: r.stage,
     status:
       r.outcome === 'COMPLETED' ? 'COMPLETED' :
-      r.outcome === 'FAILED' || r.outcome === 'TIMED_OUT' ? 'FAILED' : 'STARTED',
+      r.outcome === 'FAILED' || r.outcome === 'TIMED_OUT' ? 'FAILED' :
+      r.outcome === null ? 'STARTED' : 'UNKNOWN',
     outcome: r.outcome,
     errorCode: r.error_code,
     errorMessage: r.error_message,
@@ -34,8 +35,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }));
 
   // Most recent step event that actually failed with a real error message.
-  const terminalEvents = events.filter((e) => e.status === 'FAILED' && e.errorMessage);
-  const realFailure = terminalEvents.length > 0 ? terminalEvents[terminalEvents.length - 1] : null;
+  const terminalEvents = events
+    .filter((event) => event.status === 'FAILED' && (event.errorMessage || event.errorCode))
+    .toSorted((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+  const realFailure = terminalEvents.at(-1) ?? null;
 
   // Swept-by-cron: no step event captured a real error, so the row was simply
   // marked "Stage timed out" by the watchdog without an underlying cause.
@@ -49,6 +52,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     githubDeliveryId: review.github_delivery_id,
     failedAt: review.failed_at,
     realErrorStep: realFailure?.step ?? null,
+    realErrorCode: realFailure?.errorCode ?? null,
     realErrorMessage: realFailure?.errorMessage ?? null,
     sweptByCron,
     timeline: events,

@@ -35,6 +35,10 @@ export async function handleCronTrigger(env: Env): Promise<void> {
     if (!review) continue;
 
     const [owner, repo] = review.repo.split('/');
+    if (!owner || !repo) {
+      console.error(`[cron] Cannot notify stalled review ${reviewId}: invalid repository ${review.repo}`);
+      continue;
+    }
     const redis = { get: createRedisGet(env), set: createRedisSet(env) };
 
     if (review.installation_id) {
