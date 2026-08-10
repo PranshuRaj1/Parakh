@@ -2,7 +2,7 @@ import type { CommentJobPayload } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
-import { postComment as postIssueComment, replyToReviewComment } from '../github/api.js';
+import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { GeminiClient } from '../gemini/client.js';
 import { triggerReview } from './review.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
@@ -74,12 +74,24 @@ export async function executeCommentResponseJob(
         );
       } else {
         await postReply("On it — re-reviewing 👀");
+        // Mark the trigger comment with 👀 while the review runs, then pass the
+        // reaction through so triggerReview can persist it on the new row.
+        // Best-effort: a reaction failure must not block the review itself.
+        let reactionId: number | undefined;
+        try {
+          reactionId = await addCommentReaction(owner, repo, commentId, commentType, 'eyes', token);
+        } catch (err) {
+          console.warn(`[comment-response] Failed to add 👀 reaction on trigger comment:`, err);
+        }
         await triggerReview(
           installationId, owner, repo, prNumber,
           'manual_mention', env,
           undefined,          // resumeReviewId
           true,               // skipLock
-          githubDeliveryId    // githubDeliveryId
+          githubDeliveryId,   // githubDeliveryId
+          commentId,          // commentId
+          commentType,        // commentType
+          reactionId          // commentReactionId
         );
       }
       break;

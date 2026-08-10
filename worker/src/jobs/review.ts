@@ -5,7 +5,7 @@
  * concurrency-safe API key rotation.
  */
 
-import type { ReviewJobPayload, Finding, Rule, StageReasonCode, ReviewStage } from '@parakh/shared';
+import type { ReviewJobPayload, Finding, Rule, StageReasonCode, ReviewStage, Review } from '@parakh/shared';
 import {
   computeScore,
   displayScore,
@@ -24,6 +24,9 @@ import {
   postComment,
   addReaction,
   removeReaction,
+  replyToReviewComment,
+  addCommentReaction,
+  removeCommentReaction,
 } from '../github/api.js';
 import {
   updateReviewStatus,
@@ -32,6 +35,8 @@ import {
   getLatestReviewByPR,
   insertReview,
   getReview,
+  setTriggerCommentContext,
+  updateTriggerCommentReactionId,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasoning } from '../db/reviews.js';
@@ -237,7 +242,7 @@ async function reviewSingleFile(
     console.error(`[review] Error reviewing ${fileName}:`, err);
     if (captureReasoning) {
       await saveReviewReasoning(reviewId, fileName, {
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         errorMessage: sanitizeErrorText(message),
         retentionDays,
       }, env).catch(e => console.warn('[review] Failed to save per-file reasoning:', e));
@@ -247,7 +252,7 @@ async function reviewSingleFile(
 
   if (captureReasoning && result.thinking) {
     await saveReviewReasoning(reviewId, fileName, {
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       thinking: result.thinking,
       retentionDays,
     }, env).catch(e => console.warn('[review] Failed to save reasoning:', e));
@@ -298,7 +303,10 @@ export async function triggerReview(
   env: Env,
   resumeReviewId?: string,
   skipLock?: boolean,
-  githubDeliveryId?: string
+  githubDeliveryId?: string,
+  commentId?: number,
+  commentType?: 'issue_comment' | 'pull_request_review_comment',
+  commentReactionId?: number
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -349,6 +357,13 @@ export async function triggerReview(
       github_delivery_id: githubDeliveryId,
     }, env);
     reviewId = review.id;
+
+    // manual_mention fresh starts carry the trigger comment (+ its 👀 reaction
+    // id when it was added). Persist so finalizeReview/swap can find them on
+    // the same row.
+    if (commentId !== undefined && commentType !== undefined) {
+      await setTriggerCommentContext(reviewId, commentId, commentType, commentReactionId ?? null, env);
+    }
   }
 
   const payload: ReviewJobPayload = {
@@ -362,6 +377,77 @@ export async function triggerReview(
 
   // We push this to the Queue so it runs asynchronously with proper timeouts!
   await env.WATCHDOG_QUEUE.send(payload);
+}
+
+// ─── Trigger Comment Reactions & Reply ───────────────────────────────────────
+
+/**
+ * Swap the reaction currently live on a review's trigger comment.
+ * GitHub reactions can't be edited in place, only added or removed, so the
+ * existing one (tracked in trigger_comment_reaction_id) is removed first.
+ *
+ * content = null means "remove the live reaction, add nothing" — used for the
+ * middle-band score that, per PR-level logic, gets no 👍/👎 verdict.
+ */
+export async function swapCommentReaction(
+  review: Review,
+  content: '+1' | '-1' | 'confused' | 'eyes' | null,
+  owner: string,
+  repo: string,
+  token: string,
+  env: Env
+): Promise<void> {
+  if (!review.trigger_comment_id || !review.trigger_comment_type) return;
+
+  if (review.trigger_comment_reaction_id) {
+    try {
+      await removeCommentReaction(
+        owner, repo, review.trigger_comment_id, review.trigger_comment_type,
+        review.trigger_comment_reaction_id, token
+      );
+    } catch (err) {
+      console.warn(`[review] Failed to remove previous trigger-comment reaction:`, err);
+    }
+  }
+
+  if (content === null) {
+    await updateTriggerCommentReactionId(review.id, null, env);
+    return;
+  }
+
+  const newReactionId = await addCommentReaction(
+    owner, repo, review.trigger_comment_id, review.trigger_comment_type, content, token
+  );
+  await updateTriggerCommentReactionId(review.id, newReactionId, env);
+}
+
+/**
+ * Post a threaded "Review done" reply on the trigger comment, so it lands in
+ * the same conversation thread the `@parakh review` was posted in.
+ */
+async function postCommentReply(
+  review: Review,
+  score: number,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  env: Env,
+  token: string
+): Promise<void> {
+  if (!review.trigger_comment_id || !review.trigger_comment_type) return;
+
+  const emoji = score >= POSITIVE_THRESHOLD ? '✅' : '⚠️';
+  const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
+  const dashboardLink = base
+    ? ` Full breakdown on the [dashboard](${base}/pulls/${owner}/${repo}/${prNumber}).`
+    : '';
+  const body = `${emoji} Review done! Score: **${score}/5**.${dashboardLink}`;
+
+  if (review.trigger_comment_type === 'pull_request_review_comment') {
+    await replyToReviewComment(owner, repo, prNumber, review.trigger_comment_id, body, token);
+  } else {
+    await postComment(owner, repo, prNumber, body, token);
+  }
 }
 
 export async function executeReviewJob(
@@ -390,9 +476,20 @@ async function executeReviewJobInternal(
   let lastReasonDetail: string | null = null;
 
   try {
-    let state = await loadReviewState(fullRepo, prNumber, redisGet);
+    // Redelivery guard: if a previous delivery already finished this review,
+    // don't re-run the pipeline (avoids duplicate Gemini work + double post).
     const dbReview = await getReview(reviewId, env);
-    stageAttempt = dbReview?.stage_attempt || 1;
+    if (!dbReview) {
+      console.error(`[review] No review row found for ${reviewId} — skipping`);
+      return;
+    }
+    if (dbReview.status === 'COMPLETED') {
+      console.log(`[review] Review ${reviewId} already COMPLETED — skipping redelivery`);
+      return;
+    }
+    stageAttempt = dbReview.stage_attempt || 1;
+
+    let state = await loadReviewState(fullRepo, prNumber, redisGet);
 
     currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
@@ -578,6 +675,14 @@ async function finalizeReview(
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
+  // Idempotency guard: if another delivery already finalized this review
+  // (double completion from a redelivery), bail before posting anything again.
+  const current = await getReview(reviewId, env);
+  if (current?.status === 'COMPLETED') {
+    console.log(`[review] finalize skipped — review ${reviewId} already COMPLETED`);
+    return;
+  }
+
   await startStage(reviewId, 'SCORING', stageAttempt, env);
   const rawScore = computeScore(findings);
   const score = displayScore(rawScore);
@@ -622,6 +727,23 @@ async function finalizeReview(
   if (verdictReactionId !== null) {
     await updateReviewReactions(reviewId, env, undefined, verdictReactionId);
   }
+
+  // Comment-triggered reviews (manual_mention): swap 👀 → 👍/👎 on the trigger
+  // comment using the same verdict logic as the PR-level reaction (middle band
+  // gets no reaction), then post a threaded "Review done" reply. A failure here
+  // must never fail an already-completed review.
+  try {
+    const currentReview = await getReview(reviewId, env);
+    if (currentReview?.trigger_comment_id) {
+      const verdictContent: '+1' | '-1' | null =
+        score >= POSITIVE_THRESHOLD ? '+1' : score < NEGATIVE_THRESHOLD ? '-1' : null;
+      await swapCommentReaction(currentReview, verdictContent, owner, repo, token, env);
+      await postCommentReply(currentReview, score, owner, repo, prNumber, env, token);
+    }
+  } catch (err) {
+    console.warn(`[review] Failed to update trigger-comment reaction/reply:`, err);
+  }
+
   await updateReviewStatus(reviewId, 'COMPLETED', env);
 
   console.log(`[review] Completed review for ${fullRepo}#${prNumber}: ${score}/5`);

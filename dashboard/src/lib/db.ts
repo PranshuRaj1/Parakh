@@ -78,14 +78,14 @@ export async function getAvgDurationByStep(repo: string | null): Promise<Map<str
       JOIN reviews r ON r.id = rse.review_id
       WHERE rse.outcome = 'COMPLETED' AND rse.stage != 'REVIEWING_FILES'
         AND r.repo = ${repo}
-      GROUP BY rse.step;
+      GROUP BY rse.stage;
     `;
   } else {
     rows = await sql`
       SELECT rse.stage as step, AVG(rse.duration_ms) AS avg_ms
       FROM review_step_events rse
       WHERE rse.outcome = 'COMPLETED' AND rse.stage != 'REVIEWING_FILES'
-      GROUP BY rse.step;
+      GROUP BY rse.stage;
     `;
   }
   

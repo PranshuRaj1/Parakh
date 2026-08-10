@@ -102,6 +102,45 @@ export async function updateReviewReactions(
 }
 
 /**
+ * Record which comment triggered a manual_mention review, plus the id of the
+ * reaction currently live on that comment (👀). Called on fresh starts only.
+ */
+export async function setTriggerCommentContext(
+  id: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
+  reactionId: number | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET trigger_comment_id = ${commentId},
+        trigger_comment_type = ${commentType},
+        trigger_comment_reaction_id = ${reactionId}
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Point trigger_comment_reaction_id at the currently-live reaction on the
+ * trigger comment, so the next swap knows which one to remove first.
+ * Pass null when the comment has no live reaction (middle-band verdict).
+ */
+export async function updateTriggerCommentReactionId(
+  id: string,
+  reactionId: number | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET trigger_comment_reaction_id = ${reactionId}
+    WHERE id = ${id}
+  `;
+}
+
+/**
  * Update the status of a review.
  */
 export async function updateReviewStatus(
@@ -261,10 +300,17 @@ export async function dbStartStage(
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
   await sql.transaction([
-    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null)
+    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null).
+    //    Idempotent against the partial unique index
+    //    one_open_stage_attempt_per_review (review_id, stage, attempt_number)
+    //    WHERE ended_at IS NULL. A redelivered/re-entrant execution (queue
+    //    at-least-once, worker eviction) reuses the still-open event instead of
+    //    crashing with a duplicate key.
     sql`
       INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
       VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)
+      ON CONFLICT (review_id, stage, attempt_number) WHERE ended_at IS NULL
+      DO UPDATE SET started_at = now(), detail = EXCLUDED.detail
     `,
     // 2. Update reviews live pointer
     sql`

@@ -67,6 +67,12 @@ export interface Review {
   error_message: string | null;
   error_stack: string | null;
   github_delivery_id: string | null;
+  /** ID of the comment whose `@parakh review` triggered this review (manual_mention only). */
+  trigger_comment_id: number | null;
+  /** Where the trigger comment lives: top-level issue comment or inline review comment. */
+  trigger_comment_type: 'issue_comment' | 'pull_request_review_comment' | null;
+  /** ID of whichever reaction is currently live on the trigger comment (👀, then 👍/👎/😕). */
+  trigger_comment_reaction_id: number | null;
   created_at: string;
 }
 
