@@ -11,10 +11,10 @@ CREATE TABLE IF NOT EXISTS review_file_events (
   status TEXT NOT NULL CHECK (status IN ('COMPLETED', 'FAILED')),
   provider TEXT,
   model TEXT,
-  findings_count INT DEFAULT 0,
+  findings_count INT NOT NULL DEFAULT 0,
   error_message TEXT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ended_at TIMESTAMPTZ DEFAULT now()
+  ended_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_file_events_review

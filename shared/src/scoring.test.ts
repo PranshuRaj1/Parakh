@@ -30,6 +30,11 @@ describe('computeScore', () => {
   it('never exceeds 5', () => {
     expect(computeScore([finding('LOW')])).toBeLessThanOrEqual(5);
   });
+
+  it('caps accumulated medium and low penalties at their taxonomy limits', () => {
+    expect(computeScore(Array.from({ length: 4 }, () => finding('MEDIUM')))).toBe(3.5);
+    expect(computeScore(Array.from({ length: 5 }, () => finding('LOW')))).toBe(4.6);
+  });
 });
 
 describe('displayScore', () => {
