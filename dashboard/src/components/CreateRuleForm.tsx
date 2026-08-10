@@ -45,12 +45,11 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white dark:bg-zinc-950 p-6 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm">
-      <h3 className="text-lg font-medium mb-4">Manually Add Rule</h3>
-      {error && <div className="mb-4 text-sm text-red-600 bg-red-50 p-3 rounded-md">{error}</div>}
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {error && <div className="mb-4 text-sm text-[#ffdad6] bg-[#93000a]/20 p-3 rounded-md border border-[#93000a]">{error}</div>}
       <div className="space-y-4">
         <div>
-          <label htmlFor="body" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="body" className="block font-dm-sans text-sm text-[#c0c9c0] mb-1">
             Rule Description
           </label>
           <textarea
@@ -59,19 +58,19 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="e.g. Always use early returns instead of nested if statements."
-            className="w-full rounded-md border-gray-300 dark:border-zinc-700 dark:bg-zinc-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+            className="w-full bg-[#000000] border border-white/20 rounded-md px-3 py-2 text-white focus:outline-none focus:border-[#00FF8C] focus:ring-1 focus:ring-[#00FF8C] transition-all font-dm-sans resize-none"
             required
           />
         </div>
         <div>
-          <label htmlFor="priority" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="priority" className="block font-dm-sans text-sm text-[#c0c9c0] mb-1">
             Priority (Optional)
           </label>
           <select
             id="priority"
             value={priority}
             onChange={(e) => setPriority(e.target.value as any)}
-            className="w-full rounded-md border-gray-300 dark:border-zinc-700 dark:bg-zinc-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+            className="w-full bg-[#000000] border border-white/20 rounded-md px-3 py-2 text-white focus:outline-none focus:border-[#00FF8C] focus:ring-1 focus:ring-[#00FF8C] transition-all font-dm-sans"
           >
             <option value="">Auto-detect via AI</option>
             <option value="normal">Normal (Style/Convention)</option>
@@ -81,9 +80,9 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
         <button
           type="submit"
           disabled={loading || !body.trim()}
-          className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full mt-4 bg-[#00FF8C] text-[#000000] font-anybody py-2.5 rounded font-bold hover:brightness-110 transition-all shadow-[0_0_10px_rgba(0,255,140,0.3)] flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+          {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
           Add Rule
         </button>
       </div>

@@ -2,8 +2,6 @@ import { getReviewByPr } from '@/lib/db';
 import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { ReviewStepper } from '@/components/ReviewStepper';
-import { FailureDetail } from '@/components/FailureDetail';
-import { ReasoningPanel } from '@/components/ReasoningPanel';
 
 export default async function PullRequestPage({
   params,
@@ -25,21 +23,22 @@ export default async function PullRequestPage({
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
-          <a href={`https://github.com/${fullRepo}/pull/${prNumber}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
-             PR #{prNumber}
+    <div className="pt-8 pb-16 px-6 max-w-[1200px] mx-auto min-h-[calc(100vh-64px)] flex flex-col animate-in fade-in duration-500">
+      
+      {/* Header */}
+      <header className="mb-12 flex flex-col gap-2">
+        <div className="flex items-center gap-3 text-[#c0c9c0] font-space-mono text-sm uppercase tracking-widest">
+          <a href={`https://github.com/${fullRepo}/pull/${prNumber}`} target="_blank" rel="noopener noreferrer" className="text-[#9bd3ad] font-bold hover:underline">
+            PR #{prNumber}
           </a>
-        </h1>
-        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-          Review progress for <strong className="font-semibold">{fullRepo}</strong>
-        </p>
-      </div>
+          <span className="w-1 h-1 bg-white/20 rounded-full"></span>
+          <span>Reviewing {fullRepo}</span>
+        </div>
+      </header>
 
+      {/* Main Execution Pipeline */}
       <ReviewStepper reviewId={review.id} />
-      {review.status === 'FAILED' && <FailureDetail reviewId={review.id} />}
-      <ReasoningPanel reviewId={review.id} />
+      
     </div>
   );
 }

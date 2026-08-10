@@ -27,12 +27,12 @@ export default async function PullsPage({
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-8 animate-in fade-in duration-500 pt-8 max-w-[1200px] mx-auto px-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Pull Requests</h1>
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-            Recent reviews for <strong className="font-semibold">{repo}</strong>
+          <h1 className="text-4xl font-bold tracking-tight text-white font-anybody" style={{ letterSpacing: '-0.02em' }}>Pull Requests</h1>
+          <p className="mt-2 text-sm text-[#c0c9c0] font-dm-sans">
+            Recent reviews for <strong className="font-semibold text-white">{repo}</strong>
           </p>
         </div>
         <form className="flex gap-2" method="GET">
@@ -41,54 +41,54 @@ export default async function PullsPage({
             name="repo"
             defaultValue={repo}
             placeholder="owner/repo"
-            className="rounded-md border-gray-300 dark:border-zinc-700 dark:bg-zinc-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+            className="rounded-md border border-[#2a2a2a] bg-[#131313] text-white shadow-sm focus:border-[#00FF8C] focus:ring-[#00FF8C] focus:outline-none sm:text-sm p-2 transition-all font-space-mono"
           />
-          <button type="submit" className="px-4 py-2 bg-gray-100 dark:bg-zinc-800 rounded-md text-sm font-medium hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors">
+          <button type="submit" className="px-4 py-2 bg-[#3D3B4F] text-white rounded-md text-sm font-bold font-space-mono hover:brightness-110 transition-colors">
             Switch
           </button>
         </form>
       </div>
 
       {dbError ? (
-        <div className="bg-red-50 text-red-700 p-4 rounded-xl border border-red-200">
+        <div className="bg-[#93000a]/20 text-[#ffb4ab] p-4 rounded-xl border border-[#93000a] font-dm-sans">
           Failed to connect to the database. Make sure DATABASE_URL is set in .env.local.
         </div>
       ) : (
-        <div className="bg-white dark:bg-zinc-950 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden">
-          <ul className="divide-y divide-gray-200 dark:divide-zinc-800">
+        <div className="glass-card rounded-xl overflow-hidden p-6">
+          <ul className="divide-y divide-white/10">
             {reviews.length === 0 ? (
-              <li className="px-6 py-8 text-center text-gray-500">No reviews found for this repository.</li>
+              <li className="px-6 py-8 text-center text-[#c0c9c0] font-dm-sans">No reviews found for this repository.</li>
             ) : (
               reviews.map((review) => {
                 const isCompleted = review.status === 'COMPLETED';
                 const scoreClass = !isCompleted 
-                  ? 'text-gray-400' 
+                  ? 'text-[#c0c9c0]' 
                   : (review.score ?? 0) >= 4.0 
-                    ? 'text-green-600 dark:text-green-500' 
+                    ? 'text-[#00FF8C]' 
                     : (review.score ?? 0) < 2.5 
-                      ? 'text-red-600 dark:text-red-500' 
-                      : 'text-orange-500 dark:text-orange-400';
+                      ? 'text-[#ffb4ab]' 
+                      : 'text-[#f0e1c2]';
                 
                 const findingsCount = (review.findings as unknown as Finding[])?.length || 0;
                 const ruleViolations = (review.findings as unknown as Finding[])?.filter(f => f.rule_id).length || 0;
 
                 return (
-                  <li key={review.id} className="px-6 py-5 hover:bg-gray-50 dark:hover:bg-zinc-900/50 transition-colors">
+                  <li key={review.id} className="py-5 hover:bg-white/5 transition-colors px-4 -mx-4 rounded-lg group">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-start gap-4">
-                        <div className={`mt-1 rounded-full p-1.5 ${isCompleted ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-500' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-500'}`}>
+                        <div className={`mt-1 rounded-full p-1.5 ${isCompleted ? 'bg-[#00FF8C]/10 text-[#00FF8C]' : 'bg-[#3D3B4F] text-[#c8c3dd]'}`}>
                           {isCompleted ? <CheckCircle className="w-5 h-5" /> : review.status === 'RUNNING' ? <Clock className="w-5 h-5 animate-pulse" /> : <Eye className="w-5 h-5" />}
                         </div>
                         <div>
                           <a 
                             href={`/pulls/${repo}/${review.pr_number}`} 
-                            className="text-lg font-medium text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                            className="text-lg font-medium text-white hover:text-[#00FF8C] transition-colors font-anybody"
                           >
                             PR #{review.pr_number}
                           </a>
-                          <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                          <div className="mt-1 flex items-center gap-4 text-sm text-[#c0c9c0] font-dm-sans">
                             <span className="flex items-center gap-1">
-                              Status: <span className="font-medium">{review.status}</span>
+                              Status: <span className="font-medium text-white">{review.status}</span>
                             </span>
                             <span>{formatDistanceToNow(new Date(review.created_at), { addSuffix: true })}</span>
                           </div>
@@ -96,19 +96,19 @@ export default async function PullsPage({
                       </div>
                       
                       {isCompleted && (
-                        <div className="flex items-center gap-6 sm:text-right">
-                          <div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Score</p>
-                            <p className={`text-2xl font-bold ${scoreClass}`}>
-                              {review.score !== null ? Number(review.score).toFixed(1) : '-'} <span className="text-sm font-normal text-gray-400">/ 5</span>
+                        <div className="flex items-center gap-8 sm:text-right">
+                          <div className="flex flex-col items-end">
+                            <p className="text-xs uppercase tracking-widest text-[#c0c9c0] font-space-mono mb-1">Score</p>
+                            <p className={`text-2xl font-bold font-anybody ${scoreClass}`}>
+                              {review.score !== null ? Number(review.score).toFixed(1) : '-'} <span className="text-sm font-normal text-[#c0c9c0]">/ 5</span>
                             </p>
                           </div>
-                          <div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Issues Found</p>
-                            <p className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2 justify-end">
+                          <div className="flex flex-col items-end">
+                            <p className="text-xs uppercase tracking-widest text-[#c0c9c0] font-space-mono mb-1">Issues Found</p>
+                            <p className="text-lg font-medium text-white flex items-center gap-2 justify-end font-anybody">
                               {findingsCount}
                               {ruleViolations > 0 && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400" title={`${ruleViolations} rule violations`}>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-space-mono bg-[#93000a]/20 text-[#ffb4ab] border border-[#93000a]/50" title={`${ruleViolations} rule violations`}>
                                   <AlertTriangle className="w-3 h-3 mr-1" />
                                   {ruleViolations} rules
                                 </span>

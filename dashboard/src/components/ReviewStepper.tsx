@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Circle, Loader2, AlertCircle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ReviewStatus } from '@parakh/shared';
 
 const STEPS = [
   { id: 'FETCHING_DIFF', label: 'Fetching Diff' },
-  { id: 'LOADING_RULES', label: 'Loading Rules' },
-  { id: 'REVIEWING_FILES', label: 'Reviewing Files' },
-  { id: 'SCORING', label: 'Scoring' },
+  { id: 'LOADING_RULES', label: 'Loading Repository Memory' },
+  { id: 'REVIEWING_FILES', label: 'Assessing Logical Integrity' },
+  { id: 'SCORING', label: 'Scoring & Evaluation' },
   { id: 'POSTING_COMMENT', label: 'Posting Results' },
   { id: 'REACTING', label: 'Reacting' }
 ];
@@ -33,7 +33,6 @@ interface ProgressResponse {
 
 export function ReviewStepper({ reviewId }: { reviewId: string }) {
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -41,12 +40,7 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
     const fetchProgress = async () => {
       try {
         const res = await fetch(`/api/reviews/${reviewId}/progress`);
-        if (!res.ok) {
-          if (res.status !== 404) {
-             console.error('Failed to fetch progress');
-          }
-          return;
-        }
+        if (!res.ok) return;
         const data = await res.json();
         setProgress(data);
 
@@ -59,125 +53,183 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
     };
 
     fetchProgress();
-
     return () => clearTimeout(timeoutId);
   }, [reviewId]);
 
   if (!progress) {
     return (
-      <div className="flex items-center justify-center p-8 text-gray-500">
-        <Loader2 className="h-6 w-6 animate-spin mr-2" />
-        <span>Loading status...</span>
+      <div className="flex items-center justify-center p-16 text-[#c0c9c0]">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
 
   const currentStepIndex = STEPS.findIndex(s => s.id === progress.currentStep);
   const isFailed = progress.status === 'FAILED';
+  const isCompletedOverall = progress.status === 'COMPLETED';
+
+  // Overall status styling
+  let statusText = 'IN PROGRESS';
+  let statusColor = 'text-[#9bd3ad]';
+  let statusGlow = 'rgba(197,255,214,0.15)';
+  let glowColor = 'bg-[#9bd3ad]/5';
+  let spinnerColor = 'border-[#9bd3ad]/40';
+  
+  if (isCompletedOverall) {
+    statusText = 'COMPLETED';
+    statusColor = 'text-[#00FF8C]';
+    statusGlow = 'rgba(0,255,140,0.2)';
+    glowColor = 'bg-[#00FF8C]/10';
+    spinnerColor = 'border-[#00FF8C]/50';
+  } else if (isFailed) {
+    statusText = 'FAILED';
+    statusColor = 'text-[#ffb4ab]';
+    statusGlow = 'rgba(255,180,171,0.2)';
+    glowColor = 'bg-[#ffb4ab]/10';
+    spinnerColor = 'border-[#ffb4ab]/50';
+  }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto border border-gray-100">
-      <h3 className="text-lg font-semibold text-gray-800 mb-6">Review Progress</h3>
-      
-      <div className="space-y-6">
-        {STEPS.map((step, index) => {
-          const isCompleted = index < currentStepIndex || progress.status === 'COMPLETED';
-          const isCurrent = index === currentStepIndex && progress.status !== 'COMPLETED';
+    <div className="w-full flex flex-col">
+      {/* Central Area: Status + Timeline */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-20 items-center lg:items-start justify-center w-full">
+        
+        {/* Central Status Indicator */}
+        <div className="relative flex-1 flex flex-col items-center justify-center min-h-[400px]">
+          {/* Outer Pulse Glow */}
+          <div className={`absolute inset-0 ${glowColor} rounded-full blur-[100px] -z-10 animate-pulse-ring`}></div>
           
-          let icon = <Circle className="h-5 w-5 text-gray-300" />;
-          let textColor = "text-gray-500";
-          
-          if (isCompleted) {
-            icon = <CheckCircle2 className="h-5 w-5 text-green-500" />;
-            textColor = "text-gray-900";
-          } else if (isCurrent) {
-            if (isFailed) {
-              icon = <AlertCircle className="h-5 w-5 text-red-500" />;
-              textColor = "text-red-600 font-medium";
-            } else {
-              icon = <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
-              textColor = "text-blue-600 font-medium";
-            }
-          }
+          <div className="relative w-64 h-64 rounded-full border border-white/5 flex items-center justify-center bg-[#1c1b1b]/40 backdrop-blur-md"
+               style={{ boxShadow: `0 0 60px 20px ${statusGlow}` }}>
+            
+            {/* Rotating rings (only if running) */}
+            {!isCompletedOverall && !isFailed && (
+              <>
+                <div className={`absolute inset-[-1px] rounded-full border border-dashed ${spinnerColor} animate-spin-slow`}></div>
+                <div className="absolute inset-4 rounded-full border border-white/5 animate-spin-slow" style={{ animationDirection: 'reverse', animationDuration: '12s' }}></div>
+              </>
+            )}
 
-          let detailText = null;
-          if (isCurrent && step.id === 'REVIEWING_FILES') {
-            // Live per-file progress from stage_reason_detail: "file 3/8: src/foo.ts"
-            const fileProgress = progress.stageReasonDetail?.match(/^file (\d+)\/(\d+): (.+)$/);
-            if (fileProgress) {
-              const [, index, total, file] = fileProgress;
-              detailText = (
-                <div className="flex flex-col mt-1">
-                  <span className="ml-2 text-sm text-gray-500">({index} / {total} files)</span>
-                  <span className="ml-2 text-xs font-mono text-violet-600 truncate max-w-full">
-                    Now reviewing: {file}
-                  </span>
-                </div>
-              );
-            } else if (progress.stepDetail) {
-              const { completedCount, totalCount } = progress.stepDetail as { completedCount?: number; totalCount?: number };
-              if (completedCount !== undefined && totalCount !== undefined) {
-                detailText = <span className="ml-2 text-sm text-gray-500">({completedCount} / {totalCount} files)</span>;
-              }
-            } else if (progress.stageReasonDetail) {
-              detailText = <span className="ml-2 text-sm text-gray-500">{progress.stageReasonDetail}</span>;
-            }
-          }
-
-          return (
-            <div key={step.id} className="flex items-center">
-              <div className="flex-shrink-0">{icon}</div>
-              <div className={`ml-3 text-sm ${textColor}`}>
-                {step.label}
-                {detailText}
-              </div>
+            <div className="text-center z-10 flex flex-col items-center gap-4">
+              <span className={`material-symbols-outlined text-[48px] ${statusColor}`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                {isCompletedOverall ? 'check_circle' : isFailed ? 'error' : 'memory'}
+              </span>
+              <h1 className={`font-anybody ${statusColor} tracking-[0.2em] font-bold text-center leading-tight uppercase`}>
+                PARAKH<br/>{statusText}
+              </h1>
             </div>
-          );
-        })}
+          </div>
+        </div>
+
+        {/* Vertical Timeline Panel */}
+        <div className="w-full lg:w-[450px] flex flex-col gap-8">
+          <div className="glass-card rounded-xl p-8 relative">
+            <h3 className="font-anybody text-2xl text-white mb-8 font-semibold">Execution Pipeline</h3>
+            
+            <div className="flex flex-col gap-6 relative z-10">
+              {STEPS.map((step, index) => {
+                const isCompleted = index < currentStepIndex || isCompletedOverall;
+                const isCurrent = index === currentStepIndex && !isCompletedOverall;
+                const isPending = index > currentStepIndex && !isCompletedOverall;
+                const stepFailed = isCurrent && isFailed;
+
+                // detail parsing for Current Step
+                let detailText = isPending ? 'Pending' : (isCompleted ? 'Completed' : 'Running...');
+                if (isCurrent && !isFailed) {
+                   if (step.id === 'REVIEWING_FILES' && progress.stageReasonDetail) {
+                      detailText = progress.stageReasonDetail;
+                   } else if (progress.stepDetail) {
+                      const { completedCount, totalCount } = progress.stepDetail as any;
+                      if (completedCount !== undefined && totalCount !== undefined) {
+                         detailText = `${completedCount} / ${totalCount} files`;
+                      }
+                   }
+                }
+                if (stepFailed) detailText = progress.error || 'Failed';
+
+                return (
+                  <div key={step.id} className="flex items-start gap-4 relative group">
+                    {/* Timeline connector (not on last item) */}
+                    {index < STEPS.length - 1 && (
+                      <div className="absolute left-[11px] top-[24px] bottom-[-24px] w-[2px] z-0" 
+                           style={{
+                             background: isCompleted 
+                               ? 'linear-gradient(to bottom, #b6f0c8, rgba(255, 255, 255, 0.1))' 
+                               : 'rgba(255, 255, 255, 0.1)'
+                           }}>
+                      </div>
+                    )}
+
+                    {/* Step Icon */}
+                    {isCompleted ? (
+                      <div className="w-6 h-6 rounded-full bg-[#b6f0c8] flex items-center justify-center z-10 shrink-0 border border-transparent shadow-[0_0_10px_rgba(182,240,200,0.3)]">
+                        <span className="material-symbols-outlined text-[14px] text-[#00391f] font-bold">check</span>
+                      </div>
+                    ) : isCurrent ? (
+                      <div className={`w-6 h-6 rounded-full bg-transparent border-2 flex items-center justify-center z-10 shrink-0 ${stepFailed ? 'border-[#ffb4ab] shadow-[0_0_15px_rgba(255,180,171,0.4)]' : 'border-[#9bd3ad] shadow-[0_0_15px_rgba(155,211,173,0.4)]'}`}>
+                        {stepFailed ? (
+                           <div className="w-2 h-2 rounded-full bg-[#ffb4ab]"></div>
+                        ) : (
+                           <div className="w-2 h-2 rounded-full bg-[#9bd3ad] animate-pulse"></div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-[#353534] border border-white/20 flex items-center justify-center z-10 shrink-0"></div>
+                    )}
+
+                    {/* Step Content */}
+                    <div className={`flex flex-col pt-0.5 ${isPending ? 'opacity-50' : ''}`}>
+                      <span className={`font-dm-sans font-medium text-[16px] ${stepFailed ? 'text-[#ffb4ab]' : (isCurrent ? 'text-[#9bd3ad]' : 'text-white')}`}>
+                        {step.label}
+                      </span>
+                      <span className={`font-space-mono text-[12px] mt-1 ${isCurrent ? 'text-[#9bd3ad]/70' : 'text-[#c0c9c0]'}`}>
+                        {detailText}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {progress.status === 'RUNNING' && progress.eta && (
-        <div className="mt-8 pt-4 border-t border-gray-100 text-sm">
-          {progress.eta.basis === 'insufficient_data' ? (
-            <p className="text-gray-500 flex items-center">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              Estimating... (warming up, not enough history yet)
-            </p>
-          ) : (
-            <p className="text-gray-600 font-medium">
-              ~{Math.ceil((progress.eta.totalMs ?? 0) / 1000)}s remaining 
-              <span className="text-gray-400 font-normal ml-1">
-                (based on your last {progress.eta.sampleCount} {progress.eta.basis === 'repo' ? 'reviews on this repo' : 'global reviews'})
-              </span>
-            </p>
-          )}
-        </div>
-      )}
-
-      {progress.activeStepLogs && progress.activeStepLogs.length > 0 && (
-        <div className="mt-8 pt-4 border-t border-gray-100">
-           <div className="flex items-center justify-between mb-3">
-             <h4 className="text-sm font-medium text-gray-700">Live Stage Logs</h4>
-             <span className="flex h-2 w-2 relative">
-               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-             </span>
-           </div>
-           <div className="bg-gray-50 rounded-md border border-gray-200 p-3 max-h-48 overflow-y-auto">
-             <ul className="space-y-1.5 text-xs font-mono text-gray-600">
-                {progress.activeStepLogs.map((log, i) => (
-                   <li key={i} className="flex">
-                      <span className="text-gray-400 w-16 flex-shrink-0">
-                         {new Date(log.at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </span>
-                      <span className={`font-semibold mr-2 ${log.code === 'RATE_LIMITED_BACKOFF' ? 'text-yellow-600' : 'text-blue-600'}`}>
-                         [{log.code}]
-                      </span>
-                      <span className="text-gray-700">{log.detail}</span>
-                   </li>
-                ))}
-             </ul>
-           </div>
+      {/* Bottom Section: Model Reasoning */}
+      {(!isCompletedOverall && !isFailed) && (
+        <div className="mt-16 max-w-4xl mx-auto w-full">
+          <div className="glass-card rounded-xl p-6 flex flex-col md:flex-row items-start md:items-center gap-6">
+            <div className="relative w-16 h-16 rounded-lg bg-[#0A0A0A] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+              <span className="material-symbols-outlined text-[#9bd3ad] text-3xl z-10">memory_alt</span>
+              <div className="absolute inset-0 border-2 border-transparent border-t-[#9bd3ad] border-r-[#9bd3ad] rounded-lg animate-spin" style={{ animationDuration: '2s' }}></div>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-2">
+                <h4 className="font-space-mono text-[14px] text-white tracking-wider font-bold">MODEL REASONING</h4>
+                <div className="px-2 py-0.5 rounded-full bg-[#9bd3ad]/10 border border-[#9bd3ad]/20">
+                  <span className="font-space-mono text-[10px] text-[#9bd3ad] uppercase font-bold">Live</span>
+                </div>
+                {progress.eta && progress.eta.totalMs && (
+                   <span className="font-space-mono text-xs text-[#c0c9c0] ml-auto">
+                     ETA: ~{Math.ceil(progress.eta.totalMs / 1000)}s
+                   </span>
+                )}
+              </div>
+              <div className="font-dm-sans text-[16px] text-[#c0c9c0] leading-relaxed">
+                {progress.activeStepLogs && progress.activeStepLogs.length > 0 ? (
+                  <div className="flex flex-col gap-1 h-12 overflow-hidden justify-end">
+                    {progress.activeStepLogs.slice(-2).map((log, i) => (
+                      <div key={i} className="flex gap-2 text-sm">
+                        <span className="text-[#9bd3ad]/70 font-space-mono shrink-0">[{log.code}]</span>
+                        <span className="truncate">{log.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="opacity-70 animate-pulse">Initializing inference engine...</span>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
