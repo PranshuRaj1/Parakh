@@ -36,7 +36,10 @@ export async function saveCorrectionAsRule(
   const fullRepo = `${input.owner}/${input.repo}`;
 
   // The comment body is the rule text — kept verbatim (may include the @parakh mention).
-  const ruleBody = input.commentBody.trim();
+  const ruleBody = input.commentBody
+    .replace(/^\s*@parakh\b(?:\s+correction\b)?\s*[:,-]?\s*/i, '')
+    .trim();
+  if (!ruleBody) throw new Error('Correction must include rule text');
 
   const { llm } = createLLMClients(env);
 

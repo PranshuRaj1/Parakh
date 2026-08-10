@@ -80,15 +80,15 @@ describe('saveCorrectionAsRule', () => {
     );
   });
 
-  it('keeps the comment body verbatim (including @parakh mention)', async () => {
+  it('removes the @parakh command metadata before storing and embedding the rule', async () => {
     await saveCorrectionAsRule(input({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ body: '@parakh we never flag EOF newline issues' }),
+      expect.objectContaining({ body: 'we never flag EOF newline issues' }),
       env
     );
     expect(env.WATCHDOG_QUEUE.send).toHaveBeenCalledWith(
-      expect.objectContaining({ ruleBody: '@parakh we never flag EOF newline issues' })
+      expect.objectContaining({ ruleBody: 'we never flag EOF newline issues' })
     );
   });
 });

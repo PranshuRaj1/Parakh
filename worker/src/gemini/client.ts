@@ -131,7 +131,7 @@ export class GeminiClient implements LLMProvider {
 
   constructor(env: {
     GEMINI_API_KEYS?: string;
-    GEMINI_API_KEY: string;
+    GEMINI_API_KEY?: string;
     GEMINI_GENERATION_MODEL?: string;
     REASONING_CAPTURE_ENABLED?: string;
     REASONING_THINKING_BUDGET?: string;

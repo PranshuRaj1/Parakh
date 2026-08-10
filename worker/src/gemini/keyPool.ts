@@ -44,7 +44,7 @@ export class DailyQuotaExhaustedError extends AllKeysExhaustedError {
  * Parse the key pool from environment.
  * Prefers GEMINI_API_KEYS (comma-separated), falls back to GEMINI_API_KEY.
  */
-export function getKeyPool(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY: string }): string[] {
+export function getKeyPool(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY?: string }): string[] {
   return parseKeyPool(env.GEMINI_API_KEYS, env.GEMINI_API_KEY);
 }
 

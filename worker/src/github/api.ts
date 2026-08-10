@@ -286,16 +286,11 @@ export async function addCommentReaction(
 export async function removeCommentReaction(
   owner: string,
   repo: string,
-  commentId: number,
-  commentType: 'issue_comment' | 'pull_request_review_comment',
   reactionId: number,
   token: string
 ): Promise<void> {
-  const path = commentType === 'pull_request_review_comment'
-    ? `pulls/comments/${commentId}/reactions/${reactionId}`
-    : `issues/comments/${commentId}/reactions/${reactionId}`;
   const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/reactions/${reactionId}`,
     {
       method: 'DELETE',
       headers: headers(token),
@@ -303,7 +298,7 @@ export async function removeCommentReaction(
   );
 
   // 204 No Content is success for DELETE
-  if (!response.ok && response.status !== 204) {
+  if (!response.ok) {
     const body = await response.text();
     throw new Error(`Failed to remove comment reaction (${response.status}): ${body}`);
   }
