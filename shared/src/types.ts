@@ -6,6 +6,13 @@ export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
 /** Rule priority — determines severity weight for violations. */
 export type RulePriority = 'high' | 'normal';
 
+/**
+ * Rule enforcement mode. 'enforce' rules are standards code must comply with
+ * (sent to the LLM). 'suppress' rules are NEVER sent to the LLM — they drive a
+ * deterministic post-filter that drops matching findings.
+ */
+export type RuleMode = 'enforce' | 'suppress';
+
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
@@ -32,6 +39,9 @@ export interface Rule {
   status: RuleStatus;
   scope: Record<string, unknown>;
   priority: RulePriority;
+  mode: RuleMode;
+  /** Case-insensitive substrings; a suppress rule drops findings whose body matches any pattern. */
+  patterns: string[];
   supersedes: string | null;
   superseded_by: string | null;
   source_pr: number | null;

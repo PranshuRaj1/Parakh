@@ -15,7 +15,7 @@
  * and "rule created via dashboard" — both trigger the contradiction engine.
  */
 
-import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
+import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload, RuleMode } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
@@ -46,7 +46,24 @@ export async function handleCreateRule(
   // 3. Classify priority (or use override from request)
   const priority = request.priority || await llm.classifyPriority(request.body);
 
-  // 4. Insert rule as ACTIVE
+  // 4. Classify enforcement mode + suppression patterns. Fail-open: on any
+  //    classification error, default to 'enforce' with no patterns — the worst
+  //    case is a suppress rule that silently doesn't suppress (safe), never a
+  //    blocked rule creation or a mis-routed enforce rule. Log for manual review.
+  let mode: RuleMode = 'enforce';
+  let patterns: string[] = [];
+  try {
+    const classification = await llm.classifyRuleMode(request.body);
+    mode = classification.mode;
+    patterns = classification.patterns;
+  } catch (err) {
+    console.error(
+      `[rule-api] Rule-mode classification failed for "${request.body}" — defaulting to enforce:`,
+      err
+    );
+  }
+
+  // 5. Insert rule as ACTIVE
   const rule = await insertRule(
     {
       repo: request.repo,
@@ -55,11 +72,13 @@ export async function handleCreateRule(
       status: 'ACTIVE',
       scope: request.scope || {},
       priority,
+      mode,
+      patterns,
     },
     env
   );
 
-  // 5. Enqueue contradiction check (same path as PR-comment corrections)
+  // 6. Enqueue contradiction check (same path as PR-comment corrections)
   const payload: ContradictionJobPayload = {
     type: 'CONTRADICTION',
     ruleId: rule.id,

@@ -14,7 +14,7 @@
  * thinking: null. Reasoning stays Gemini-only.
  */
 
-import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Rule, Intent, Relationship, RulePriority, RuleMode } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import {
   getGroqKeyPool,
@@ -27,7 +27,7 @@ import {
 } from '../gemini/keyPool.js';
 import { MemoryCooldownStore, type CooldownStore } from '../gemini/cooldown-store.js';
 import { parseJson } from '../llm/parse-json.js';
-import type { LLMProvider } from '../llm/provider.js';
+import type { LLMProvider, RuleModeResult } from '../llm/provider.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -282,6 +282,20 @@ export class GroqClient implements LLMProvider {
       const raw = await this.chat(apiKey, prompt, { json: true });
       const parsed = this.parseJson<{ priority?: RulePriority }>(raw);
       return parsed.priority ?? 'normal';
+    });
+  }
+
+  async classifyRuleMode(ruleBody: string): Promise<RuleModeResult> {
+    const { buildRuleModePrompt } = await import('../gemini/prompts.js');
+    const prompt = buildRuleModePrompt(ruleBody);
+
+    return this.withKeyRotation(async (apiKey) => {
+      const raw = await this.chat(apiKey, prompt, { json: true });
+      const parsed = this.parseJson<{ mode?: RuleMode; patterns?: string[] }>(raw);
+      return {
+        mode: parsed.mode ?? 'enforce',
+        patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
+      };
     });
   }
 

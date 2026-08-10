@@ -14,7 +14,7 @@
  * via PR comment" and "rule created via dashboard".
  */
 
-import type { ContradictionJobPayload } from '@parakh/shared';
+import type { ContradictionJobPayload, RuleMode } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
@@ -46,6 +46,23 @@ export async function saveCorrectionAsRule(
   // Classify priority
   const priority = await llm.classifyPriority(ruleBody);
 
+  // Classify enforcement mode + suppression patterns. Fail-open: on any
+  // classification error, default to 'enforce' with no patterns — the worst
+  // case is a suppress rule that silently doesn't suppress (safe), never a
+  // blocked rule creation or a mis-routed enforce rule. Log for manual review.
+  let mode: RuleMode = 'enforce';
+  let patterns: string[] = [];
+  try {
+    const classification = await llm.classifyRuleMode(ruleBody);
+    mode = classification.mode;
+    patterns = classification.patterns;
+  } catch (err) {
+    console.error(
+      `[correction] Rule-mode classification failed for "${ruleBody}" — defaulting to enforce:`,
+      err
+    );
+  }
+
   // Insert rule as ACTIVE — auto-activate, not SUGGESTED
   const rule = await insertRule(
     {
@@ -54,12 +71,14 @@ export async function saveCorrectionAsRule(
       embedding,
       status: 'ACTIVE',
       priority,
+      mode,
+      patterns,
       source_pr: input.prNumber,
     },
     env
   );
 
-  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority})`);
+  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority}, mode: ${mode})`);
 
   // Enqueue contradiction check (async safety net, same queue as dashboard rules)
   const contradictionPayload: ContradictionJobPayload = {

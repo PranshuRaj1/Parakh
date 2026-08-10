@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { generateEmbeddingMock, classifyPriorityMock } = vi.hoisted(() => ({
+const { generateEmbeddingMock, classifyPriorityMock, classifyRuleModeMock } = vi.hoisted(() => ({
   generateEmbeddingMock: vi.fn(),
   classifyPriorityMock: vi.fn(),
+  classifyRuleModeMock: vi.fn(),
 }));
 
 vi.mock('../gemini/client.js', () => ({
   GeminiClient: class {
     generateEmbedding = generateEmbeddingMock;
     classifyPriority = classifyPriorityMock;
+    classifyRuleMode = classifyRuleModeMock;
   },
 }));
 
@@ -38,10 +40,12 @@ function makeCtx() {
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   mocked.executeContradictionJob.mockReset().mockResolvedValue(undefined);
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-1' } as never);
   generateEmbeddingMock.mockReset().mockResolvedValue([0.1, 0.2]);
   classifyPriorityMock.mockReset().mockResolvedValue('normal');
+  classifyRuleModeMock.mockReset().mockResolvedValue({ mode: 'enforce', patterns: [] });
 });
 
 describe('handleCreateRule', () => {
@@ -55,7 +59,7 @@ describe('handleCreateRule', () => {
 
     expect(classifyPriorityMock).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high' }),
+      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high', mode: 'enforce', patterns: [] }),
       env
     );
   });
@@ -63,6 +67,29 @@ describe('handleCreateRule', () => {
   it('classifies priority when not supplied', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
     expect(classifyPriorityMock).toHaveBeenCalledWith('Never store secrets');
+  });
+
+  it('classifies mode and persists a suppress rule with its patterns', async () => {
+    classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline'] });
+
+    await handleCreateRule({ repo: 'acme/app', body: 'never flag EOF newlines' }, env, makeCtx());
+
+    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newlines');
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'suppress', patterns: ['newline'] }),
+      env
+    );
+  });
+
+  it('fails open to enforce when rule-mode classification errors', async () => {
+    classifyRuleModeMock.mockRejectedValue(new Error('timeout'));
+
+    await handleCreateRule({ repo: 'acme/app', body: 'x' }, env, makeCtx());
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'enforce', patterns: [] }),
+      env
+    );
   });
 
   it('inserts the rule with the generated embedding and enqueues a contradiction check', async () => {

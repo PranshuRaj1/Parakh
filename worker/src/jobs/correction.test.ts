@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { generateEmbeddingMock, classifyPriorityMock } = vi.hoisted(() => ({
+const { generateEmbeddingMock, classifyPriorityMock, classifyRuleModeMock } = vi.hoisted(() => ({
   generateEmbeddingMock: vi.fn(),
   classifyPriorityMock: vi.fn(),
+  classifyRuleModeMock: vi.fn(),
 }));
 
 vi.mock('../gemini/client.js', () => ({
   GeminiClient: class {
     generateEmbedding = generateEmbeddingMock;
     classifyPriority = classifyPriorityMock;
+    classifyRuleMode = classifyRuleModeMock;
   },
 }));
 
@@ -43,18 +45,21 @@ function input(overrides: Partial<{ commentBody: string; prNumber: number }> = {
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-9' } as never);
   generateEmbeddingMock.mockReset().mockResolvedValue([0.1, 0.2]);
   classifyPriorityMock.mockReset().mockResolvedValue('normal');
+  classifyRuleModeMock.mockReset().mockResolvedValue({ mode: 'enforce', patterns: [] });
   vi.mocked(env.WATCHDOG_QUEUE.send).mockReset().mockResolvedValue(undefined);
 });
 
 describe('saveCorrectionAsRule', () => {
-  it('embeds, classifies priority, inserts an ACTIVE rule with source_pr, and enqueues a contradiction check', async () => {
+  it('embeds, classifies priority and mode, inserts an ACTIVE rule with source_pr, and enqueues a contradiction check', async () => {
     await saveCorrectionAsRule(input(), env);
 
     expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues');
     expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues');
+    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newline issues');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
@@ -62,6 +67,8 @@ describe('saveCorrectionAsRule', () => {
         embedding: [0.1, 0.2],
         status: 'ACTIVE',
         priority: 'normal',
+        mode: 'enforce',
+        patterns: [],
         source_pr: 7,
       }),
       env
@@ -77,6 +84,31 @@ describe('saveCorrectionAsRule', () => {
         ruleBody: 'never flag EOF newline issues',
         embedding: [0.1, 0.2],
       })
+    );
+  });
+
+  it('persists a suppress rule with its extracted patterns', async () => {
+    classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline', 'end of the file'] });
+
+    await saveCorrectionAsRule(input({ commentBody: 'never flag EOF newline issues' }), env);
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'suppress',
+        patterns: ['newline', 'end of the file'],
+      }),
+      env
+    );
+  });
+
+  it('fails open to enforce when rule-mode classification errors', async () => {
+    classifyRuleModeMock.mockRejectedValue(new Error('timeout'));
+
+    await saveCorrectionAsRule(input(), env);
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'enforce', patterns: [] }),
+      env
     );
   });
 

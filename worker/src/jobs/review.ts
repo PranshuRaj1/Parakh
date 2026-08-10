@@ -9,6 +9,7 @@ import type { ReviewJobPayload, Finding, Rule, StageReasonCode, ReviewStage, Rev
 import {
   computeScore,
   displayScore,
+  dedupeFindings,
   resolveSeverityForRuleViolation,
   POSITIVE_THRESHOLD,
   NEGATIVE_THRESHOLD,
@@ -315,7 +316,15 @@ async function reviewSingleFile(
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return [];
 
-  const applicableRules = activeRules.filter(r =>
+  // Split rules by enforcement mode. Only 'enforce' rules are standards code
+  // must comply with — those are what the LLM checks for. 'suppress' rules are
+  // NEVER sent to the LLM: a "never flag X" rule fed to the model as an
+  // enforceable standard makes it report X as a violation OF that rule. They
+  // instead drive the deterministic post-filter below.
+  const enforceRules = activeRules.filter((r) => (r.mode ?? 'enforce') === 'enforce');
+  const suppressRules = activeRules.filter((r) => r.mode === 'suppress');
+
+  const applicableRules = enforceRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
   );
 
@@ -416,15 +425,53 @@ async function reviewSingleFile(
       suggestion: rf.suggestion || null,
       rule_id: rf.rule_id,
     });
-    
-    // Increment evidence_count per violation instance
+  }
+
+  // Deterministic suppression post-filter: drop any finding whose body matches
+  // a suppress rule's patterns AND whose file is in that rule's scope. This is
+  // where the memory system actually suppresses — suppress rules never reach
+  // the LLM as enforceable standards (that mismatch is what made old "never
+  // flag X" rules backfire into violations).
+  const surviving = findings.filter(
+    (f) => !isSuppressedByRule(f, fileName, suppressRules)
+  );
+
+  // Increment evidence_count per surviving rule-violation instance.
+  for (const f of surviving) {
+    if (!f.rule_id) continue;
+    const rule = applicableRules.find(r => r.id === f.rule_id);
     if (rule) {
       budget.spend(1); // DB write
       await incrementEvidenceCount(rule.id, env);
     }
   }
 
-  return findings;
+  return surviving;
+}
+
+/**
+ * True when a finding should be dropped because a suppress rule names its topic.
+ * Gated by BOTH scope (rule.scope vs the file) and pattern (case-insensitive
+ * substring match against the finding body).
+ */
+function isSuppressedByRule(
+  f: Finding,
+  fileName: string,
+  suppressRules: Rule[]
+): boolean {
+  for (const rule of suppressRules) {
+    if (!matchesScope(fileName, rule.scope as Record<string, unknown>)) continue;
+    const patterns = rule.patterns ?? [];
+    if (patterns.length === 0) continue;
+    const body = f.body.toLowerCase();
+    if (patterns.some((p) => p && body.includes(p.toLowerCase()))) {
+      console.log(
+        `[review] Suppressed finding ${fileName}:${f.line} via rule ${rule.id}`
+      );
+      return true;
+    }
+  }
+  return false;
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -1036,9 +1083,13 @@ async function finalizeReview(
   }
 
   await startStage(reviewId, 'SCORING', stageAttempt, env);
-  const rawScore = computeScore(findings);
+  // Dedupe before scoring: the same issue frequently arrives as both a generic
+  // finding and a rule violation (and sometimes twice in one array). Without
+  // this it gets summed 2–3x toward the penalty.
+  const deduped = dedupeFindings(findings);
+  const rawScore = computeScore(deduped);
   const score = displayScore(rawScore);
-  await updateReviewResults(reviewId, score, findings, env);
+  await updateReviewResults(reviewId, score, deduped, env);
   await completeStage(reviewId, 'SCORING', stageAttempt, env);
 
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
@@ -1060,7 +1111,7 @@ async function finalizeReview(
     const comment = formatReviewComment(
       rawScore,
       score,
-      findings,
+      deduped,
       fullRepo,
       prNumber,
       env.DASHBOARD_BASE_URL
