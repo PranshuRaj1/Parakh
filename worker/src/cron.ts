@@ -10,7 +10,12 @@ import { swapCommentReaction, releaseReviewLock } from './jobs/review.js';
 import { createRedisGet, createRedisSet } from './redis.js';
 import type { Env } from './index.js';
 
-const STALL_TIMEOUT_SECONDS = 5 * 60; // 5 minutes
+// Watchdog stall window. Must EXCEED the longest internal timeout: a large PR
+// can legitimately spend up to ~5s + 30s/file in REVIEWING_FILES (uncapped),
+// and NO_PROGRESS_STALL_MS gives 10 minutes before a delivery fails fast. A
+// 5-minute sweep could kill a review still inside that window, so this sits
+// above both (12 min) — the cron is a last-resort backstop, not the first judge.
+const STALL_TIMEOUT_SECONDS = 12 * 60; // 12 minutes
 
 export async function handleCronTrigger(env: Env): Promise<void> {
   // Prune captured reasoning past its retention window (keeps storage ~zero).

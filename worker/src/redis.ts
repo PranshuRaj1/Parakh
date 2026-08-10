@@ -5,6 +5,9 @@ export function createRedisGet(env: Env): (key: string) => Promise<string | null
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
     });
+    if (!response.ok) {
+      throw new Error(`Redis GET failed (${response.status}) for key ${key}`);
+    }
     const data = (await response.json()) as { result: string | null };
     return data.result;
   };
@@ -16,6 +19,9 @@ export function createRedisSet(env: Env): (key: string, value: string, opts?: { 
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
     });
+    if (!response.ok) {
+      throw new Error(`Redis SET failed (${response.status}) for key ${key}`);
+    }
     return response.json();
   };
 }
@@ -30,6 +36,9 @@ export function createRedisSetNX(env: Env): (key: string, value: string, exSecon
       `${env.UPSTASH_REDIS_URL}/set/${encodeURIComponent(key)}/${value}/EX/${exSeconds}/NX`,
       { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
     );
+    if (!response.ok) {
+      throw new Error(`Redis SETNX failed (${response.status}) for key ${key}`);
+    }
     const data = (await response.json()) as { result: string | null };
     return data.result === 'OK';
   };
@@ -40,9 +49,12 @@ export function createRedisSetNX(env: Env): (key: string, value: string, exSecon
  */
 export function createRedisDel(env: Env): (key: string) => Promise<void> {
   return async (key: string) => {
-    await fetch(
+    const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/del/${encodeURIComponent(key)}`,
       { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
     );
+    if (!response.ok) {
+      throw new Error(`Redis DEL failed (${response.status}) for key ${key}`);
+    }
   };
 }

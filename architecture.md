@@ -359,7 +359,7 @@ REVIEW job (a delivery = a resumable slice):
 
 cron (every minute):
   prune expired reasoning
-  sweep stalled reviews (no heartbeat > 5 min) → TIMED_OUT + "@parakh review" comment
+  sweep stalled reviews (no heartbeat > 12 min) → TIMED_OUT + "@parakh review" comment
   release their locks
 ```
 
