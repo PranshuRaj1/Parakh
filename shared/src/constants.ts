@@ -41,7 +41,7 @@ export const NEGATIVE_THRESHOLD = 2.5;
 
 /** GitHub reaction content values used in the emoji state machine. */
 export const REACTIONS = {
-  SEEN: '+1' as const,
+  SEEN: 'eyes' as const,
   POSITIVE: '+1' as const,
   NEGATIVE: '-1' as const,
 };

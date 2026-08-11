@@ -113,7 +113,7 @@ describe('pull_request events', () => {
       expect(result.body).toBe('review enqueued');
 
       expect(mocked.getCachedToken).toHaveBeenCalledWith(1, '123', 'private-key', expect.anything());
-      expect(mocked.addReaction).toHaveBeenCalledWith('acme', 'app', 7, '+1', 'token');
+      expect(mocked.addReaction).toHaveBeenCalledWith('acme', 'app', 7, 'eyes', 'token');
       expect(mocked.postComment).toHaveBeenCalledWith(
         'acme', 'app', 7,
         expect.stringContaining('seen this PR'),
