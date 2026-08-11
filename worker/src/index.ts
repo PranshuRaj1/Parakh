@@ -26,7 +26,7 @@ export interface Env {
   GITHUB_APP_BOT_USER_ID: string;
 
   // Gemini
-  GEMINI_API_KEY: string;
+  GEMINI_API_KEY?: string;
   GEMINI_API_KEYS?: string;
   // Env override for the generation model (default gemini-2.5-flash).
   GEMINI_GENERATION_MODEL?: string;

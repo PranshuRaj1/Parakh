@@ -8,7 +8,7 @@ interface ReviewStepEvent {
   id: string;
   review_id: string;
   step: string;
-  status: 'STARTED' | 'COMPLETED' | 'FAILED';
+  status: 'STARTED' | 'COMPLETED' | 'FAILED' | 'UNKNOWN';
   outcome: string | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -25,6 +25,7 @@ interface FailureData {
   githubDeliveryId: string | null;
   failedAt: string;
   realErrorStep: string | null;
+  realErrorCode: string | null;
   realErrorMessage: string | null;
   sweptByCron: boolean;
   timeline: ReviewStepEvent[];
@@ -106,14 +107,15 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
             </p>
           )}
 
-          {data.realErrorMessage && (
+          {(data.realErrorMessage || data.realErrorCode) && (
             <div className="mt-4 bg-red-50 border border-red-200 rounded p-3">
               <h4 className="text-xs font-semibold text-red-800 uppercase tracking-wide">
                 Real Terminal Error
               </h4>
               <p className="mt-1 text-sm text-red-700 font-mono break-all">
-                At <span className="font-semibold">{data.realErrorStep}</span>:{' '}
-                {data.realErrorMessage}
+                {data.realErrorStep && <>At <span className="font-semibold">{data.realErrorStep}</span>: </>}
+                {data.realErrorCode && <><span className="font-semibold">[{data.realErrorCode}]</span>{' '}</>}
+                {data.realErrorMessage ?? 'No error message captured.'}
               </p>
             </div>
           )}
@@ -170,7 +172,8 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
                     <span className="text-gray-400 font-mono text-xs w-4">{idx + 1}.</span>
                     <span className={`ml-2 font-medium ${
                       event.status === 'COMPLETED' ? 'text-green-700' :
-                      event.status === 'FAILED' ? 'text-red-700' : 'text-blue-700'
+                      event.status === 'FAILED' ? 'text-red-700' :
+                      event.status === 'UNKNOWN' ? 'text-gray-700' : 'text-blue-700'
                     }`}>
                       {event.step}
                     </span>

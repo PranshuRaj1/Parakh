@@ -4,6 +4,8 @@
 -- Only populated when trigger_reason = 'manual_mention'.
 
 ALTER TABLE reviews ADD COLUMN IF NOT EXISTS trigger_comment_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_reviews_trigger_comment_id
+  ON reviews (trigger_comment_id) WHERE trigger_comment_id IS NOT NULL;
 
 ALTER TABLE reviews ADD COLUMN IF NOT EXISTS trigger_comment_type TEXT;
 ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_trigger_comment_type_check;

@@ -615,8 +615,7 @@ export async function swapCommentReaction(
   if (review.trigger_comment_reaction_id) {
     try {
       await removeCommentReaction(
-        owner, repo, review.trigger_comment_id, review.trigger_comment_type,
-        review.trigger_comment_reaction_id, token
+        owner, repo, review.trigger_comment_reaction_id, token
       );
     } catch (err) {
       console.warn(`[review] Failed to remove previous trigger-comment reaction:`, err);

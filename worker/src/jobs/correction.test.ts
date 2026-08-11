@@ -32,7 +32,7 @@ const env = {
   WATCHDOG_QUEUE: { send: vi.fn() },
 } as unknown as Env;
 
-function input(overrides: Partial<{ commentBody: string; prNumber: number }> = {}) {
+function makeInput(overrides: Partial<{ commentBody: string; prNumber: number }> = {}) {
   return {
     installationId: 1,
     owner: 'acme',
@@ -55,7 +55,7 @@ beforeEach(() => {
 
 describe('saveCorrectionAsRule', () => {
   it('embeds, classifies priority and mode, inserts an ACTIVE rule with source_pr, and enqueues a contradiction check', async () => {
-    await saveCorrectionAsRule(input(), env);
+    await saveCorrectionAsRule(makeInput(), env);
 
     expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues');
     expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues');
@@ -90,7 +90,7 @@ describe('saveCorrectionAsRule', () => {
   it('persists a suppress rule with its extracted patterns', async () => {
     classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline', 'end of the file'] });
 
-    await saveCorrectionAsRule(input({ commentBody: 'never flag EOF newline issues' }), env);
+    await saveCorrectionAsRule(makeInput({ commentBody: 'never flag EOF newline issues' }), env);
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -104,7 +104,7 @@ describe('saveCorrectionAsRule', () => {
   it('fails open to enforce when rule-mode classification errors', async () => {
     classifyRuleModeMock.mockRejectedValue(new Error('timeout'));
 
-    await saveCorrectionAsRule(input(), env);
+    await saveCorrectionAsRule(makeInput(), env);
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'enforce', patterns: [] }),
@@ -112,15 +112,35 @@ describe('saveCorrectionAsRule', () => {
     );
   });
 
-  it('keeps the comment body verbatim (including @parakh mention)', async () => {
-    await saveCorrectionAsRule(input({ commentBody: '@parakh we never flag EOF newline issues' }), env);
+  it('fails open to normal priority when priority classification errors', async () => {
+    classifyPriorityMock.mockRejectedValue(new Error('timeout'));
+
+    await saveCorrectionAsRule(makeInput(), env);
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ body: '@parakh we never flag EOF newline issues' }),
+      expect.objectContaining({ priority: 'normal' }),
+      env
+    );
+  });
+
+  it('still saves the rule when enqueueing the contradiction check fails', async () => {
+    vi.mocked(env.WATCHDOG_QUEUE.send).mockRejectedValue(new Error('queue down'));
+
+    const rule = await saveCorrectionAsRule(makeInput(), env);
+
+    expect(mocked.insertRule).toHaveBeenCalled();
+    expect(rule).toMatchObject({ id: 'rule-9' });
+  });
+
+  it('removes the @parakh command metadata before storing and embedding the rule', async () => {
+    await saveCorrectionAsRule(makeInput({ commentBody: '@parakh we never flag EOF newline issues' }), env);
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'we never flag EOF newline issues' }),
       env
     );
     expect(env.WATCHDOG_QUEUE.send).toHaveBeenCalledWith(
-      expect.objectContaining({ ruleBody: '@parakh we never flag EOF newline issues' })
+      expect.objectContaining({ ruleBody: 'we never flag EOF newline issues' })
     );
   });
 });

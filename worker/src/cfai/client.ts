@@ -48,16 +48,15 @@ export const DEFAULT_CFAI_GENERATION_MODEL =
  */
 const CFAI_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 
-function jsonStringify(value: unknown): string {
-  return JSON.stringify(value);
-}
-
 export class CfaAiClient implements LLMProvider {
   private generationModel: string;
   private budget: { spend(n?: number): void } | null = null;
   private envCreds: CfaAiEnv;
 
   constructor(env: CfaAiEnv) {
+    if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
+      throw new Error('Cloudflare Workers AI requires CF_ACCOUNT_ID and CF_API_TOKEN');
+    }
     this.envCreds = env;
     this.generationModel = env.CFAI_GENERATION_MODEL ?? DEFAULT_CFAI_GENERATION_MODEL;
   }
@@ -109,8 +108,6 @@ export class CfaAiClient implements LLMProvider {
    * tolerant).
    */
   private async run(model: string, prompt: string, jsonOutput?: boolean): Promise<string> {
-    this.budget?.spend(1);
-
     const body: Record<string, unknown> = {
       messages: [
         {
@@ -130,7 +127,7 @@ export class CfaAiClient implements LLMProvider {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.envCreds.CF_API_TOKEN}`,
         },
-        body: jsonStringify(body),
+        body: JSON.stringify(body),
       }
     );
 
@@ -139,9 +136,15 @@ export class CfaAiClient implements LLMProvider {
       throw this.classifyResponseError(response.status, text);
     }
 
-    const data = (await response.json()) as {
+    let data: {
       result?: { response?: string };
     };
+    try {
+      data = await response.json() as typeof data;
+    } catch {
+      throw new Error(`[cfai] invalid JSON response from ${model}`);
+    }
+    this.budget?.spend(1);
     const content = data.result?.response ?? '';
     if (!content) {
       throw new Error(`[cfai] empty completion from ${model}`);
@@ -227,8 +230,6 @@ export class CfaAiClient implements LLMProvider {
 
   /** Generate a 768-dim embedding via bge-base-en-v1.5. */
   async generateEmbedding(text: string): Promise<number[]> {
-    this.budget?.spend(1);
-
     const response = await fetch(
       `${CFAI_API_BASE}/${this.envCreds.CF_ACCOUNT_ID}/ai/run/${CFAI_EMBEDDING_MODEL}`,
       {
@@ -237,7 +238,7 @@ export class CfaAiClient implements LLMProvider {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.envCreds.CF_API_TOKEN}`,
         },
-        body: jsonStringify({ text }),
+        body: JSON.stringify({ text }),
       }
     );
 
@@ -246,9 +247,15 @@ export class CfaAiClient implements LLMProvider {
       throw this.classifyResponseError(response.status, text);
     }
 
-    const data = (await response.json()) as {
+    let data: {
       result?: { data?: Array<{ text?: string; data?: number[][] } | number[] | { text?: string; embedding?: number[] }> };
     };
+    try {
+      data = await response.json() as typeof data;
+    } catch {
+      throw new Error('[cfai] invalid JSON response from embedding model');
+    }
+    this.budget?.spend(1);
     const first = data.result?.data?.[0];
     const vector =
       Array.isArray(first)

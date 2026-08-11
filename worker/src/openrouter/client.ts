@@ -104,6 +104,12 @@ export class OpenRouterClient implements LLMProvider {
    * tolerant across models that ignore it.
    */
   private async chat(prompt: string, opts: { json?: boolean } = {}): Promise<string> {
+    if (!this.envCreds.OPENROUTER_API_KEY) {
+      throw new AllKeysExhaustedError(
+        new Error('OpenRouter API key is not configured'),
+        'OpenRouter API key is not configured'
+      );
+    }
     this.budget?.spend(1);
 
     const payload: Record<string, unknown> = {
@@ -137,9 +143,14 @@ export class OpenRouterClient implements LLMProvider {
       throw this.classifyResponseError(response.status, text);
     }
 
-    const data = (await response.json()) as {
+    let data: {
       choices?: Array<{ message?: { content?: string } }>;
     };
+    try {
+      data = await response.json() as typeof data;
+    } catch {
+      throw new Error('[openrouter] invalid JSON response');
+    }
     const content = data.choices?.[0]?.message?.content ?? '';
     if (!content) {
       throw new Error('[openrouter] empty completion');

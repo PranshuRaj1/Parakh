@@ -98,14 +98,17 @@ export function displayScore(raw: number): number {
  * non-alphanumerics, collapse whitespace, cap length. Two phrasings of the
  * same issue ("No newline at end of file" vs "missing newline at EOF") map to
  * the same key so generic + rule-violation duplicates collapse.
+ *
+ * The cap is generous (200 chars) so distinct findings on the same line that
+ * share only a short prefix (e.g. long error messages naming different
+ * variables) are NOT collapsed by the dedupe key.
  */
 export function normalizeMessage(body: string): string {
   return body
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 40);
+    .slice(0, 200);
 }
 
 const SEVERITY_RANK: Record<Severity, number> = {

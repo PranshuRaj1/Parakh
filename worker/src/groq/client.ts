@@ -106,8 +106,8 @@ export class GroqClient implements LLMProvider {
       const apiKey = this.keys[keyIndex];
 
       try {
-        this.budget?.spend(1);
         const result = await fn(apiKey);
+        this.budget?.spend(1);
         this.sharedKeyHint = keyIndex;
         this.cooldowns.clear(keyIndex);
         await this.cooldowns.flush();
@@ -125,6 +125,7 @@ export class GroqClient implements LLMProvider {
           continue;
         }
         if (!isRateLimitError(err)) {
+          await this.cooldowns.flush();
           throw err;
         }
         lastError = err as Error;

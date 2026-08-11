@@ -14,8 +14,8 @@
  * Caught by the review pipeline to trigger PAUSED_RATE_LIMITED status.
  */
 export class AllKeysExhaustedError extends Error {
-  constructor(public lastError: Error, message?: string) {
-    super(message ?? `All Gemini API keys exhausted. Last error: ${lastError.message}`);
+  constructor(public lastError: Error | null | undefined, message?: string) {
+    super(message ?? `All API keys exhausted. Last error: ${lastError?.message ?? 'unknown'}`);
     this.name = 'AllKeysExhaustedError';
   }
 }
@@ -28,11 +28,11 @@ export class AllKeysExhaustedError extends Error {
  * the review should park (FAILED) and wait for the user to re-trigger.
  */
 export class DailyQuotaExhaustedError extends AllKeysExhaustedError {
-  constructor(lastError: Error) {
+  constructor(lastError: Error | null | undefined) {
     super(
       lastError,
       `All provider API keys have exhausted their daily quota (free-tier). ` +
-      `Last error: ${lastError.message}`
+      `Last error: ${lastError?.message ?? 'unknown'}`
     );
     this.name = 'DailyQuotaExhaustedError';
   }
@@ -44,7 +44,7 @@ export class DailyQuotaExhaustedError extends AllKeysExhaustedError {
  * Parse the key pool from environment.
  * Prefers GEMINI_API_KEYS (comma-separated), falls back to GEMINI_API_KEY.
  */
-export function getKeyPool(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY: string }): string[] {
+export function getKeyPool(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY?: string }): string[] {
   return parseKeyPool(env.GEMINI_API_KEYS, env.GEMINI_API_KEY);
 }
 
@@ -53,7 +53,7 @@ export function getKeyPool(env: { GEMINI_API_KEYS?: string; GEMINI_API_KEY: stri
  * Prefers GROQ_API_KEYS (comma-separated), falls back to GROQ_API_KEY.
  */
 export function getGroqKeyPool(env: { GROQ_API_KEYS?: string; GROQ_API_KEY?: string }): string[] {
-  return parseKeyPool(env.GROQ_API_KEYS, env.GROQ_API_KEY ?? '');
+  return parseKeyPool(env.GROQ_API_KEYS, env.GROQ_API_KEY);
 }
 
 /**
@@ -66,7 +66,10 @@ function parseKeyPool(keysEnv?: string, singleKey?: string): string[] {
     const keys = keysEnv.split(',').map(k => k.trim()).filter(Boolean);
     if (keys.length > 0) return keys;
   }
-  return [singleKey ?? ''];
+  if (singleKey && singleKey.trim() !== '') {
+    return [singleKey];
+  }
+  return [];
 }
 
 // ─── Rate Limit Detection ────────────────────────────────────────────────────
@@ -76,7 +79,7 @@ function parseKeyPool(keysEnv?: string, singleKey?: string): string[] {
  * Covers the known error message patterns from the @google/generative-ai SDK.
  */
 export function isRateLimitError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
+  if (!err || !(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
   return msg.includes('429')
     || msg.includes('quota')
@@ -110,7 +113,7 @@ export const DAILY_QUOTA_PAUSE_AFTER_MS = 12 * 60 * 60 * 1000; // 12 hours
  * `error.status` carried into the message by the provider wrappers.
  */
 export function isDailyQuotaError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
+  if (!err || !(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
   const quotaExceeded = msg.includes('quotaexceeded')
     || msg.includes('quota exceeded')
@@ -131,7 +134,7 @@ export function isDailyQuotaError(err: unknown): boolean {
  * rotation loop should skip the offending key instead of aborting the call.
  */
 export function isModelUnavailableError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
+  if (!err || !(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
   return msg.includes('404')
     || msg.includes('not found')
