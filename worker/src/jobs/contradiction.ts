@@ -40,7 +40,8 @@ import type { Env } from '../index.js';
  */
 export async function executeContradictionJob(
   payload: ContradictionJobPayload,
-  env: Env
+  env: Env,
+  attempts = 1
 ): Promise<void> {
   const { owner, repo, prNumber, ruleId, ruleBody, embedding } = payload;
   const fullRepo = `${owner}/${repo}`;

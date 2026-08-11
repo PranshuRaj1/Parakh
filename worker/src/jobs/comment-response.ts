@@ -10,7 +10,8 @@ import { createRedisGet, createRedisSet } from '../redis.js';
 
 export async function executeCommentResponseJob(
   payload: CommentJobPayload,
-  env: Env
+  env: Env,
+  attempts = 1
 ): Promise<void> {
   const {
     installationId,

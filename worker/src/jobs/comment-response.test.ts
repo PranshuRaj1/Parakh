@@ -30,6 +30,7 @@ vi.mock('../llm/factory.js', () => ({
       classifyRelationship: vi.fn(),
       classifyPriority: vi.fn(),
       draftReply: vi.fn(),
+      generateEmbedding: vi.fn(),
     },
   }),
 }));
@@ -93,6 +94,8 @@ function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_c
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  classifyIntentMock.mockReset();
+  draftReplyMock.mockReset();
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
