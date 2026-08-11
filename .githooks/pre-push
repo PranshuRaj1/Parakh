@@ -5,9 +5,16 @@
 # wiring is broken (the incident where reviews stopped being created after
 # webhooks were deployed), the push is aborted so it never reaches production.
 #
+# Also runs the memory-layer smoke test: a @parakh CORRECTION comment must
+# become an ACTIVE rule, get a "✅ Learned" reply, and enqueue a contradiction
+# check. This guards the memory incidents where corrections silently never
+# became rules (intent misclassification + embedding dimension mismatch).
+#
 # Enabled repo-wide via `git config core.hooksPath .githooks` (see root
-# package.json "setup" / "test:pipeline" scripts). To run manually:
+# package.json "setup" / "test:pipeline" / "test:memory" scripts). To run
+# manually:
 #   npm run test:pipeline
+#   npm run test:memory
 echo "▶ Running pipeline smoke test before push..."
 npm run test:pipeline
 status=$?
@@ -18,4 +25,15 @@ if [ $status -ne 0 ]; then
   exit 1
 fi
 echo "✓ Pipeline smoke test passed."
+
+echo "▶ Running memory-layer smoke test before push..."
+npm run test:memory
+status=$?
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "✘ Memory-layer smoke test FAILED — push aborted."
+  echo "  Fix the broken comment→rule memory wiring before pushing."
+  exit 1
+fi
+echo "✓ Memory-layer smoke test passed."
 exit 0

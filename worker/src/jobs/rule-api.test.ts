@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { mockGenerateEmbedding, mockClassifyPriority } = vi.hoisted(() => ({
+const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError } = vi.hoisted(() => ({
   mockGenerateEmbedding: vi.fn(),
   mockClassifyPriority: vi.fn(),
+  mockConsoleError: vi.fn(),
 }));
 
 // Stub the LLM factory so rule creation can run without a real model call:
@@ -45,6 +46,8 @@ function makeCtx() {
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(mockConsoleError);
+  mockConsoleError.mockReset();
   mocked.executeContradictionJob.mockReset().mockResolvedValue(undefined);
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-1' } as never);
   mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
@@ -70,6 +73,21 @@ describe('handleCreateRule', () => {
   it('classifies priority when not supplied', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
     expect(mockClassifyPriority).toHaveBeenCalledWith('Never store secrets');
+  });
+
+  it('fails open to normal priority when priority classification errors', async () => {
+    mockClassifyPriority.mockRejectedValue(new Error('timeout'));
+
+    await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ priority: 'normal' }),
+      env
+    );
+    expect(mockConsoleError).toHaveBeenCalledWith(
+      expect.stringContaining('Priority classification failed for "Never store secrets" (repo: acme/app)'),
+      expect.objectContaining({ message: 'timeout' })
+    );
   });
 
   it('inserts the rule with the generated embedding and enqueues a contradiction check', async () => {

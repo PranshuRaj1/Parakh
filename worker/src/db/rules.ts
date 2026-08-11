@@ -7,6 +7,7 @@
 
 import { getDb } from './client.js';
 import type { Rule, RuleKind, RuleStatus, RuleRelationshipRecord, RulePriority } from '@parakh/shared';
+import { EMBEDDING_DIMENSIONS } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,21 @@ export async function getRuleById(
 }
 
 /**
+ * Fail-fast embedding dimension guard: the rules.embedding column is
+ * vector(768), so any other width would only fail inside Neon at runtime.
+ * Validate here so provider/embedding mismatches (e.g. a 1024-dim model)
+ * surface as a clear error at the call site instead of a Neon
+ * "expected 768 dimensions" runtime failure.
+ */
+function assertEmbeddingDimensions(embedding: number[], operation: string): void {
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `[rules] Embedding dimension mismatch in ${operation}: got ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`
+    );
+  }
+}
+
+/**
  * Insert a new rule with its embedding.
  */
 export async function insertRule(
@@ -74,6 +90,7 @@ export async function insertRule(
   },
   env: EnvWithDB
 ): Promise<Rule> {
+  assertEmbeddingDimensions(rule.embedding, 'insertRule');
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${rule.embedding.join(',')}]`;
   const rows = await sql`
@@ -152,6 +169,7 @@ export async function findSimilarRules(
   env: EnvWithDB,
   excludeRuleId?: string
 ): Promise<(Rule & { similarity: number })[]> {
+  assertEmbeddingDimensions(embedding, 'findSimilarRules');
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${embedding.join(',')}]`;
 

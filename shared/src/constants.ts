@@ -18,13 +18,13 @@ export const SEVERITY_TAXONOMY: Record<Severity, { weight: number; definition: s
     examples: 'Off-by-one in pagination, race condition, security-tagged convention violated',
   },
   MEDIUM: {
-    weight: -0.5,
-    definition: 'Edge-case bug, weak error handling, perf issue, or violates a normal-priority ACTIVE rule',
+    weight: -1.5,
+    definition: 'Edge-case bug, weak error handling, perf issue, or violates a normal-priority ACTIVE rule. Penalty saturates with volume (max 1.5).',
     examples: 'Unbounded loop, missing null check on rare input, standard convention violated',
   },
   LOW: {
-    weight: -0.1,
-    definition: 'Style, naming, readability',
+    weight: -0.4,
+    definition: 'Style, naming, readability. Penalty saturates with volume (max 0.4).',
     examples: 'Unclear variable name, missing comment',
   },
 };
@@ -74,6 +74,17 @@ export const REVIEW_LOCK_TTL_SECONDS = 300; // 5 minutes
 
 /** Max files per Gemini batch within one worker invocation. */
 export const MAX_FILES_PER_BATCH = 5;
+
+// ─── Memory / Rule Embeddings ────────────────────────────────────────────────
+
+/**
+ * Width of the rule embedding vector. Must match the `vector(768)`
+ * rules.embedding column (db/migrations/001_initial.sql), Gemini's
+ * text-embedding-004, and CF Workers AI bge-base-en-v1.5. Any provider that
+ * returns a different width will be rejected by insertRule's guard so the
+ * mismatch surfaces early instead of failing inside Neon at runtime.
+ */
+export const EMBEDDING_DIMENSIONS = 768;
 
 // ─── Contradiction Engine ────────────────────────────────────────────────────
 

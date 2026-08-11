@@ -35,9 +35,12 @@ export function buildReviewPrompt(
     ? `
 ## Active Coding Rules for This Repository
 
-The following rules are active coding standards. If any code in the diff violates a rule,
-report it as a rule finding with the rule's ID. Do NOT assign a severity to rule findings —
-the system will assign severity based on the rule's priority setting.
+The following rules are active coding standards. Only report a rule finding when the code
+genuinely violates one of the rules listed below — never invent a violation of a rule, and
+never reference a rule that is not in this list.
+
+Report each violation as a rule finding with the rule's ID. Do NOT assign a severity to rule
+findings — the system will assign severity based on the rule's priority setting.
 
 ${enforceRules.map((r) => `- **[${r.id}]** (priority: ${r.priority}): ${r.body}`).join('\n')}
 `
@@ -62,7 +65,21 @@ Classify each GENERIC finding (not tied to a stored rule) into exactly one of th
 
 | Severity | Weight | Definition | Examples |
 |---|---|---|---|
-${severityTable}
+| ${severityTable}
+
+## What NOT to Flag
+
+The following are explicitly NOT review findings. Do NOT report them as generic findings OR
+as rule findings:
+
+- Missing newline at the end of a file
+- Trailing whitespace or trailing commas
+- Generic "this comment could be clearer" style commentary
+- Variable or function renames purely for naming style — only suggest a rename when the name is
+  actively misleading and hurts comprehension
+
+LOW findings should be reserved for issues that materially hurt readability or maintainability,
+not pure style preferences. When in doubt, do not report it.
 
 ${rulesSection}
 

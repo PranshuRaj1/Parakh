@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
+    "test:memory": "vitest run worker/src/smoke/memory-smoke.test.ts",
     "setup:hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

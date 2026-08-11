@@ -24,6 +24,22 @@ function makeProvider(
   };
 }
 
+/** Fake provider that DOES implement generateEmbedding, per an onEmbed script. */
+function makeEmbeddingProvider(
+  name: ProviderName,
+  model: string,
+  onEmbed: 'ok' | 'exhausted' | 'boom'
+): LLMProvider {
+  return {
+    ...makeProvider(name, model, 'ok'),
+    generateEmbedding: async () => {
+      if (onEmbed === 'exhausted') throw new AllKeysExhaustedError(new Error(`${name} embedding rate-limited`));
+      if (onEmbed === 'boom') throw new Error(`${name} embedding boom`);
+      return Array(768).fill(0.1);
+    },
+  };
+}
+
 describe('resolveProviderChain', () => {
   it('defaults to gemini -> groq, then appends other providers in priority order', () => {
     const chain = resolveProviderChain({} as never);
@@ -81,5 +97,44 @@ describe('LLMClient chain routing', () => {
     const ok = makeProvider('groq', 'q', 'ok');
     const client = new LLMClient([boom, ok]);
     await Promise.allSettled([client.reviewDiff('f.ts', 'd', [])]);
+  });
+});
+
+describe('LLMClient generateEmbedding chain', () => {
+  it('skips providers without generateEmbedding and serves from the first embed-capable one', async () => {
+    // OpenRouter has no embedding endpoint — the chain must skip it, not abort.
+    const noEmbed = makeProvider('openrouter', 'o', 'ok');
+    const yesEmbed = makeEmbeddingProvider('cfai', 'c', 'ok');
+    const client = new LLMClient([noEmbed, yesEmbed]);
+
+    const vector = await client.generateEmbedding('never flag EOF newlines');
+    expect(vector).toHaveLength(768);
+    expect(client.servedProvider).toBe('cfai');
+  });
+
+  it('falls through on exhaustion to the next embed-capable provider', async () => {
+    const exhausted = makeEmbeddingProvider('gemini', 'g', 'exhausted');
+    const fallback = makeEmbeddingProvider('groq', 'q', 'ok');
+    const client = new LLMClient([exhausted, fallback]);
+
+    const vector = await client.generateEmbedding('x');
+    expect(vector).toHaveLength(768);
+    expect(client.servedProvider).toBe('groq');
+  });
+
+  it('propagates non-exhaustion embedding errors without trying further providers', async () => {
+    const broken = makeEmbeddingProvider('gemini', 'g', 'boom');
+    const fine = makeEmbeddingProvider('groq', 'q', 'ok');
+    const client = new LLMClient([broken, fine]);
+
+    await expect(client.generateEmbedding('x')).rejects.toThrow('gemini embedding boom');
+  });
+
+  it('throws the last exhaustion when no configured provider can embed', async () => {
+    const a = makeEmbeddingProvider('gemini', 'g', 'exhausted');
+    const b = makeProvider('groq', 'q', 'ok'); // no generateEmbedding at all
+    const client = new LLMClient([a, b]);
+
+    await expect(client.generateEmbedding('x')).rejects.toBeInstanceOf(AllKeysExhaustedError);
   });
 });
