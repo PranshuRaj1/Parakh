@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import { CheckCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
-import type { Finding, Review } from '@parakh/shared';
+import type { Review } from '@parakh/shared';
 
 export default async function PullsPage({
   searchParams,
@@ -30,7 +30,7 @@ export default async function PullsPage({
     <div className="space-y-8 animate-in fade-in duration-500 pt-8 max-w-[1200px] mx-auto px-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-white font-anybody" style={{ letterSpacing: '-0.02em' }}>Pull Requests</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-white font-anybody">Pull Requests</h1>
           <p className="mt-2 text-sm text-[#c0c9c0] font-dm-sans">
             Recent reviews for <strong className="font-semibold text-white">{repo}</strong>
           </p>
@@ -69,8 +69,8 @@ export default async function PullsPage({
                       ? 'text-[#ffb4ab]' 
                       : 'text-[#f0e1c2]';
                 
-                const findingsCount = (review.findings as unknown as Finding[])?.length || 0;
-                const ruleViolations = (review.findings as unknown as Finding[])?.filter(f => f.rule_id).length || 0;
+                const findingsCount = review.findings?.length || 0;
+                const ruleViolations = review.findings?.filter(f => f.rule_id).length || 0;
 
                 return (
                   <li key={review.id} className="py-5 hover:bg-white/5 transition-colors px-4 -mx-4 rounded-lg group">

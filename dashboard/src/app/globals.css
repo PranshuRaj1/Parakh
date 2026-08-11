@@ -8,6 +8,7 @@
 @theme {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --font-sans: var(--font-dm-sans), sans-serif;
   --font-anybody: var(--font-anybody), sans-serif;
   --font-dm-sans: var(--font-dm-sans), sans-serif;
   --font-space-mono: var(--font-space-mono), monospace;
@@ -30,6 +31,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 .glass-card {

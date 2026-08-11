@@ -4,14 +4,28 @@ import Link from 'next/link';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import { BrainCircuit, GitPullRequest, LogOut } from 'lucide-react';
+import type { ReactNode } from 'react';
 import Logo from './Logo';
+
+function NavLink({ href, active, children }: { href: string; active: boolean; children: ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex items-center px-1 text-sm font-medium transition-colors ${
+        active ? 'text-[var(--primary-color)]' : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export default function Navbar() {
   const { data: session, status } = useSession();
   const pathname = usePathname();
 
   return (
-    <nav className="glass-card mb-8" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, padding: '16px 24px', borderTop: 'none' }}>
+    <nav className="glass-card mb-8 rounded-t-none border-t-0 px-6 py-4">
       <div className="flex justify-between items-center h-12">
         <div className="flex items-center">
           <div className="flex-shrink-0 flex items-center">
@@ -21,28 +35,14 @@ export default function Navbar() {
           </div>
           {session && (
             <div className="hidden sm:ml-8 sm:flex sm:space-x-8">
-              <Link
-                href="/memory"
-                className={`inline-flex items-center px-1 text-sm font-medium transition-colors ${
-                  pathname === '/memory'
-                    ? 'text-[var(--primary-color)]'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
+              <NavLink href="/memory" active={pathname === '/memory'}>
                 <BrainCircuit className="w-4 h-4 mr-2" />
                 Memory
-              </Link>
-              <Link
-                href="/pulls"
-                className={`inline-flex items-center px-1 text-sm font-medium transition-colors ${
-                  pathname === '/pulls'
-                    ? 'text-[var(--primary-color)]'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
+              </NavLink>
+              <NavLink href="/pulls" active={pathname === '/pulls'}>
                 <GitPullRequest className="w-4 h-4 mr-2" />
                 Pulls
-              </Link>
+              </NavLink>
             </div>
           )}
         </div>
@@ -50,7 +50,7 @@ export default function Navbar() {
           {status === 'loading' ? null : session ? (
             <div className="flex items-center gap-4">
               <span className="text-sm technical-data text-gray-400">
-                {(session.user as any)?.login || session.user?.name}
+                {session.user.login || session.user.name}
               </span>
               <button
                 onClick={() => signOut()}

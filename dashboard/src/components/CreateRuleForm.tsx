@@ -45,7 +45,7 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" aria-label="Manually add a rule">
       {error && <div className="mb-4 text-sm text-[#ffdad6] bg-[#93000a]/20 p-3 rounded-md border border-[#93000a]">{error}</div>}
       <div className="space-y-4">
         <div>
@@ -58,7 +58,7 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="e.g. Always use early returns instead of nested if statements."
-            className="w-full bg-[#000000] border border-white/20 rounded-md px-3 py-2 text-white focus:outline-none focus:border-[#00FF8C] focus:ring-1 focus:ring-[#00FF8C] transition-all font-dm-sans resize-none"
+            className="w-full bg-[#000000] border border-white/20 rounded-md px-3 py-2 text-white focus:outline-none focus:border-[#00FF8C] focus:ring-1 focus:ring-[#00FF8C] transition-all font-dm-sans resize-y"
             required
           />
         </div>

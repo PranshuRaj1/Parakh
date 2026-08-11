@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { ReviewStatus } from '@parakh/shared';
 
@@ -33,27 +33,45 @@ interface ProgressResponse {
 
 export function ReviewStepper({ reviewId }: { reviewId: string }) {
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
+    mountedRef.current = true;
+
+    const schedule = (delay: number) => {
+      if (!mountedRef.current) return;
+      timeoutIdRef.current = setTimeout(fetchProgress, delay);
+    };
 
     const fetchProgress = async () => {
+      if (!mountedRef.current) return;
       try {
         const res = await fetch(`/api/reviews/${reviewId}/progress`);
-        if (!res.ok) return;
+        if (!mountedRef.current) return;
+        if (!res.ok) {
+          // Transient failure (e.g. 5xx / rate-limit): keep polling with a
+          // short backoff instead of silently stopping progress updates.
+          schedule(5000);
+          return;
+        }
         const data = await res.json();
         setProgress(data);
 
         if (['QUEUED', 'RUNNING'].includes(data.status)) {
-          timeoutId = setTimeout(fetchProgress, 3000);
+          schedule(3000);
         }
       } catch (err) {
         console.error('Polling error:', err);
+        if (mountedRef.current) schedule(5000);
       }
     };
 
     fetchProgress();
-    return () => clearTimeout(timeoutId);
+    return () => {
+      mountedRef.current = false;
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    };
   }, [reviewId]);
 
   if (!progress) {
@@ -139,7 +157,7 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
                    if (step.id === 'REVIEWING_FILES' && progress.stageReasonDetail) {
                       detailText = progress.stageReasonDetail;
                    } else if (progress.stepDetail) {
-                      const { completedCount, totalCount } = progress.stepDetail as any;
+                      const { completedCount, totalCount } = progress.stepDetail as { completedCount?: number; totalCount?: number };
                       if (completedCount !== undefined && totalCount !== undefined) {
                          detailText = `${completedCount} / ${totalCount} files`;
                       }

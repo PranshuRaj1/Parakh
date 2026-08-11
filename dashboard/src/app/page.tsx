@@ -1,6 +1,12 @@
 import Link from 'next/link';
+import { getServerSession } from 'next-auth';
 
-export default function Home() {
+export default async function Home() {
+  const session = await getServerSession();
+  const userName = session?.user?.name || session?.user?.email || 'there';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+
   return (
     <div className="flex w-full min-h-[calc(100vh-64px)]">
       
@@ -11,7 +17,7 @@ export default function Home() {
             PR
           </div>
           <div>
-            <div className="text-white text-lg font-semibold leading-tight">PranshuRaj1</div>
+            <div className="text-white text-lg font-semibold leading-tight">{userName}</div>
             <div className="text-[#c0c9c0] text-xs font-dm-sans">Parakh</div>
           </div>
         </div>
@@ -63,7 +69,7 @@ export default function Home() {
         <section className="relative rounded-2xl overflow-hidden mb-8 border border-white/10 glass-card">
           <div className="absolute inset-0 bg-gradient-to-r from-black/80 to-transparent"></div>
           <div className="relative z-10 p-12 py-16">
-            <h1 className="font-anybody text-4xl font-bold text-white mb-3 tracking-tight" style={{ letterSpacing: '-0.02em' }}>Good morning, Pranshu.</h1>
+            <h1 className="font-anybody text-4xl font-bold text-white mb-3 tracking-tight">{greeting}, {userName}.</h1>
             <p className="text-[#c0c9c0] font-dm-sans text-lg max-w-2xl">
               Your intelligence dashboard is ready. All repositories are synced and monitoring is active.
             </p>

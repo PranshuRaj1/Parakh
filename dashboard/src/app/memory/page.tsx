@@ -31,6 +31,8 @@ export default async function MemoryPage({
 
   const activeRules = rules.filter(r => r.status === 'ACTIVE');
   const supersededRules = rules.filter(r => r.status === 'SUPERSEDED');
+  const userName = session.user?.name || session.user?.email || 'PranshuRaj1';
+  const shortId = (id: string) => id.substring(0, 8);
 
   return (
     <div className="flex w-full min-h-[calc(100vh-64px)]">
@@ -42,7 +44,7 @@ export default async function MemoryPage({
             PR
           </div>
           <div>
-            <div className="text-white text-lg font-semibold leading-tight">PranshuRaj1</div>
+            <div className="text-white text-lg font-semibold leading-tight">{userName}</div>
             <div className="text-[#c0c9c0] text-xs font-dm-sans">Parakh</div>
           </div>
         </div>
@@ -99,9 +101,24 @@ export default async function MemoryPage({
             {/* Left Column: Active Rules & History */}
             <div className="lg:col-span-8 space-y-8">
               {/* Section Header */}
-              <div>
-                <h1 className="font-anybody text-3xl font-bold text-white mb-2 tracking-tight">Repository Memory</h1>
-                <p className="font-dm-sans text-[#c0c9c0] text-lg">The Contradiction Engine curates semantic rules across your codebase to enforce architectural consistency.</p>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h1 className="font-anybody text-3xl font-bold text-white mb-2 tracking-tight">Repository Memory</h1>
+                  <p className="font-dm-sans text-[#c0c9c0] text-lg">Rules learned and enforced for <strong className="font-semibold text-white">{repo}</strong></p>
+                </div>
+                <form className="flex gap-2" method="GET">
+                  <input
+                    type="text"
+                    name="repo"
+                    defaultValue={repo}
+                    placeholder="owner/repo"
+                    aria-label="Repository"
+                    className="rounded-md border border-[#2a2a2a] bg-[#131313] text-white shadow-sm focus:border-[#00FF8C] focus:ring-[#00FF8C] focus:outline-none sm:text-sm p-2 transition-all font-space-mono"
+                  />
+                  <button type="submit" className="px-4 py-2 bg-[#3D3B4F] text-white rounded-md text-sm font-bold font-space-mono hover:brightness-110 transition-colors">
+                    Switch
+                  </button>
+                </form>
               </div>
 
               {/* Active Rules */}
@@ -125,7 +142,7 @@ export default async function MemoryPage({
                         <div key={rule.id} className="glass-card rounded-lg p-5 flex flex-col md:flex-row md:items-start justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center space-x-3 mb-2">
-                              <span className="font-space-mono font-bold text-[#b6f0c8] bg-[#b6f0c8]/10 px-2 py-0.5 rounded border border-[#b6f0c8]/20">#{rule.id}</span>
+                              <span className="font-space-mono font-bold text-[#b6f0c8] bg-[#b6f0c8]/10 px-2 py-0.5 rounded border border-[#b6f0c8]/20" title={rule.id}>#{shortId(rule.id)}</span>
                               <h3 className="font-dm-sans text-lg text-white font-semibold">{rule.body.length > 50 ? `${rule.body.substring(0, 50)}...` : rule.body}</h3>
                             </div>
                             <p className="font-dm-sans text-[#c0c9c0] mb-3">{rule.body}</p>
@@ -140,7 +157,7 @@ export default async function MemoryPage({
                                   return (
                                     <span key={rel.id} className="inline-flex items-center gap-1 font-dm-sans text-xs font-medium text-[#c5c0ff] bg-[#413996]/20 px-2 py-1 rounded border border-[#413996]/30 mr-2">
                                       <span className="material-symbols-outlined text-[14px]">account_tree</span>
-                                      <span>{isFrom ? 'Refines' : 'Refined by'} Rule #{otherId}</span>
+                                      <span>{isFrom ? 'Refines' : 'Refined by'} Rule #{shortId(otherId)}</span>
                                     </span>
                                   );
                                 })}
@@ -193,12 +210,12 @@ export default async function MemoryPage({
                       return (
                         <div key={rule.id} className="flex items-center justify-between py-2 border-b border-white/5 gap-4">
                           <div className="flex items-center gap-3 overflow-hidden">
-                            <span className="font-space-mono text-[#c0c9c0] line-through flex-shrink-0">#{rule.id}</span>
+                            <span className="font-space-mono text-[#c0c9c0] line-through flex-shrink-0" title={rule.id}>#{shortId(rule.id)}</span>
                             <span className="font-dm-sans text-[#c0c9c0] line-through truncate">{rule.body}</span>
                           </div>
                           {replacingRule && (
                             <span className="font-dm-sans text-xs text-[#8a938b] italic whitespace-nowrap flex-shrink-0">
-                              Replaced by Rule #{replacingRule.id}
+                              Replaced by Rule #{shortId(replacingRule.id)}
                             </span>
                           )}
                         </div>
