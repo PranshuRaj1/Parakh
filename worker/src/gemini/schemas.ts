@@ -136,4 +136,3 @@ export const priorityResponseSchema = {
   },
   required: ['priority'],
 };
-

@@ -19,12 +19,8 @@ import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } f
 import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
+import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
-
-/** Keep logged rule bodies bounded so a long rule can't bloat logs or leak PII. */
-function truncateBody(body: string, max = 80): string {
-  return body.length > max ? `${body.slice(0, max)}…` : body;
-}
 
 /**
  * Handle a rule creation request from the dashboard.
@@ -57,7 +53,7 @@ export async function handleCreateRule(
     } catch (err) {
       priority = 'normal';
       console.error(
-        `[rule-api] Priority classification failed for "${truncateBody(request.body)}" — defaulting to normal:`,
+        `[rule-api] Priority classification failed for "${truncateBody(request.body)}" (repo: ${request.repo}) — defaulting to normal:`,
         err
       );
     }

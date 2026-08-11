@@ -17,12 +17,8 @@
 import type { ContradictionJobPayload, RuleKind, RulePriority } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { insertRule } from '../db/rules.js';
+import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
-
-/** Keep logged rule bodies bounded so a long rule can't bloat logs or leak PII. */
-function truncateBody(body: string, max = 80): string {
-  return body.length > max ? `${body.slice(0, max)}…` : body;
-}
 
 /**
  * Phrasing that marks a correction as a SUPPRESSION directive rather than an

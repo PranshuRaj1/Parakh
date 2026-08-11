@@ -60,6 +60,21 @@ export async function getRuleById(
 }
 
 /**
+ * Fail-fast embedding dimension guard: the rules.embedding column is
+ * vector(768), so any other width would only fail inside Neon at runtime.
+ * Validate here so provider/embedding mismatches (e.g. a 1024-dim model)
+ * surface as a clear error at the call site instead of a Neon
+ * "expected 768 dimensions" runtime failure.
+ */
+function assertEmbeddingDimensions(embedding: number[], operation: string): void {
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `[rules] Embedding dimension mismatch in ${operation}: got ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`
+    );
+  }
+}
+
+/**
  * Insert a new rule with its embedding.
  */
 export async function insertRule(
@@ -75,15 +90,7 @@ export async function insertRule(
   },
   env: EnvWithDB
 ): Promise<Rule> {
-  // Fail-fast dimension guard: the rules.embedding column is vector(768), so
-  // any other width would only fail inside Neon at runtime. Validate here so
-  // provider/embedding mismatches (e.g. a 1024-dim model) surface as a clear
-  // error at the point of insert instead of a Neon "expected 768 dimensions".
-  if (rule.embedding.length !== EMBEDDING_DIMENSIONS) {
-    throw new Error(
-      `[rules] Embedding dimension mismatch: got ${rule.embedding.length}, expected ${EMBEDDING_DIMENSIONS}`
-    );
-  }
+  assertEmbeddingDimensions(rule.embedding, 'insertRule');
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${rule.embedding.join(',')}]`;
   const rows = await sql`
@@ -162,13 +169,7 @@ export async function findSimilarRules(
   env: EnvWithDB,
   excludeRuleId?: string
 ): Promise<(Rule & { similarity: number })[]> {
-  // Same fail-fast dimension guard as insertRule: a wrong-width embedding would
-  // only fail inside Neon at runtime, so surface a clear error here instead.
-  if (embedding.length !== EMBEDDING_DIMENSIONS) {
-    throw new Error(
-      `[rules] Embedding dimension mismatch: got ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`
-    );
-  }
+  assertEmbeddingDimensions(embedding, 'findSimilarRules');
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${embedding.join(',')}]`;
 

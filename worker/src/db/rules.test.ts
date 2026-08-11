@@ -49,7 +49,7 @@ describe('insertRule embedding dimension guard', () => {
     await expect(
       insertRule(ruleInput(Array(1024).fill(0.1)), env)
     ).rejects.toThrow(
-      new RegExp(`Embedding dimension mismatch: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
+      new RegExp(`Embedding dimension mismatch in insertRule: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
     );
     expect(mockedGetDb).not.toHaveBeenCalled();
   });
@@ -101,7 +101,7 @@ describe('findSimilarRules', () => {
     await expect(
       findSimilarRules('acme/app', Array(1024).fill(0.1), 0.7, 5, env)
     ).rejects.toThrow(
-      new RegExp(`Embedding dimension mismatch: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
+      new RegExp(`Embedding dimension mismatch in findSimilarRules: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
     );
     expect(mockedGetDb).not.toHaveBeenCalled();
   });
