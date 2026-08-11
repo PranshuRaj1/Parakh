@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryCooldownStore, RedisCooldownStore } from './cooldown-store.js';
+import { MemoryCooldownStore, RedisCooldownStore, COOLDOWN_HASH_TTL_SECONDS } from './cooldown-store.js';
 
 const FIXED_NOW = 1_700_000_000_000;
 
@@ -195,6 +195,6 @@ describe('RedisCooldownStore', () => {
     await store.flush();
     const expire = backend.calls.find(c => c.op === 'expire');
     expect(expire?.key).toBe('test-key');
-    expect(expire?.value).toBe(String(7 * 24 * 60 * 60));
+    expect(expire?.value).toBe(String(COOLDOWN_HASH_TTL_SECONDS));
   });
 });

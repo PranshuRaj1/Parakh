@@ -1,5 +1,13 @@
 import type { Env } from './index.js';
 
+async function parseRedisResponse(response: Response, op: string, key: string): Promise<{ result: unknown }> {
+  try {
+    return (await response.json()) as { result: unknown };
+  } catch {
+    throw new Error(`Redis ${op} failed: invalid JSON response for key ${key}`);
+  }
+}
+
 export function createRedisGet(env: Env): (key: string) => Promise<string | null> {
   return async (key: string) => {
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${encodeURIComponent(key)}`, {
@@ -8,8 +16,8 @@ export function createRedisGet(env: Env): (key: string) => Promise<string | null
     if (!response.ok) {
       throw new Error(`Redis GET failed (${response.status}) for key ${key}`);
     }
-    const data = (await response.json()) as { result: string | null };
-    return data.result;
+    const { result } = await parseRedisResponse(response, 'GET', key);
+    return result as string | null;
   };
 }
 
@@ -22,7 +30,7 @@ export function createRedisSet(env: Env): (key: string, value: string, opts?: { 
     if (!response.ok) {
       throw new Error(`Redis SET failed (${response.status}) for key ${key}`);
     }
-    return response.json();
+    return parseRedisResponse(response, 'SET', key);
   };
 }
 
@@ -40,13 +48,14 @@ export function createRedisHGetAll(env: Env): (key: string) => Promise<Record<st
     if (!response.ok) {
       throw new Error(`Redis HGETALL failed (${response.status}) for key ${key}`);
     }
-    const data = (await response.json()) as { result: string[] | null };
-    if (!data.result || data.result.length === 0) return null;
+    const { result } = await parseRedisResponse(response, 'HGETALL', key);
+    if (!result || !Array.isArray(result) || result.length === 0) return null;
     // HGETALL returns [field1, value1, field2, value2, ...]. Guard against an
     // odd-length payload so the trailing field never maps to `undefined`.
     const obj: Record<string, string> = {};
-    for (let i = 0; i + 1 < data.result.length; i += 2) {
-      obj[data.result[i]] = data.result[i + 1];
+    const fields = result as string[];
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      obj[fields[i]] = fields[i + 1];
     }
     return obj;
   };
@@ -65,7 +74,7 @@ export function createRedisHSet(env: Env): (key: string, field: string, value: s
     if (!response.ok) {
       throw new Error(`Redis HSET failed (${response.status}) for key ${key}`);
     }
-    return response.json();
+    return parseRedisResponse(response, 'HSET', key);
   };
 }
 
@@ -81,7 +90,7 @@ export function createRedisHDel(env: Env): (key: string, field: string) => Promi
     if (!response.ok) {
       throw new Error(`Redis HDEL failed (${response.status}) for key ${key}`);
     }
-    return response.json();
+    return parseRedisResponse(response, 'HDEL', key);
   };
 }
 
@@ -98,7 +107,7 @@ export function createRedisExpire(env: Env): (key: string, seconds: number) => P
     if (!response.ok) {
       throw new Error(`Redis EXPIRE failed (${response.status}) for key ${key}`);
     }
-    return response.json();
+    return parseRedisResponse(response, 'EXPIRE', key);
   };
 }
 
@@ -115,8 +124,8 @@ export function createRedisSetNX(env: Env): (key: string, value: string, exSecon
     if (!response.ok) {
       throw new Error(`Redis SETNX failed (${response.status}) for key ${key}`);
     }
-    const data = (await response.json()) as { result: string | null };
-    return data.result === 'OK';
+    const { result } = await parseRedisResponse(response, 'SET', key);
+    return result === 'OK';
   };
 }
 

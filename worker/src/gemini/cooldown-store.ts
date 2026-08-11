@@ -10,6 +10,12 @@
  * review B must also skip them rather than fire 7 doomed requests.
  */
 
+/** TTL for the persisted cooldown hash — parked keys stay until cooldowns are stale. */
+export const COOLDOWN_HASH_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/** Max in-flight Redis writes per flush round — bounds connection usage. */
+const FLUSH_CONCURRENCY = 5;
+
 export interface CooldownEntry {
   /** Epoch-ms timestamp until which the key may not be retried. */
   until: number;
@@ -116,18 +122,21 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     const changes = new Map(this.dirty);
     this.dirty.clear();
     try {
-      await Promise.all(
-        [...changes].map(([keyIndex, entry]) =>
-          entry === null
-            ? this.options.redisHDel(this.options.redisKey, String(keyIndex))
-            : this.options.redisHSet(
-                this.options.redisKey,
-                String(keyIndex),
-                JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
-              )
-        )
-      );
-      await this.options.redisExpire(this.options.redisKey, this.options.ttlSeconds ?? 7 * 24 * 60 * 60);
+      const apply = ([keyIndex, entry]: [number, CooldownEntry | null]) =>
+        entry === null
+          ? this.options.redisHDel(this.options.redisKey, String(keyIndex))
+          : this.options.redisHSet(
+              this.options.redisKey,
+              String(keyIndex),
+              JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
+            );
+      const entries = [...changes];
+      // The dirty set is bounded by the number of cooldown key indices, but cap
+      // in-flight Redis fetches so a large batch can't exhaust the connection pool.
+      for (let i = 0; i < entries.length; i += FLUSH_CONCURRENCY) {
+        await Promise.all(entries.slice(i, i + FLUSH_CONCURRENCY).map(apply));
+      }
+      await this.options.redisExpire(this.options.redisKey, this.options.ttlSeconds ?? COOLDOWN_HASH_TTL_SECONDS);
     } catch (err) {
       console.warn(`[cooldown] Failed to flush ${this.options.redisKey}:`, err);
       // Restore only keys that have NOT been updated (park/clear) while the

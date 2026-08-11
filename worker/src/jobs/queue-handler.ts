@@ -47,7 +47,7 @@ export async function handleQueueBatch(
           message.ack(); // Don't retry unknown types
       }
     } catch (err) {
-      console.error(`[queue] Job failed:`, err);
+      console.error(`[queue] Job failed (type ${payload.type}, attempt ${message.attempts}):`, err);
       message.retry();
     }
   }

@@ -66,18 +66,19 @@ describe('handleQueueBatch', () => {
       { type: 'COMMENT_RESPONSE', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentId: 9, commentBody: 'x', commentType: 'issue_comment', githubDeliveryId: 'd' },
       { type: 'CONTRADICTION', installationId: 0, owner: 'acme', repo: 'app', prNumber: 0, ruleId: 'rule-1', ruleBody: 'b', embedding: [1, 2] },
     ]);
-    batch.messages[0].attempts = 3;
-    batch.messages[1].attempts = 2;
-    batch.messages[2].attempts = 1;
+    const [reviewMsg, commentMsg, contradictionMsg] = batch.messages;
+    reviewMsg.attempts = 3;
+    commentMsg.attempts = 2;
+    contradictionMsg.attempts = 1;
 
     await handleQueueBatch(batch, env);
 
-    expect(reviewJob).toHaveBeenCalledWith(batch.messages[0].body, env, 3);
-    expect(commentJob).toHaveBeenCalledWith(batch.messages[1].body, env, 2);
-    expect(contradictionJob).toHaveBeenCalledWith(batch.messages[2].body, env, 1);
-    expect(batch.messages[0].ack).toHaveBeenCalled();
-    expect(batch.messages[1].ack).toHaveBeenCalled();
-    expect(batch.messages[2].ack).toHaveBeenCalled();
+    expect(reviewJob).toHaveBeenCalledWith(reviewMsg.body, env, 3);
+    expect(commentJob).toHaveBeenCalledWith(commentMsg.body, env, 2);
+    expect(contradictionJob).toHaveBeenCalledWith(contradictionMsg.body, env, 1);
+    expect(reviewMsg.ack).toHaveBeenCalled();
+    expect(commentMsg.ack).toHaveBeenCalled();
+    expect(contradictionMsg.ack).toHaveBeenCalled();
   });
 
   it('acks unknown job types without dispatching', async () => {

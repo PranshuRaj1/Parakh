@@ -2,36 +2,39 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 import type { Intent } from '@parakh/shared';
 
-const { classifyIntentMock, draftReplyMock } = vi.hoisted(() => ({
-  classifyIntentMock: vi.fn(),
-  draftReplyMock: vi.fn(),
-}));
+const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(() => {
+  const providerShape = () => ({
+    reviewDiff: vi.fn(),
+    classifyIntent: vi.fn(),
+    classifyRelationship: vi.fn(),
+    classifyPriority: vi.fn(),
+    draftReply: vi.fn(),
+    generateEmbedding: vi.fn(),
+  });
+  return {
+    classifyIntentMock: vi.fn(),
+    draftReplyMock: vi.fn(),
+    geminiMock: providerShape(),
+    groqMock: providerShape(),
+  };
+});
 
 // Stub the LLM factory: classifyIntent + draftReply drive the comment-response
-// paths under test. gemini/groq get full LLMProvider-shaped vi.fn()s so any
-// future call into them fails loudly instead of a silent TypeError on {}.
+// paths under test. llm/gemini/groq get full LLMProvider-shaped vi.fn()s so any
+// future call into them fails loudly instead of a silent TypeError on {}. The
+// provider mocks are hoisted so they stay stable/trackable across calls.
 vi.mock('../llm/factory.js', () => ({
   createLLMClients: () => ({
     llm: {
+      reviewDiff: vi.fn(),
       classifyIntent: classifyIntentMock,
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
       draftReply: draftReplyMock,
-    },
-    gemini: {
-      reviewDiff: vi.fn(),
-      classifyIntent: vi.fn(),
-      classifyRelationship: vi.fn(),
-      classifyPriority: vi.fn(),
-      draftReply: vi.fn(),
       generateEmbedding: vi.fn(),
     },
-    groq: {
-      reviewDiff: vi.fn(),
-      classifyIntent: vi.fn(),
-      classifyRelationship: vi.fn(),
-      classifyPriority: vi.fn(),
-      draftReply: vi.fn(),
-      generateEmbedding: vi.fn(),
-    },
+    gemini: geminiMock,
+    groq: groqMock,
   }),
 }));
 

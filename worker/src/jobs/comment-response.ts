@@ -9,6 +9,13 @@ import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
+/**
+ * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
+ *
+ * @param attempts Queue delivery count. Kept for a uniform executor signature —
+ *   queue-handler passes message.attempts to every handler so the delivery
+ *   metadata is available if a redelivery ever needs different behavior.
+ */
 export async function executeCommentResponseJob(
   payload: CommentJobPayload,
   env: Env,
