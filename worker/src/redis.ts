@@ -42,9 +42,10 @@ export function createRedisHGetAll(env: Env): (key: string) => Promise<Record<st
     }
     const data = (await response.json()) as { result: string[] | null };
     if (!data.result || data.result.length === 0) return null;
-    
+    // HGETALL returns [field1, value1, field2, value2, ...]. Guard against an
+    // odd-length payload so the trailing field never maps to `undefined`.
     const obj: Record<string, string> = {};
-    for (let i = 0; i < data.result.length; i += 2) {
+    for (let i = 0; i + 1 < data.result.length; i += 2) {
       obj[data.result[i]] = data.result[i + 1];
     }
     return obj;

@@ -145,7 +145,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
-    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', '+1', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
       undefined, 'del', 100, 'issue_comment', 777
@@ -175,7 +175,7 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
     );
-    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', '+1', 'token');
   });
 
   it('saves CORRECTION intents as active rules and confirms', async () => {

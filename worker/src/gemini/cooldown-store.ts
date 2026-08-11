@@ -67,14 +67,14 @@ export class RedisCooldownStore extends MemoryCooldownStore {
   private loaded = false;
   private dirty = new Map<number, CooldownEntry | null>();
 
-  constructor(
-    private readonly redisKey: string,
-    private readonly redisHGetAll: (key: string) => Promise<Record<string, string> | null>,
-    private readonly redisHSet: (key: string, field: string, value: string) => Promise<unknown>,
-    private readonly redisHDel: (key: string, field: string) => Promise<unknown>,
-    private readonly redisExpire: (key: string, seconds: number) => Promise<unknown>,
-    private readonly ttlSeconds = 7 * 24 * 60 * 60
-  ) {
+  constructor(private readonly options: {
+    redisKey: string;
+    redisHGetAll: (key: string) => Promise<Record<string, string> | null>;
+    redisHSet: (key: string, field: string, value: string) => Promise<unknown>;
+    redisHDel: (key: string, field: string) => Promise<unknown>;
+    redisExpire: (key: string, seconds: number) => Promise<unknown>;
+    ttlSeconds?: number;
+  }) {
     super();
   }
 
@@ -82,21 +82,21 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     if (this.loaded) return;
     this.loaded = true;
     try {
-      const raw = await this.redisHGetAll(this.redisKey);
+      const raw = await this.options.redisHGetAll(this.options.redisKey);
       if (!raw) return;
       for (const [k, v] of Object.entries(raw)) {
         const idx = Number(k);
-        if (Number.isFinite(idx) && v) {
-          try {
-            const parsed = JSON.parse(v) as { until: number; dailyQuota?: boolean };
-            this.entries.set(idx, { until: parsed.until, dailyQuota: !!parsed.dailyQuota });
-          } catch {
-            // skip one corrupt field instead of failing the whole load
-          }
+        if (!Number.isFinite(idx) || !v) continue;
+        try {
+          const parsed = JSON.parse(v) as { until?: number; dailyQuota?: boolean };
+          if (typeof parsed.until !== 'number') continue;
+          this.entries.set(idx, { until: parsed.until, dailyQuota: !!parsed.dailyQuota });
+        } catch {
+          // skip one corrupt field instead of failing the whole load
         }
       }
     } catch (err) {
-      console.warn(`[cooldown] Failed to load ${this.redisKey}:`, err);
+      console.warn(`[cooldown] Failed to load ${this.options.redisKey}:`, err);
     }
   }
 
@@ -116,21 +116,26 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     const changes = new Map(this.dirty);
     this.dirty.clear();
     try {
-      for (const [keyIndex, entry] of changes) {
-        if (entry === null) {
-          await this.redisHDel(this.redisKey, String(keyIndex));
-        } else {
-          await this.redisHSet(
-            this.redisKey,
-            String(keyIndex),
-            JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
-          );
-        }
-      }
-      await this.redisExpire(this.redisKey, this.ttlSeconds);
+      await Promise.all(
+        [...changes].map(([keyIndex, entry]) =>
+          entry === null
+            ? this.options.redisHDel(this.options.redisKey, String(keyIndex))
+            : this.options.redisHSet(
+                this.options.redisKey,
+                String(keyIndex),
+                JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
+              )
+        )
+      );
+      await this.options.redisExpire(this.options.redisKey, this.options.ttlSeconds ?? 7 * 24 * 60 * 60);
     } catch (err) {
-      console.warn(`[cooldown] Failed to flush ${this.redisKey}:`, err);
-      for (const [k, v] of changes) this.dirty.set(k, v);
+      console.warn(`[cooldown] Failed to flush ${this.options.redisKey}:`, err);
+      // Restore only keys that have NOT been updated (park/clear) while the
+      // async flush was in flight — a newer dirty entry must win over the
+      // snapshot we just failed to persist.
+      for (const [k, v] of changes) {
+        if (!this.dirty.has(k)) this.dirty.set(k, v);
+      }
     }
   }
 }

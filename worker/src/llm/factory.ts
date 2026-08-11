@@ -97,11 +97,11 @@ function makeCooldownStore(key: string, env: Env): CooldownStore {
   if (!env.UPSTASH_REDIS_URL || !env.UPSTASH_REDIS_TOKEN) {
     return new MemoryCooldownStore();
   }
-  return new RedisCooldownStore(
-    key,
-    createRedisHGetAll(env),
-    createRedisHSet(env),
-    createRedisHDel(env),
-    createRedisExpire(env)
-  );
+  return new RedisCooldownStore({
+    redisKey: key,
+    redisHGetAll: createRedisHGetAll(env),
+    redisHSet: createRedisHSet(env),
+    redisHDel: createRedisHDel(env),
+    redisExpire: createRedisExpire(env),
+  });
 }
