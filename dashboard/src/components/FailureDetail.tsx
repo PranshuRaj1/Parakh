@@ -39,13 +39,16 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
   const [timelineExpanded, setTimelineExpanded] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`/api/reviews/${reviewId}/failure`)
       .then(res => res.ok ? res.json() : null)
       .then(d => {
+        if (cancelled) return;
         setData(d);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [reviewId]);
 
   const handleRetry = async () => {
@@ -65,20 +68,20 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
   };
 
   if (loading) {
-    return <div className="animate-pulse bg-gray-100 h-32 rounded-lg"></div>;
+    return <div className="animate-pulse bg-white/5 h-32 rounded-xl border border-white/10"></div>;
   }
 
   if (!data) return null;
 
   return (
-    <div className="bg-red-50 rounded-lg shadow-sm border border-red-100 overflow-hidden max-w-3xl mx-auto mt-8">
+    <div className="glass-card rounded-xl overflow-hidden max-w-4xl mx-auto mt-8">
       <div className="p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-start">
-            <AlertTriangle className="h-6 w-6 text-red-600 mt-1" />
+            <AlertTriangle className="h-6 w-6 text-[#ffb4ab] mt-1" />
             <div className="ml-4">
-              <h3 className="text-lg font-semibold text-red-900">Review Failed</h3>
-              <p className="mt-1 text-sm text-red-700 font-mono bg-red-100/50 inline-block px-2 py-1 rounded">
+              <h3 className="text-lg font-semibold text-white">Review Failed</h3>
+              <p className="mt-1 text-sm text-[#ffb4ab] font-mono bg-[#93000a]/20 inline-block px-2 py-1 rounded border border-[#93000a]/30">
                 Failed at: {data.errorStep}
               </p>
             </div>
@@ -86,21 +89,21 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
           <button
             onClick={handleRetry}
             disabled={isRetrying}
-            className="flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md shadow-sm disabled:opacity-50 transition-colors"
+            className="flex items-center px-4 py-2 bg-[#93000a] hover:bg-[#93000a]/80 text-white text-sm font-medium rounded-md shadow-sm disabled:opacity-50 transition-colors"
           >
             <RefreshCcw className={`h-4 w-4 mr-2 ${isRetrying ? 'animate-spin' : ''}`} />
             {isRetrying ? 'Retrying...' : 'Retry Pipeline'}
           </button>
         </div>
 
-        <div className="mt-6 bg-white rounded-md border border-red-100 p-4 shadow-sm">
-          <h4 className="text-sm font-medium text-gray-900 mb-2">Error Message</h4>
-          <pre className="text-sm text-red-600 whitespace-pre-wrap font-mono break-all bg-red-50 p-3 rounded">
+        <div className="mt-6 bg-[#131313] rounded-md border border-white/10 p-4 shadow-sm">
+          <h4 className="text-sm font-medium text-white mb-2">Error Message</h4>
+          <pre className="text-sm text-[#ffb4ab] whitespace-pre-wrap font-mono break-all bg-[#000000] p-3 rounded">
             {data.errorMessage}
           </pre>
 
           {data.sweptByCron && (
-            <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+            <p className="mt-3 text-xs text-[#f0e1c2] bg-[#41392c]/30 border border-[#f0e1c2]/20 rounded p-2">
               ⚠️ This review stalled and was swept by the cron watchdog — &quot;Stage
               timed out&quot; reflects the last recorded stage, not an underlying
               error. No step event captured a real failure.
@@ -108,11 +111,11 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
           )}
 
           {(data.realErrorMessage || data.realErrorCode) && (
-            <div className="mt-4 bg-red-50 border border-red-200 rounded p-3">
-              <h4 className="text-xs font-semibold text-red-800 uppercase tracking-wide">
+            <div className="mt-4 bg-[#93000a]/15 border border-[#93000a]/30 rounded p-3">
+              <h4 className="text-xs font-semibold text-[#ffb4ab] uppercase tracking-wide">
                 Real Terminal Error
               </h4>
-              <p className="mt-1 text-sm text-red-700 font-mono break-all">
+              <p className="mt-1 text-sm text-[#ffb4ab] font-mono break-all">
                 {data.realErrorStep && <>At <span className="font-semibold">{data.realErrorStep}</span>: </>}
                 {data.realErrorCode && <><span className="font-semibold">[{data.realErrorCode}]</span>{' '}</>}
                 {data.realErrorMessage ?? 'No error message captured.'}
@@ -124,13 +127,13 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
             <div className="mt-4">
               <button
                 onClick={() => setStackExpanded(!stackExpanded)}
-                className="flex items-center text-sm font-medium text-gray-600 hover:text-gray-900"
+                className="flex items-center text-sm font-medium text-[#c0c9c0] hover:text-white"
               >
                 {stackExpanded ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
                 {stackExpanded ? 'Hide Stack Trace' : 'View Stack Trace'}
               </button>
               {stackExpanded && (
-                <pre className="mt-2 text-xs text-gray-500 overflow-x-auto bg-gray-50 p-3 rounded font-mono border border-gray-100">
+                <pre className="mt-2 text-xs text-[#c0c9c0] overflow-x-auto bg-[#000000] p-3 rounded font-mono border border-white/10">
                   {data.errorStack}
                 </pre>
               )}
@@ -138,26 +141,26 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-4 text-sm text-gray-500 border-t border-red-100 pt-4">
+        <div className="mt-6 flex flex-wrap gap-4 text-sm text-[#c0c9c0] border-t border-white/10 pt-4">
           <div className="flex items-center">
             <Clock className="h-4 w-4 mr-1.5" />
             Failed {formatDistanceToNow(new Date(data.failedAt), { addSuffix: true })}
           </div>
           <div>•</div>
-          <div>Retry Count: <span className="font-medium text-gray-900">{data.retryCount}</span></div>
+          <div>Retry Count: <span className="font-medium text-white">{data.retryCount}</span></div>
           {data.githubDeliveryId && (
             <>
               <div>•</div>
-              <div>GitHub Delivery ID: <span className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border border-gray-200">{data.githubDeliveryId}</span></div>
+              <div>GitHub Delivery ID: <span className="font-mono text-xs bg-white/5 px-1.5 py-0.5 rounded border border-white/10">{data.githubDeliveryId}</span></div>
             </>
           )}
         </div>
       </div>
 
-      <div className="border-t border-red-100 bg-gray-50">
+      <div className="border-t border-white/10 bg-white/5">
         <button
           onClick={() => setTimelineExpanded(!timelineExpanded)}
-          className="w-full px-6 py-3 flex items-center justify-between text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+          className="w-full px-6 py-3 flex items-center justify-between text-sm font-medium text-[#c0c9c0] hover:text-white transition-colors"
         >
           <span>Execution Timeline</span>
           {timelineExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -169,20 +172,20 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
               {data.timeline.map((event, idx) => (
                 <div key={event.id} className="flex items-center justify-between text-sm">
                   <div className="flex items-center">
-                    <span className="text-gray-400 font-mono text-xs w-4">{idx + 1}.</span>
+                    <span className="text-[#c0c9c0] font-mono text-xs w-4">{idx + 1}.</span>
                     <span className={`ml-2 font-medium ${
-                      event.status === 'COMPLETED' ? 'text-green-700' :
-                      event.status === 'FAILED' ? 'text-red-700' :
-                      event.status === 'UNKNOWN' ? 'text-gray-700' : 'text-blue-700'
+                      event.status === 'COMPLETED' ? 'text-[#00FF8C]' :
+                      event.status === 'FAILED' ? 'text-[#ffb4ab]' :
+                      event.status === 'UNKNOWN' ? 'text-[#8a938b]' : 'text-[#c5c0ff]'
                     }`}>
                       {event.step}
                     </span>
-                    <span className="ml-2 text-gray-500 font-mono text-xs">
+                    <span className="ml-2 text-[#c0c9c0] font-mono text-xs">
                       [{event.status}]
                     </span>
                   </div>
                   {event.duration_ms !== null && (
-                    <span className="text-gray-500 font-mono text-xs">
+                    <span className="text-[#c0c9c0] font-mono text-xs">
                       {event.duration_ms}ms
                     </span>
                   )}

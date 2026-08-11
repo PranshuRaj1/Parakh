@@ -45,7 +45,7 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
   const toggle = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
 
   if (loading) {
-    return <div className="animate-pulse bg-gray-100 h-32 rounded-lg"></div>;
+    return <div className="animate-pulse bg-white/5 h-32 rounded-xl border border-white/10 mt-8"></div>;
   }
 
   const rows = data?.reasoning ?? [];
@@ -53,20 +53,20 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
   const failedCount = rows.filter(r => r.error_message).length;
 
   return (
-    <div className="bg-white rounded-lg shadow p-6 max-w-3xl mx-auto border border-gray-100">
+    <div className="glass-card rounded-xl p-6 max-w-4xl mx-auto mt-8 border-white/10">
       <div className="flex items-center gap-3 mb-5">
-        <Brain className="h-5 w-5 text-violet-600" />
-        <h3 className="text-lg font-semibold text-gray-800">Model Reasoning</h3>
+        <Brain className="h-5 w-5 text-[#c5c0ff]" />
+        <h3 className="text-lg font-semibold text-white">Model Reasoning</h3>
         {hasAnyContent && failedCount > 0 && (
-          <span className="text-xs font-medium text-red-600 bg-red-50 border border-red-100 rounded-full px-2.5 py-0.5">
+          <span className="text-xs font-medium text-[#ffb4ab] bg-[#93000a]/20 border border-[#93000a]/30 rounded-full px-2.5 py-0.5">
             {failedCount} failed
           </span>
         )}
       </div>
 
       {!hasAnyContent ? (
-        <p className="text-sm text-gray-500 flex items-center gap-2">
-          <Loader2 className="h-4 w-4 text-gray-300" />
+        <p className="text-sm text-[#c0c9c0] flex items-center gap-2">
+          <Loader2 className="h-4 w-4 text-[#c0c9c0]" />
           {'Reasoning unavailable — no per-file thoughts were captured for this review (either the feature is disabled or Google skipped thought generation).'}
         </p>
       ) : (
@@ -75,22 +75,22 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
             const isOpen = !!expanded[row.id];
             const isError = !!row.error_message;
             return (
-              <div key={row.id} className="rounded-md border border-gray-200 overflow-hidden">
+              <div key={row.id} className="rounded-md border border-white/10 overflow-hidden bg-[#131313]">
                 <button
                   onClick={() => toggle(row.id)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center min-w-0">
                     <span
-                      className={`h-2 w-2 rounded-full flex-shrink-0 mr-3 ${isError ? 'bg-red-500' : 'bg-violet-400'}`}
+                      className={`h-2 w-2 rounded-full flex-shrink-0 mr-3 ${isError ? 'bg-[#ffb4ab]' : 'bg-[#c5c0ff]'}`}
                     />
-                    <span className="font-mono text-xs text-gray-700 truncate">{row.file}</span>
+                    <span className="font-mono text-xs text-white truncate">{row.file}</span>
                   </div>
                   <div className="flex items-center flex-shrink-0 ml-3">
-                    <span className="text-xs text-gray-400 mr-3">
+                    <span className="text-xs text-[#c0c9c0] mr-3">
                       {formatDistanceToNow(new Date(row.created_at), { addSuffix: true })}
                     </span>
-                    {isOpen ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+                    {isOpen ? <ChevronUp className="h-4 w-4 text-[#c0c9c0]" /> : <ChevronDown className="h-4 w-4 text-[#c0c9c0]" />}
                   </div>
                 </button>
 
@@ -98,26 +98,26 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
                   <div className="px-4 pb-4">
                     <div className="flex items-center gap-3 mb-2">
                       {row.model && (
-                        <span className="text-xs text-gray-400 font-mono bg-gray-50 border border-gray-100 rounded px-1.5 py-0.5">
+                        <span className="text-xs text-[#c0c9c0] font-mono bg-white/5 border border-white/10 rounded px-1.5 py-0.5">
                           {row.model}
                         </span>
                       )}
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-[#c0c9c0]">
                         expires {formatDistanceToNow(new Date(row.expires_at), { addSuffix: true })}
                       </span>
                     </div>
 
                     {isError ? (
-                      <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3">
+                      <div className="flex items-start gap-2 text-sm text-[#ffb4ab] bg-[#93000a]/20 border border-[#93000a]/30 rounded-md p-3">
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                         <span className="whitespace-pre-wrap break-all font-mono text-xs">{row.error_message}</span>
                       </div>
                     ) : row.thinking ? (
-                      <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words font-mono bg-gray-50 border border-gray-100 rounded-md p-3 max-h-96 overflow-y-auto">
+                      <pre className="text-xs text-[#c0c9c0] whitespace-pre-wrap break-words font-mono bg-[#000000] border border-white/10 rounded-md p-3 max-h-96 overflow-y-auto">
                         {row.thinking}
                       </pre>
                     ) : (
-                      <p className="text-xs text-gray-400">Reasoning unavailable — Google skipped thought generation for this file.</p>
+                      <p className="text-xs text-[#c0c9c0]">Reasoning unavailable — Google skipped thought generation for this file.</p>
                     )}
                   </div>
                 )}
