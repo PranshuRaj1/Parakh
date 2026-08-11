@@ -8,10 +8,13 @@ interface ReviewStepEvent {
   id: string;
   review_id: string;
   step: string;
-  status: 'STARTED' | 'COMPLETED' | 'FAILED';
+  status: 'STARTED' | 'COMPLETED' | 'FAILED' | 'UNKNOWN';
+  outcome: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
   detail: Record<string, unknown> | null;
   duration_ms: number | null;
-  created_at: string;
+  started_at: string;
 }
 
 interface FailureData {
@@ -21,6 +24,10 @@ interface FailureData {
   retryCount: number;
   githubDeliveryId: string | null;
   failedAt: string;
+  realErrorStep: string | null;
+  realErrorCode: string | null;
+  realErrorMessage: string | null;
+  sweptByCron: boolean;
   timeline: ReviewStepEvent[];
 }
 
@@ -95,6 +102,27 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
             {data.errorMessage}
           </pre>
 
+          {data.sweptByCron && (
+            <p className="mt-3 text-xs text-[#f0e1c2] bg-[#41392c]/30 border border-[#f0e1c2]/20 rounded p-2">
+              ⚠️ This review stalled and was swept by the cron watchdog — &quot;Stage
+              timed out&quot; reflects the last recorded stage, not an underlying
+              error. No step event captured a real failure.
+            </p>
+          )}
+
+          {(data.realErrorMessage || data.realErrorCode) && (
+            <div className="mt-4 bg-[#93000a]/15 border border-[#93000a]/30 rounded p-3">
+              <h4 className="text-xs font-semibold text-[#ffb4ab] uppercase tracking-wide">
+                Real Terminal Error
+              </h4>
+              <p className="mt-1 text-sm text-[#ffb4ab] font-mono break-all">
+                {data.realErrorStep && <>At <span className="font-semibold">{data.realErrorStep}</span>: </>}
+                {data.realErrorCode && <><span className="font-semibold">[{data.realErrorCode}]</span>{' '}</>}
+                {data.realErrorMessage ?? 'No error message captured.'}
+              </p>
+            </div>
+          )}
+
           {data.errorStack && (
             <div className="mt-4">
               <button
@@ -147,7 +175,8 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
                     <span className="text-[#c0c9c0] font-mono text-xs w-4">{idx + 1}.</span>
                     <span className={`ml-2 font-medium ${
                       event.status === 'COMPLETED' ? 'text-[#00FF8C]' :
-                      event.status === 'FAILED' ? 'text-[#ffb4ab]' : 'text-[#c5c0ff]'
+                      event.status === 'FAILED' ? 'text-[#ffb4ab]' :
+                      event.status === 'UNKNOWN' ? 'text-[#8a938b]' : 'text-[#c5c0ff]'
                     }`}>
                       {event.step}
                     </span>

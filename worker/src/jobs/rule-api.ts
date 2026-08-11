@@ -16,9 +16,10 @@
  */
 
 import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
-import { GeminiClient } from '../gemini/client.js';
+import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
+import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
 
 /**
@@ -34,15 +35,33 @@ export async function handleCreateRule(
     throw new Error('Missing required fields: repo, body');
   }
 
-  const gemini = new GeminiClient(env);
+  // Embeddings and priority classification both route through the LLM client
+  // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini
+  // is exhausted. (Groq/OpenRouter have no embeddings API — the chain skips
+  // providers that don't implement generateEmbedding.)
+  const { llm } = createLLMClients(env);
 
   // 2. Generate embedding
-  const embedding = await gemini.generateEmbedding(request.body);
+  const embedding = await llm.generateEmbedding(request.body);
 
-  // 3. Classify priority (or use override from request)
-  const priority = request.priority || await gemini.classifyPriority(request.body);
+  // 3. Classify priority (or use override from request). Fail-open to 'normal'
+  //    on error so rule creation is never blocked by a classifier outage.
+  let priority = request.priority;
+  if (!priority) {
+    try {
+      priority = (await llm.classifyPriority(request.body)) ?? 'normal';
+    } catch (err) {
+      priority = 'normal';
+      console.error(
+        `[rule-api] Priority classification failed for "${truncateBody(request.body)}" (repo: ${request.repo}) — defaulting to normal:`,
+        err
+      );
+    }
+  }
 
-  // 4. Insert rule as ACTIVE
+  // 4. Insert rule as ACTIVE. Dashboard rules are enforceable standards
+  //    (kind defaults to 'standard' in the insert); suppression directives are
+  //    created via @parakh corrections.
   const rule = await insertRule(
     {
       repo: request.repo,
@@ -55,7 +74,7 @@ export async function handleCreateRule(
     env
   );
 
-  // 5. Enqueue contradiction check (same path as PR-comment corrections)
+  // 6. Enqueue contradiction check (same path as PR-comment corrections)
   const payload: ContradictionJobPayload = {
     type: 'CONTRADICTION',
     ruleId: rule.id,

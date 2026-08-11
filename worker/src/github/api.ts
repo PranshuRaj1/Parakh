@@ -83,6 +83,31 @@ export async function fetchDiff(
 }
 
 /**
+ * Fetch the raw diff BETWEEN two pinned refs (base...head).
+ * The PR's live diff endpoint always reflects the latest head; pinning the
+ * SHA pair at review-start makes the diff immutable for the whole run.
+ */
+export async function fetchDiffPinned(
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+  token: string
+): Promise<string> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`;
+  const response = await fetch(url, {
+    headers: headers(token, 'application/vnd.github.diff'),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to fetch pinned diff (${response.status}): ${body}`);
+  }
+
+  return response.text();
+}
+
+/**
  * Get the list of files changed in a pull request.
  */
 export async function getPRFiles(
@@ -224,6 +249,67 @@ export async function removeReaction(
 }
 
 /**
+ * Add a reaction to a specific comment (top-level issue comment or inline
+ * review comment). Returns the reaction ID (needed for later removal).
+ *
+ * Same issue_comment vs pull_request_review_comment branch used by
+ * postComment/replyToReviewComment — reactions can't be edited in place on
+ * GitHub, only added or removed, so the current id is tracked for the swap.
+ */
+export async function addCommentReaction(
+  owner: string,
+  repo: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
+  reactionContent: '+1' | '-1' | 'eyes' | 'confused',
+  token: string
+): Promise<number> {
+  const path = commentType === 'pull_request_review_comment'
+    ? `pulls/comments/${commentId}/reactions`
+    : `issues/comments/${commentId}/reactions`;
+  try {
+    const data = await githubFetch<{ id: number }>(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
+      token,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+        body: JSON.stringify({ content: reactionContent }),
+      }
+    );
+    return data.id;
+  } catch (err) {
+    throw new Error(`Failed to add comment reaction to ${commentType} ${commentId}`, { cause: err });
+  }
+}
+
+/**
+ * Remove a reaction from a specific comment.
+ * Requires the reaction's own ID (returned by addCommentReaction).
+ */
+export async function removeCommentReaction(
+  owner: string,
+  repo: string,
+  reactionId: number,
+  token: string
+): Promise<void> {
+
+  const response = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/reactions/${reactionId}`,
+    {
+      method: 'DELETE',
+      headers: headers(token),
+    }
+  );
+
+  // 204 No Content is success for DELETE
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to remove comment reaction (${response.status}): ${body}`);
+  }
+}
+
+/**
  * Get PR details (for head SHA, etc.).
  */
 export async function getPRDetails(
@@ -231,7 +317,7 @@ export async function getPRDetails(
   repo: string,
   prNumber: number,
   token: string
-): Promise<{ head: { sha: string }; user: { login: string } }> {
+): Promise<{ head: { sha: string }; base: { sha: string }; user: { login: string } }> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}`;
-  return githubFetch<{ head: { sha: string }; user: { login: string } }>(url, token);
+  return githubFetch<{ head: { sha: string }; base: { sha: string }; user: { login: string } }>(url, token);
 }

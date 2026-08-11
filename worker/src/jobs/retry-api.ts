@@ -16,7 +16,7 @@ export async function handleRetryReview(
       });
     }
 
-    if (!['FAILED', 'PAUSED_RATE_LIMITED'].includes(review.status)) {
+    if (!['FAILED', 'PAUSED_RATE_LIMITED', 'PAUSED_DAILY_QUOTA'].includes(review.status)) {
       return new Response(
         JSON.stringify({ error: `cannot retry a review with status ${review.status}` }),
         { status: 409, headers: { 'Content-Type': 'application/json' } }
@@ -41,7 +41,6 @@ export async function handleRetryReview(
           'manual_mention',
           env,
           review.id,
-          false,
           review.github_delivery_id ?? undefined
         ).catch(err => {
           console.error('[retry-api] Failed to execute triggerReview:', err);

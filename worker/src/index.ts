@@ -26,8 +26,32 @@ export interface Env {
   GITHUB_APP_BOT_USER_ID: string;
 
   // Gemini
-  GEMINI_API_KEY: string;
+  GEMINI_API_KEY?: string;
   GEMINI_API_KEYS?: string;
+  // Env override for the generation model (default gemini-2.5-flash).
+  GEMINI_GENERATION_MODEL?: string;
+
+  // Groq (secondary provider / fallback). GROQ_API_KEYS is a comma-separated
+  // pool like GEMINI_API_KEYS; each key is its own rate-limit bucket.
+  GROQ_API_KEY?: string;
+  GROQ_API_KEYS?: string;
+  GROQ_GENERATION_MODEL?: string;
+
+  // Cloudflare Workers AI (tertiary provider / fallback).
+  // Requires the account ID + an API token with Workers AI access.
+  CF_ACCOUNT_ID?: string;
+  CF_API_TOKEN?: string;
+  CFAI_GENERATION_MODEL?: string;
+
+  // OpenRouter (quaternary provider / fallback). Single API key.
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_GENERATION_MODEL?: string;
+
+  // Provider routing (defaults: primary gemini, fallback groq). The chain
+  // then appends every other CONFIGURED provider (cfai, openrouter) in a
+  // fixed priority order.
+  LLM_PRIMARY?: string;
+  LLM_FALLBACK?: string;
 
   // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
   // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps
@@ -119,9 +143,7 @@ async function handleWebhookRequest(request: Request, env: Env, _ctx?: Execution
   // Verify webhook signature
   const isValid = await verifySignature(body, signature, env.GITHUB_WEBHOOK_SECRET);
   if (!isValid) {
-        // if (!await verifySignature(env.GITHUB_WEBHOOK_SECRET, signature, bodyText)) {
-        //  return new Response('Invalid signature', { status: 401 });
-        // }
+    return new Response('Invalid signature', { status: 401 });
   }
 
   try {

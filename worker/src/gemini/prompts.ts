@@ -25,15 +25,35 @@ export function buildReviewPrompt(
     .map(([level, info]) => `| ${level} | ${info.weight} | ${info.definition} | ${info.examples} |`)
     .join('\n');
 
-  const rulesSection = activeRules.length > 0
+  // 'standard' rules are enforceable coding standards; 'instruction' rules are
+  // suppression directives ("stop flagging X") and must NEVER be reported as
+  // violations — they only tell the model what not to raise.
+  const enforceRules = activeRules.filter((r) => r.kind !== 'instruction');
+  const instructions = activeRules.filter((r) => r.kind === 'instruction');
+
+  const rulesSection = enforceRules.length > 0
     ? `
 ## Active Coding Rules for This Repository
 
-The following rules are active coding standards. If any code in the diff violates a rule,
-report it as a rule finding with the rule's ID. Do NOT assign a severity to rule findings —
-the system will assign severity based on the rule's priority setting.
+The following rules are active coding standards. Only report a rule finding when the code
+genuinely violates one of the rules listed below — never invent a violation of a rule, and
+never reference a rule that is not in this list.
 
-${activeRules.map((r) => `- **[${r.id}]** (priority: ${r.priority}): ${r.body}`).join('\n')}
+Report each violation as a rule finding with the rule's ID. Do NOT assign a severity to rule
+findings — the system will assign severity based on the rule's priority setting.
+
+${enforceRules.map((r) => `- **[${r.id}]** (priority: ${r.priority}): ${r.body}`).join('\n')}
+`
+    : '';
+
+  const suppressionSection = instructions.length > 0
+    ? `
+## Suppressed Issues
+
+The developer has explicitly asked for the following issue categories to NOT be raised. Do NOT
+report generic or rule findings for these — they are intentional/acceptable for this codebase.
+
+${instructions.map((r) => `- ${r.body}`).join('\n')}
 `
     : '';
 
@@ -45,9 +65,25 @@ Classify each GENERIC finding (not tied to a stored rule) into exactly one of th
 
 | Severity | Weight | Definition | Examples |
 |---|---|---|---|
-${severityTable}
+| ${severityTable}
+
+## What NOT to Flag
+
+The following are explicitly NOT review findings. Do NOT report them as generic findings OR
+as rule findings:
+
+- Missing newline at the end of a file
+- Trailing whitespace or trailing commas
+- Generic "this comment could be clearer" style commentary
+- Variable or function renames purely for naming style — only suggest a rename when the name is
+  actively misleading and hurts comprehension
+
+LOW findings should be reserved for issues that materially hurt readability or maintainability,
+not pure style preferences. When in doubt, do not report it.
 
 ${rulesSection}
+
+${suppressionSection}
 
 ## Output Instructions
 
@@ -97,11 +133,16 @@ Classify the reply into exactly one of these six categories:
 
 - **EXPLANATION**: The developer is explaining why their code is correct as-is, without asserting a new standard. They're providing context the bot lacked. Examples: "This is intentional because of X", "We're doing it this way because the API requires it", "That's handled by the middleware already".
 
-- **DISMISSAL**: The developer is dismissing the bot's comment as unhelpful, irrelevant, or wrong without providing a corrective standard. Examples: "Not relevant", "Ignore this", "This is fine", "👎", "Nah".
+- **DISMISSAL**: The developer is dismissing the bot's comment as unhelpful, irrelevant, or wrong WITHOUT providing a corrective standard or forward-looking instruction. Examples: "Not relevant", "Ignore this", "This is fine", "👎", "Nah".
+
+## Disambiguation Rules
+
+- **Forward-looking standards always win.** If the comment tells the bot how to behave in FUTURE reviews — e.g. it contains phrases like "in any future review", "stop flagging X", "never raise X", "don't flag X", "always do Y", "from now on" — classify it as **CORRECTION**, even if the tone is dismissive ("useless", "stop", "annoying", "don't"). The corrective standard is the forward-looking instruction.
+- A dismissal is only **DISMISSAL** if it contains NO such standard. "This is useless" alone is DISMISSAL; "This is useless, stop flagging EOF newlines in future reviews" is CORRECTION.
 
 - **QUESTION**: The developer is asking a follow-up question about the bot's suggestion. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "Would using X fix this?".
 
-- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. Examples: "@parakh review this again", "please re-review", "can you check this PR now?".
+- **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. A comment that calls the bot's name (e.g. "@parakh") together with the word "review" is ALWAYS a REVIEW_REQUEST. Examples: "@parakh review", "@parakh review this again", "please re-review", "can you check this PR now?".
 
 - **GENERAL**: The comment is a general conversation, casual acknowledgment, or doesn't fit the above categories. Examples: "lol nice catch", "thanks", "will fix", "I see what you mean", or chatter between developers.
 `;

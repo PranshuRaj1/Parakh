@@ -31,13 +31,16 @@ export async function insertReview(
     seen_reaction_id?: number;
     trigger_reason?: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
     github_delivery_id?: string | null;
+    head_sha?: string | null;
+    base_sha?: string | null;
   },
   env: EnvWithDB
 ): Promise<Review> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
     INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
-                         seen_reaction_id, trigger_reason, github_delivery_id)
+                         seen_reaction_id, trigger_reason, github_delivery_id,
+                         head_sha, base_sha)
     VALUES (
       ${review.repo},
       ${review.pr_number},
@@ -47,12 +50,33 @@ export async function insertReview(
       ${review.findings ? JSON.stringify(review.findings) : null}::jsonb,
       ${review.seen_reaction_id ?? null},
       ${review.trigger_reason ?? 'opened'},
-      ${review.github_delivery_id ?? null}
+      ${review.github_delivery_id ?? null},
+      ${review.head_sha ?? null},
+      ${review.base_sha ?? null}
     )
     RETURNING *
   `;
 
   return rows[0] as unknown as Review;
+}
+
+/**
+ * Persist the SHA pin (head/base) once captured, so every subsequent
+ * attempt/redelivery fetches the SAME immutable diff.
+ */
+export async function updateReviewShaPin(
+  id: string,
+  headSha: string,
+  baseSha: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET head_sha = ${headSha},
+        base_sha = ${baseSha}
+    WHERE id = ${id}
+  `;
 }
 
 // ─── Repo Settings Queries ───────────────────────────────────────────────────
@@ -99,6 +123,45 @@ export async function updateReviewReactions(
       WHERE id = ${id}
     `;
   }
+}
+
+/**
+ * Record which comment triggered a manual_mention review, plus the id of the
+ * reaction currently live on that comment (👀). Called on fresh starts only.
+ */
+export async function setTriggerCommentContext(
+  id: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
+  reactionId: number | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET trigger_comment_id = ${commentId},
+        trigger_comment_type = ${commentType},
+        trigger_comment_reaction_id = ${reactionId}
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Point trigger_comment_reaction_id at the currently-live reaction on the
+ * trigger comment, so the next swap knows which one to remove first.
+ * Pass null when the comment has no live reaction (middle-band verdict).
+ */
+export async function updateTriggerCommentReactionId(
+  id: string,
+  reactionId: number | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET trigger_comment_reaction_id = ${reactionId}
+    WHERE id = ${id}
+  `;
 }
 
 /**
@@ -261,10 +324,17 @@ export async function dbStartStage(
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
   await sql.transaction([
-    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null)
+    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null).
+    //    Idempotent against the partial unique index
+    //    one_open_stage_attempt_per_review (review_id, stage, attempt_number)
+    //    WHERE ended_at IS NULL. A redelivered/re-entrant execution (queue
+    //    at-least-once, worker eviction) reuses the still-open event instead of
+    //    crashing with a duplicate key.
     sql`
       INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
       VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)
+      ON CONFLICT (review_id, stage, attempt_number) WHERE ended_at IS NULL
+      DO UPDATE SET started_at = now(), detail = EXCLUDED.detail
     `,
     // 2. Update reviews live pointer
     sql`
@@ -350,6 +420,94 @@ export async function dbFailStage(
   }
 
   await sql.transaction(queries);
+}
+
+/**
+ * Park a review because every LLM provider key hit its DAILY quota.
+ *
+ * Closes the open stage event as FAILED (code DAILY_QUOTA) WITHOUT setting
+ * status = 'FAILED', then sets the review row to PAUSED_DAILY_QUOTA with a
+ * resume timestamp. The 1-minute cron re-triggers it after that timestamp.
+ */
+export async function dbMarkDailyQuotaPaused(
+  reviewId: string,
+  stage: string,
+  attempt: number,
+  errorMessage: string,
+  resumeAt: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql.transaction([
+    sql`
+      UPDATE review_step_events
+      SET ended_at = now(),
+          duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
+          outcome = 'FAILED',
+          error_code = 'DAILY_QUOTA',
+          error_message = ${errorMessage},
+          error_stack = null
+      WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
+    `,
+    sql`
+      UPDATE reviews
+      SET status = 'PAUSED_DAILY_QUOTA',
+          failed_at = now(),
+          error_step = ${stage},
+          error_message = ${errorMessage},
+          daily_quota_resume_at = ${resumeAt},
+          worker_heartbeat_at = null
+      WHERE id = ${reviewId}
+    `,
+  ]);
+}
+
+/**
+ * Find PAUSED_DAILY_QUOTA reviews whose resume timestamp has elapsed
+ * (or is missing), so the cron can re-enqueue them for review.
+ */
+export async function dbFindResumableDailyQuotaReviews(env: EnvWithDB): Promise<Review[]> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT * FROM reviews
+    WHERE status = 'PAUSED_DAILY_QUOTA'
+      AND (daily_quota_resume_at IS NULL OR daily_quota_resume_at <= now())
+    ORDER BY failed_at ASC
+  `;
+  return rows as unknown as Review[];
+}
+
+// ─── Per-file Review Telemetry ─────────────────────────────────────────────────
+
+export interface ReviewFileEventRecord {
+  reviewId: string;
+  file: string;
+  status: 'COMPLETED' | 'FAILED';
+  provider?: string | null;
+  model?: string | null;
+  findingsCount: number;
+  errorMessage?: string | null;
+}
+
+/**
+ * Record one row of per-file review telemetry (provider, model, outcome).
+ * One row per file keeps the dashboard's per-file drill cheap and gives us
+ * provider-usage signals without relying on reasoning capture.
+ */
+export async function recordReviewFileEvent(rec: ReviewFileEventRecord, env: EnvWithDB): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    INSERT INTO review_file_events (review_id, file, status, provider, model, findings_count, error_message)
+    VALUES (
+      ${rec.reviewId},
+      ${rec.file},
+      ${rec.status},
+      ${rec.provider ?? null},
+      ${rec.model ?? null},
+      ${rec.findingsCount},
+      ${rec.errorMessage ?? null}
+    )
+  `;
 }
 
 export async function dbTimeoutStage(
@@ -678,6 +836,43 @@ export async function getReviewReasoningForReview(
     ORDER BY created_at ASC
   `;
   return rows as unknown as ReviewReasoning[];
+}
+
+/**
+ * Bulk upsert reasoning rows for a review in ONE query (one subrequest).
+ *
+ * The per-file saveReviewReasoning() path was 1 DB subrequest per file —
+ * for a 13-file review that alone is 13 of the 50-subrequest free-plan budget.
+ * Batching to a single INSERT keeps reasoning capture without blowing the cap.
+ */
+export async function saveReviewReasonings(
+  reviewId: string,
+  rows: Array<{ file: string; model?: string | null; thinking?: string | null; errorMessage?: string | null; retentionDays?: number }>,
+  env: EnvWithDB
+): Promise<void> {
+  if (rows.length === 0) return;
+  const sql = getDb(env.DATABASE_URL);
+  const retentionDays = Math.max(1, Math.floor(rows[0]?.retentionDays ?? 14));
+
+  const files = rows.map(r => r.file);
+  const models = rows.map(r => r.model ?? null);
+  const thinkings = rows.map(r => r.thinking ?? null);
+  const errors = rows.map(r => r.errorMessage ?? null);
+
+  await sql`
+    INSERT INTO review_reasoning (review_id, file, model, thinking, error_message, expires_at)
+    SELECT ${reviewId}::uuid, f.file, f.model, f.thinking, f.error_message,
+           now() + make_interval(days => ${retentionDays})
+    FROM UNNEST(${files}::text[], ${models}::text[], ${thinkings}::text[], ${errors}::text[])
+      AS f(file, model, thinking, error_message)
+    ON CONFLICT (review_id, file)
+    DO UPDATE SET
+      model = EXCLUDED.model,
+      thinking = EXCLUDED.thinking,
+      error_message = EXCLUDED.error_message,
+      expires_at = EXCLUDED.expires_at,
+      created_at = now()
+  `;
 }
 
 /**
