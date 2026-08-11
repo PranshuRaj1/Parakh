@@ -160,7 +160,7 @@ function escapeRegExp(text: string): string {
 export function extractSuppressionPatterns(instructions: Rule[]): RegExp[] {
   const patterns: RegExp[] = [...BUILTIN_SUPPRESSED_PATTERNS];
   for (const rule of instructions) {
-    for (const match of rule.body.matchAll(/"([^"]+)"/g)) {
+    for (const match of rule.body?.matchAll(/"([^"]+)"/g) ?? []) {
       const phrase = match[1].trim();
       if (phrase.length < 4) continue;
       patterns.push(new RegExp(escapeRegExp(phrase), 'i'));
@@ -341,6 +341,7 @@ async function reviewSingleFile(
   fileName: string,
   fileChunks: Map<string, string>,
   activeRules: Rule[],
+  suppressPatterns: RegExp[],
   env: Env,
   signal: AbortSignal,
   reviewId: string,
@@ -357,7 +358,6 @@ async function reviewSingleFile(
   const applicableRules = activeRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
   );
-  const instructions = activeRules.filter(r => r.kind === 'instruction');
 
   // Live per-file progress: "file 3/8: src/foo.ts" on the reviews row.
   // Uses the light update so we don't append a reason_transitions per file.
@@ -467,7 +467,7 @@ async function reviewSingleFile(
     }
   }
 
-  return suppressFindings(findings, instructions);
+  return findings.filter((f) => !suppressPatterns.some((re) => re.test(f.body)));
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -806,6 +806,10 @@ async function executeReviewJobInternal(
     });
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
+    // Compile suppression patterns once per job — instruction rules don't change
+    // mid-review, so per-file recompilation would be wasted work.
+    const suppressPatterns = extractSuppressionPatterns(activeRules.filter(r => r.kind === 'instruction'));
+
     // Budget guard: counts the subrequests we control (DB, Redis, GitHub,
     // Gemini, Groq). Free plan caps an invocation at 50 total; this stops us
     // well under that and lets the queue redelivery resume from per-file state
@@ -878,7 +882,7 @@ async function executeReviewJobInternal(
             const fileName = batch[i];
             try {
               const findings = await reviewSingleFile(
-                llm, fileName, fileChunks, activeRules, env, signal,
+                llm, fileName, fileChunks, activeRules, suppressPatterns, env, signal,
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
                 captureReasoning, retentionDays, reasoningBuffer, budget
               );

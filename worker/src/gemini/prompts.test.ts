@@ -11,6 +11,7 @@ function rule(overrides: Partial<Rule> = {}): Rule {
     status: 'ACTIVE',
     scope: {},
     priority: 'normal',
+    kind: 'standard',
     supersedes: null,
     superseded_by: null,
     source_pr: null,
