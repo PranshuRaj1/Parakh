@@ -198,6 +198,19 @@ describe('executeCommentResponseJob', () => {
     );
   });
 
+  it('acknowledges suppression directives with the instruction wording', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-9', body: 'stop flagging "No newline at the end of the file"', priority: 'normal', kind: 'instruction',
+    } as never);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token'
+    );
+  });
+
   it('replies gracefully when saving a CORRECTION fails', async () => {
     classifyIntentMock.mockResolvedValueOnce('CORRECTION');
     mocked.saveCorrectionAsRule.mockRejectedValue(new Error('embedding failed'));

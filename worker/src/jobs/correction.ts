@@ -15,9 +15,38 @@
  */
 
 import type { ContradictionJobPayload } from '@parakh/shared';
+import type { RuleKind } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
+
+/**
+ * Phrasing that marks a correction as a SUPPRESSION directive rather than an
+ * enforceable standard. If present, the rule is stored as kind='instruction':
+ * excluded from the enforce list, rendered as a prompt suppression, and matched
+ * deterministically to drop findings.
+ */
+const INSTRUCTION_HINTS = [
+  'stop flagging',
+  'stop raising',
+  'stop reporting',
+  'stop flag',
+  'never flag',
+  'never raise',
+  "don't flag",
+  'dont flag',
+  'do not flag',
+  "don't raise",
+  'dont raise',
+  'do not raise',
+  'in any future review',
+  'in future reviews',
+];
+
+export function isInstructionRule(ruleBody: string): boolean {
+  const lower = ruleBody.toLowerCase();
+  return INSTRUCTION_HINTS.some((hint) => lower.includes(hint));
+}
 
 /**
  * Save a correction comment as an ACTIVE rule and enqueue the contradiction check.
@@ -49,6 +78,10 @@ export async function saveCorrectionAsRule(
   // Classify priority
   const priority = await llm.classifyPriority(ruleBody);
 
+  // Suppression directives ("stop flagging X") are stored as 'instruction' rules,
+  // never enforced as standards.
+  const kind: RuleKind = isInstructionRule(ruleBody) ? 'instruction' : 'standard';
+
   // Insert rule as ACTIVE — auto-activate, not SUGGESTED
   const rule = await insertRule(
     {
@@ -57,12 +90,13 @@ export async function saveCorrectionAsRule(
       embedding,
       status: 'ACTIVE',
       priority,
+      kind,
       source_pr: input.prNumber,
     },
     env
   );
 
-  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority})`);
+  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority}, kind: ${kind})`);
 
   // Enqueue contradiction check (async safety net, same queue as dashboard rules)
   const contradictionPayload: ContradictionJobPayload = {

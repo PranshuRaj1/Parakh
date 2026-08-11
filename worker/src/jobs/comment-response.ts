@@ -119,10 +119,16 @@ export async function executeCommentResponseJob(
           { installationId, owner, repo, prNumber, commentBody },
           env
         );
-        const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
-        await postReply(
-          `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
-        );
+        if (rule.kind === 'instruction') {
+          await postReply(
+            `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`
+          );
+        } else {
+          const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+          await postReply(
+            `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
+          );
+        }
       } catch (err) {
         console.error('[comment-response] Failed to save CORRECTION as rule:', err);
         await postReply("Couldn't save that right now — please try again.");

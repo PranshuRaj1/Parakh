@@ -15,7 +15,7 @@ vi.mock('../gemini/client.js', () => ({
 
 vi.mock('../db/rules.js', () => ({ insertRule: vi.fn() }));
 
-import { saveCorrectionAsRule } from './correction.js';
+import { saveCorrectionAsRule, isInstructionRule } from './correction.js';
 import { insertRule } from '../db/rules.js';
 
 const mocked = {
@@ -90,5 +90,39 @@ describe('saveCorrectionAsRule', () => {
     expect(env.WATCHDOG_QUEUE.send).toHaveBeenCalledWith(
       expect.objectContaining({ ruleBody: 'we never flag EOF newline issues' })
     );
+  });
+
+  it('stores forward-looking suppression directives as instruction rules', async () => {
+    await saveCorrectionAsRule(
+      input({ commentBody: '@parakh stop flagging "No newline at the end of the file" in any future review' }),
+      env
+    );
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'instruction' }),
+      env
+    );
+  });
+
+  it('stores ordinary corrections as standard rules', async () => {
+    await saveCorrectionAsRule(input({ commentBody: 'use snake_case for database columns' }), env);
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'standard' }),
+      env
+    );
+  });
+});
+
+describe('isInstructionRule', () => {
+  it('detects suppression phrasing', () => {
+    expect(isInstructionRule('stop flagging EOF newlines')).toBe(true);
+    expect(isInstructionRule('do not raise unbounded loops in future reviews')).toBe(true);
+    expect(isInstructionRule('never flag X')).toBe(true);
+  });
+
+  it('treats plain standards as non-instructions', () => {
+    expect(isInstructionRule('use snake_case for database columns')).toBe(false);
+    expect(isInstructionRule('always handle promise rejections')).toBe(false);
   });
 });

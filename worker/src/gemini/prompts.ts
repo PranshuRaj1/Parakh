@@ -25,7 +25,13 @@ export function buildReviewPrompt(
     .map(([level, info]) => `| ${level} | ${info.weight} | ${info.definition} | ${info.examples} |`)
     .join('\n');
 
-  const rulesSection = activeRules.length > 0
+  // 'standard' rules are enforceable coding standards; 'instruction' rules are
+  // suppression directives ("stop flagging X") and must NEVER be reported as
+  // violations — they only tell the model what not to raise.
+  const enforceRules = activeRules.filter((r) => r.kind !== 'instruction');
+  const instructions = activeRules.filter((r) => r.kind === 'instruction');
+
+  const rulesSection = enforceRules.length > 0
     ? `
 ## Active Coding Rules for This Repository
 
@@ -33,7 +39,18 @@ The following rules are active coding standards. If any code in the diff violate
 report it as a rule finding with the rule's ID. Do NOT assign a severity to rule findings —
 the system will assign severity based on the rule's priority setting.
 
-${activeRules.map((r) => `- **[${r.id}]** (priority: ${r.priority}): ${r.body}`).join('\n')}
+${enforceRules.map((r) => `- **[${r.id}]** (priority: ${r.priority}): ${r.body}`).join('\n')}
+`
+    : '';
+
+  const suppressionSection = instructions.length > 0
+    ? `
+## Suppressed Issues
+
+The developer has explicitly asked for the following issue categories to NOT be raised. Do NOT
+report generic or rule findings for these — they are intentional/acceptable for this codebase.
+
+${instructions.map((r) => `- ${r.body}`).join('\n')}
 `
     : '';
 
@@ -48,6 +65,8 @@ Classify each GENERIC finding (not tied to a stored rule) into exactly one of th
 ${severityTable}
 
 ${rulesSection}
+
+${suppressionSection}
 
 ## Output Instructions
 
