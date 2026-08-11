@@ -167,6 +167,13 @@ export async function findSimilarRules(
   env: EnvWithDB,
   excludeRuleId?: string
 ): Promise<(Rule & { similarity: number })[]> {
+  // Same fail-fast dimension guard as insertRule: a wrong-width embedding would
+  // only fail inside Neon at runtime, so surface a clear error here instead.
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `[rules] Embedding dimension mismatch: got ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`
+    );
+  }
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${embedding.join(',')}]`;
 

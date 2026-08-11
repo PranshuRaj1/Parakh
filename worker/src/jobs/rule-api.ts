@@ -21,6 +21,11 @@ import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
 
+/** Keep logged rule bodies bounded so a long rule can't bloat logs or leak PII. */
+function truncateBody(body: string, max = 80): string {
+  return body.length > max ? `${body.slice(0, max)}…` : body;
+}
+
 /**
  * Handle a rule creation request from the dashboard.
  */
@@ -43,8 +48,21 @@ export async function handleCreateRule(
   // 2. Generate embedding
   const embedding = await llm.generateEmbedding(request.body);
 
-  // 3. Classify priority (or use override from request)
-  const priority = request.priority || await llm.classifyPriority(request.body);
+  // 3. Classify priority (or use override from request). Fail-open to 'normal'
+  //    on error so rule creation is never blocked by a classifier outage —
+  //    consistent with the fail-open rule-mode logic below.
+  let priority = request.priority;
+  if (!priority) {
+    try {
+      priority = await llm.classifyPriority(request.body);
+    } catch (err) {
+      priority = 'normal';
+      console.error(
+        `[rule-api] Priority classification failed for "${truncateBody(request.body)}" — defaulting to normal:`,
+        err
+      );
+    }
+  }
 
   // 4. Classify enforcement mode + suppression patterns. Fail-open: on any
   //    classification error, default to 'enforce' with no patterns — the worst
@@ -58,7 +76,7 @@ export async function handleCreateRule(
     patterns = classification.patterns;
   } catch (err) {
     console.error(
-      `[rule-api] Rule-mode classification failed for "${request.body}" — defaulting to enforce:`,
+      `[rule-api] Rule-mode classification failed for "${truncateBody(request.body)}" — defaulting to enforce:`,
       err
     );
   }

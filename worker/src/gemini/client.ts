@@ -88,16 +88,16 @@ export function extractResponseWithThinking(
 // ─── Client Class ────────────────────────────────────────────────────────────
 
 export class GeminiClient implements LLMProvider {
-  private keys: string[];
-  private generationModel: string;
+  private keys!: string[];
+  private generationModel!: string;
 
   /**
    * Reasoning capture is opt-in via REASONING_CAPTURE_ENABLED and hard-capped by
    * REASONING_THINKING_BUDGET. Applied ONLY to reviewDiff calls (not intent /
    * priority / relationship classification) to keep the thinking-token spend low.
    */
-  private reasoningEnabled: boolean;
-  private thinkingBudget: number;
+  private reasoningEnabled!: boolean;
+  private thinkingBudget!: number;
 
   /**
    * Shared hint: the index of the last key that succeeded.

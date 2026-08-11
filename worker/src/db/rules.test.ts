@@ -42,25 +42,27 @@ beforeEach(() => {
 });
 
 describe('insertRule embedding dimension guard', () => {
-  it('throws before running SQL when the embedding is not 768-dim', async () => {
+  it(`throws before running SQL when the embedding is not ${EMBEDDING_DIMENSIONS}-dim`, async () => {
     mockedGetDb.mockReturnValue((() => {
       throw new Error('getDb should never be called for a mismatched embedding');
     }) as never);
 
     await expect(
       insertRule(ruleInput(Array(1024).fill(0.1)), env)
-    ).rejects.toThrow(/Embedding dimension mismatch: got 1024, expected 768/);
+    ).rejects.toThrow(
+      new RegExp(`Embedding dimension mismatch: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
+    );
     expect(mockedGetDb).not.toHaveBeenCalled();
   });
 
   it('throws for a zero-length embedding too', async () => {
     await expect(insertRule(ruleInput([]), env)).rejects.toThrow(
-      /got 0, expected 768/
+      new RegExp(`got 0, expected ${EMBEDDING_DIMENSIONS}`)
     );
     expect(mockedGetDb).not.toHaveBeenCalled();
   });
 
-  it('accepts a 768-dim embedding and passes the vector string to the query', async () => {
+  it(`accepts a ${EMBEDDING_DIMENSIONS}-dim embedding and passes the vector string to the query`, async () => {
     const embedding = Array(EMBEDDING_DIMENSIONS).fill(0.5);
     const sql = vi.fn().mockResolvedValue([{ id: 'rule-9' }]);
     mockedGetDb.mockReturnValue(sql as never);
@@ -90,5 +92,18 @@ describe('findSimilarRules', () => {
     expect(values).toContain(`[${embedding.join(',')}]`);
     expect(values).toContain(0.7);
     expect(values).toContain(5);
+  });
+
+  it(`throws before running SQL when the embedding is not ${EMBEDDING_DIMENSIONS}-dim`, async () => {
+    mockedGetDb.mockReturnValue((() => {
+      throw new Error('getDb should never be called for a mismatched embedding');
+    }) as never);
+
+    await expect(
+      findSimilarRules('acme/app', Array(1024).fill(0.1), 0.7, 5, env)
+    ).rejects.toThrow(
+      new RegExp(`Embedding dimension mismatch: got 1024, expected ${EMBEDDING_DIMENSIONS}`)
+    );
+    expect(mockedGetDb).not.toHaveBeenCalled();
   });
 });

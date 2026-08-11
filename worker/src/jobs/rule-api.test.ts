@@ -69,6 +69,17 @@ describe('handleCreateRule', () => {
     expect(classifyPriorityMock).toHaveBeenCalledWith('Never store secrets');
   });
 
+  it('fails open to normal priority when priority classification errors', async () => {
+    classifyPriorityMock.mockRejectedValue(new Error('timeout'));
+
+    await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ priority: 'normal' }),
+      env
+    );
+  });
+
   it('classifies mode and persists a suppress rule with its patterns', async () => {
     classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline'] });
 

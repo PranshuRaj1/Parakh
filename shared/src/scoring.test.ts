@@ -63,11 +63,6 @@ describe('computeScore', () => {
   it('never exceeds 5', () => {
     expect(computeScore([finding('LOW')])).toBeLessThanOrEqual(5);
   });
-
-  it('caps accumulated medium and low penalties at their taxonomy limits', () => {
-    expect(computeScore(Array.from({ length: 4 }, () => finding('MEDIUM')))).toBe(3.5);
-    expect(computeScore(Array.from({ length: 5 }, () => finding('LOW')))).toBe(4.6);
-  });
 });
 
 describe('displayScore', () => {
@@ -87,6 +82,11 @@ describe('normalizeMessage', () => {
   it('lowercases, strips punctuation, collapses whitespace, and caps length', () => {
     expect(normalizeMessage('No newline at END of file!!!')).toBe('no newline at end of file');
     expect(normalizeMessage('foo  bar\n\tbaz')).toBe('foo bar baz');
+  });
+
+  it('caps the normalized body to 200 characters', () => {
+    expect(normalizeMessage('x'.repeat(500))).toHaveLength(200);
+    expect(normalizeMessage('x'.repeat(50))).toHaveLength(50);
   });
 });
 

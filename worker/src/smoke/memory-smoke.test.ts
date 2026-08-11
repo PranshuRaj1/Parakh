@@ -354,15 +354,17 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
-    // The full learn chain must run.
+    // The full learn chain must run. Intent is classified on the RAW comment
+    // (in comment-response), but the stored rule text has the @parakh command
+    // prefix stripped (correction.ts) before embedding/priority/mode.
     expect(classifyIntentMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review', '');
-    expect(generateEmbeddingMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review');
-    expect(classifyPriorityMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review');
-    expect(classifyRuleModeMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review');
+    expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
+    expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
+    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
-        body: '@parakh never flag EOF newline issues in any future review',
+        body: 'never flag EOF newline issues in any future review',
         status: 'ACTIVE',
         priority: 'normal',
         mode: 'enforce',
@@ -386,7 +388,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
       repo: 'app',
       prNumber: 7,
       ruleId: 'rule-new',
-      ruleBody: '@parakh never flag EOF newline issues in any future review',
+      ruleBody: 'never flag EOF newline issues in any future review',
     });
     expect((sent[0] as { embedding: number[] }).embedding).toHaveLength(768);
 

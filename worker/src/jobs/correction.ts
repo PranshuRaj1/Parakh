@@ -14,10 +14,15 @@
  * via PR comment" and "rule created via dashboard".
  */
 
-import type { ContradictionJobPayload, RuleMode } from '@parakh/shared';
+import type { ContradictionJobPayload, RuleMode, RulePriority } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
+
+/** Keep logged rule bodies bounded so a long rule can't bloat logs or leak PII. */
+function truncateBody(body: string, max = 80): string {
+  return body.length > max ? `${body.slice(0, max)}…` : body;
+}
 
 /**
  * Save a correction comment as an ACTIVE rule and enqueue the contradiction check.
@@ -35,7 +40,8 @@ export async function saveCorrectionAsRule(
 ) {
   const fullRepo = `${input.owner}/${input.repo}`;
 
-  // The comment body is the rule text — kept verbatim (may include the @parakh mention).
+  // The comment body is the rule text — the @parakh command prefix (and any
+  // optional "correction:" label) is stripped so the stored rule reads clean.
   const ruleBody = input.commentBody
     .replace(/^\s*@parakh\b(?:\s+correction\b)?\s*[:,-]?\s*/i, '')
     .trim();
@@ -46,8 +52,18 @@ export async function saveCorrectionAsRule(
   // Generate embedding for similarity search
   const embedding = await llm.generateEmbedding(ruleBody);
 
-  // Classify priority
-  const priority = await llm.classifyPriority(ruleBody);
+  // Classify priority. Fail-open to 'normal' on error: a classifier outage
+  // must never block rule creation (mirrors the fail-open rule-mode logic
+  // below). Log for manual review.
+  let priority: RulePriority = 'normal';
+  try {
+    priority = await llm.classifyPriority(ruleBody);
+  } catch (err) {
+    console.error(
+      `[correction] Priority classification failed for "${truncateBody(ruleBody)}" — defaulting to normal:`,
+      err
+    );
+  }
 
   // Classify enforcement mode + suppression patterns. Fail-open: on any
   // classification error, default to 'enforce' with no patterns — the worst
@@ -61,7 +77,7 @@ export async function saveCorrectionAsRule(
     patterns = classification.patterns;
   } catch (err) {
     console.error(
-      `[correction] Rule-mode classification failed for "${ruleBody}" — defaulting to enforce:`,
+      `[correction] Rule-mode classification failed for "${truncateBody(ruleBody)}" — defaulting to enforce:`,
       err
     );
   }
@@ -95,8 +111,15 @@ export async function saveCorrectionAsRule(
     embedding: Array.from(embedding),
   };
 
-  await env.WATCHDOG_QUEUE.send(contradictionPayload);
-  console.log(`[correction] Enqueued contradiction check for rule ${rule.id}`);
+  // Enqueue contradiction check (async safety net, same queue as dashboard rules).
+  // Fail-open: the rule is already committed, so a queue hiccup must NOT cause
+  // the job to retry and re-insert a duplicate rule. Log and move on.
+  try {
+    await env.WATCHDOG_QUEUE.send(contradictionPayload);
+    console.log(`[correction] Enqueued contradiction check for rule ${rule.id}`);
+  } catch (err) {
+    console.error(`[correction] Failed to enqueue contradiction check for rule ${rule.id}:`, err);
+  }
 
   return rule;
 }

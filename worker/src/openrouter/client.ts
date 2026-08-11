@@ -201,6 +201,11 @@ export class OpenRouterClient implements LLMProvider {
     return parseJson<{ priority?: RulePriority }>(raw).priority ?? 'normal';
   }
 
+  /**
+   * Classify a rule's enforcement mode and extract suppression patterns.
+   * Returns "enforce"/"suppress" plus case-insensitive patterns for the
+   * deterministic suppression post-filter.
+   */
   async classifyRuleMode(ruleBody: string): Promise<RuleModeResult> {
     const { buildRuleModePrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(buildRuleModePrompt(ruleBody), { json: true });
