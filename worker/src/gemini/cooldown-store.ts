@@ -52,26 +52,27 @@ export class MemoryCooldownStore implements CooldownStore {
 }
 
 /**
- * Redis-backed store. `load()` reads the whole map once; `flush()` writes it
- * back only when something changed — so a full key pool parked during a storm
- * costs ONE Redis GET + ONE Redis SET per delivery, not 7.
+ * Redis-backed store. Cooldown state is persisted as ONE Redis hash where each
+ * key index is a hash field: `HGETALL` then read once a delivery, HSET/HDEL for
+ * the individual keys that actually changed.
  *
- * Tradeoff: the entire map is persisted as a single JSON blob under one key,
- * so `load()` → mutate → `flush()` is a read-modify-write that can clobber a
- * concurrent writer's update. This is acceptable because cooldowns are
- * best-effort state: a lost update only means a rate-limited key gets retried
- * once, and only one worker processes a given queue delivery at a time. The
- * whole-blob rewrite is asserted in cooldown-store.test.ts to keep the design
- * explicit.
+ * Unlike a single JSON blob, this is NOT a read-modify-write over the whole
+ * map: HSET(key){KEY_N} / HDEL(key){KEY_N} are atomic per-field writes, so two
+ * workers parking DIFFERENT keys concurrently cannot clobber each other's
+ * update. The stale read of the OTHER worker's just-written field is harmless —
+ * worst case that key is re-read as not-parked once and retried. Same best-effort
+ * semantics as before, minus the whole-map overwrite race.
  */
 export class RedisCooldownStore extends MemoryCooldownStore {
   private loaded = false;
-  private dirty = false;
+  private dirty = new Map<number, CooldownEntry | null>();
 
   constructor(
     private readonly redisKey: string,
-    private readonly redisGet: (key: string) => Promise<string | null>,
-    private readonly redisSet: (key: string, value: string, opts?: { ex?: number }) => Promise<unknown>,
+    private readonly redisHGetAll: (key: string) => Promise<Record<string, string> | null>,
+    private readonly redisHSet: (key: string, field: string, value: string) => Promise<unknown>,
+    private readonly redisHDel: (key: string, field: string) => Promise<unknown>,
+    private readonly redisExpire: (key: string, seconds: number) => Promise<unknown>,
     private readonly ttlSeconds = 7 * 24 * 60 * 60
   ) {
     super();
@@ -81,13 +82,17 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     if (this.loaded) return;
     this.loaded = true;
     try {
-      const raw = await this.redisGet(this.redisKey);
+      const raw = await this.redisHGetAll(this.redisKey);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, { until: number; dailyQuota?: boolean }>;
-      for (const [k, v] of Object.entries(parsed)) {
+      for (const [k, v] of Object.entries(raw)) {
         const idx = Number(k);
-        if (Number.isFinite(idx) && v && typeof v.until === 'number') {
-          this.entries.set(idx, { until: v.until, dailyQuota: !!v.dailyQuota });
+        if (Number.isFinite(idx) && v) {
+          try {
+            const parsed = JSON.parse(v) as { until: number; dailyQuota?: boolean };
+            this.entries.set(idx, { until: parsed.until, dailyQuota: !!parsed.dailyQuota });
+          } catch {
+            // skip one corrupt field instead of failing the whole load
+          }
         }
       }
     } catch (err) {
@@ -99,25 +104,33 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     const prev = this.entries.get(keyIndex);
     if (prev && prev.until === entry.until && prev.dailyQuota === entry.dailyQuota) return;
     this.entries.set(keyIndex, entry);
-    this.dirty = true;
+    this.dirty.set(keyIndex, entry);
   }
 
   clear(keyIndex: number): void {
-    if (this.entries.delete(keyIndex)) this.dirty = true;
+    if (this.entries.delete(keyIndex)) this.dirty.set(keyIndex, null);
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty) return;
-    this.dirty = false;
+    if (this.dirty.size === 0) return;
+    const changes = new Map(this.dirty);
+    this.dirty.clear();
     try {
-      const obj: Record<string, { until: number; dailyQuota: boolean }> = {};
-      for (const [k, v] of this.entries) {
-        obj[String(k)] = { until: v.until, dailyQuota: v.dailyQuota };
+      for (const [keyIndex, entry] of changes) {
+        if (entry === null) {
+          await this.redisHDel(this.redisKey, String(keyIndex));
+        } else {
+          await this.redisHSet(
+            this.redisKey,
+            String(keyIndex),
+            JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
+          );
+        }
       }
-      await this.redisSet(this.redisKey, JSON.stringify(obj), { ex: this.ttlSeconds });
+      await this.redisExpire(this.redisKey, this.ttlSeconds);
     } catch (err) {
       console.warn(`[cooldown] Failed to flush ${this.redisKey}:`, err);
-      this.dirty = true;
+      for (const [k, v] of changes) this.dirty.set(k, v);
     }
   }
 }

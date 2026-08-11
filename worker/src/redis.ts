@@ -27,6 +27,75 @@ export function createRedisSet(env: Env): (key: string, value: string, opts?: { 
 }
 
 /**
+ * HGETALL — read all fields of a Redis hash. Used so cooldown state can be
+ * persisted as per-key hash fields instead of a single JSON blob, letting
+ * concurrent workers park/clear individual keys without clobbering each other.
+ */
+export function createRedisHGetAll(env: Env): (key: string) => Promise<Record<string, string> | null> {
+  return async (key: string) => {
+    const response = await fetch(
+      `${env.UPSTASH_REDIS_URL}/hgetall/${encodeURIComponent(key)}`,
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+    );
+    if (!response.ok) {
+      throw new Error(`Redis HGETALL failed (${response.status}) for key ${key}`);
+    }
+    const data = (await response.json()) as { result: Record<string, string> | null };
+    return data.result;
+  };
+}
+
+/**
+ * HSET — atomically set a single field of a Redis hash. No read-modify-write,
+ * so an HSET for key N can never overwrite another worker's HSET for key M.
+ */
+export function createRedisHSet(env: Env): (key: string, field: string, value: string) => Promise<unknown> {
+  return async (key: string, field: string, value: string) => {
+    const response = await fetch(
+      `${env.UPSTASH_REDIS_URL}/hset/${encodeURIComponent(key)}/${encodeURIComponent(field)}/${encodeURIComponent(value)}`,
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+    );
+    if (!response.ok) {
+      throw new Error(`Redis HSET failed (${response.status}) for key ${key}`);
+    }
+    return response.json();
+  };
+}
+
+/**
+ * HDEL — atomically remove a single field of a Redis hash.
+ */
+export function createRedisHDel(env: Env): (key: string, field: string) => Promise<unknown> {
+  return async (key: string, field: string) => {
+    const response = await fetch(
+      `${env.UPSTASH_REDIS_URL}/hdel/${encodeURIComponent(key)}/${encodeURIComponent(field)}`,
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+    );
+    if (!response.ok) {
+      throw new Error(`Redis HDEL failed (${response.status}) for key ${key}`);
+    }
+    return response.json();
+  };
+}
+
+/**
+ * EXPIRE — set a TTL on a key. Applied after a cooldown flush so a parked hash
+ * stops existing once cooldowns are stale, matching the old blob-TTL semantics.
+ */
+export function createRedisExpire(env: Env): (key: string, seconds: number) => Promise<unknown> {
+  return async (key: string, seconds: number) => {
+    const response = await fetch(
+      `${env.UPSTASH_REDIS_URL}/expire/${encodeURIComponent(key)}/${seconds}`,
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+    );
+    if (!response.ok) {
+      throw new Error(`Redis EXPIRE failed (${response.status}) for key ${key}`);
+    }
+    return response.json();
+  };
+}
+
+/**
  * Atomic SET NX EX — acquires a lock. Returns true if lock acquired, false if already held.
  * Used for session locking to prevent double-trigger races.
  */
