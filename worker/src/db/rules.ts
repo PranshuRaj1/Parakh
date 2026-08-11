@@ -6,7 +6,7 @@
  */
 
 import { getDb } from './client.js';
-import type { Rule, RuleStatus, RuleRelationshipRecord, RulePriority } from '@parakh/shared';
+import type { Rule, RuleKind, RuleStatus, RuleRelationshipRecord, RulePriority } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ export async function getActiveRules(
 ): Promise<Rule[]> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
-    SELECT id, repo, body, status, scope, priority, supersedes, superseded_by,
+    SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
            source_pr, evidence_count, reinforcement_count, created_at, superseded_at
     FROM rules
     WHERE status = 'ACTIVE' AND repo = ${repo}
@@ -49,7 +49,7 @@ export async function getRuleById(
 ): Promise<Rule | null> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
-    SELECT id, repo, body, status, scope, priority, supersedes, superseded_by,
+    SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
            source_pr, evidence_count, reinforcement_count, created_at, superseded_at
     FROM rules
     WHERE id = ${id}
@@ -69,6 +69,7 @@ export async function insertRule(
     status: RuleStatus;
     scope?: Record<string, unknown>;
     priority?: RulePriority;
+    kind?: RuleKind;
     source_pr?: number;
   },
   env: EnvWithDB
@@ -76,7 +77,7 @@ export async function insertRule(
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${rule.embedding.join(',')}]`;
   const rows = await sql`
-    INSERT INTO rules (repo, body, embedding, status, scope, priority, source_pr)
+    INSERT INTO rules (repo, body, embedding, status, scope, priority, kind, source_pr)
     VALUES (
       ${rule.repo},
       ${rule.body},
@@ -84,9 +85,10 @@ export async function insertRule(
       ${rule.status},
       ${JSON.stringify(rule.scope || {})}::jsonb,
       ${rule.priority || 'normal'},
+      ${rule.kind || 'standard'},
       ${rule.source_pr || null}
     )
-    RETURNING id, repo, body, status, scope, priority, supersedes, superseded_by,
+    RETURNING id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
               source_pr, evidence_count, reinforcement_count, created_at, superseded_at
   `;
 
@@ -154,12 +156,13 @@ export async function findSimilarRules(
   const embeddingStr = `[${embedding.join(',')}]`;
 
   const rows = await sql`
-    SELECT id, repo, body, status, scope, priority, supersedes, superseded_by,
+    SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
            source_pr, evidence_count, reinforcement_count, created_at, superseded_at,
            1 - (embedding <=> ${embeddingStr}::vector) as similarity
     FROM rules
     WHERE status = 'ACTIVE'
       AND repo = ${repo}
+      AND kind != 'instruction'
       AND embedding IS NOT NULL
       AND (${excludeRuleId}::uuid IS NULL OR id != ${excludeRuleId}::uuid)
       AND 1 - (embedding <=> ${embeddingStr}::vector) > ${threshold}
@@ -237,14 +240,14 @@ export async function getSupersessionChain(
   const rows = await sql`
     WITH RECURSIVE chain AS (
       -- Start from the given rule
-      SELECT id, repo, body, status, scope, priority, supersedes, superseded_by,
+      SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
              source_pr, evidence_count, reinforcement_count, created_at, superseded_at
       FROM rules WHERE id = ${ruleId}
 
       UNION ALL
 
       -- Walk backwards (older rules that this one supersedes)
-      SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.supersedes, r.superseded_by,
+      SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.kind, r.supersedes, r.superseded_by,
              r.source_pr, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
       FROM rules r
       INNER JOIN chain c ON r.id = c.supersedes
@@ -252,7 +255,7 @@ export async function getSupersessionChain(
       UNION ALL
 
       -- Walk forwards (newer rules that supersede this one)
-      SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.supersedes, r.superseded_by,
+      SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.kind, r.supersedes, r.superseded_by,
              r.source_pr, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
       FROM rules r
       INNER JOIN chain c ON r.id = c.superseded_by

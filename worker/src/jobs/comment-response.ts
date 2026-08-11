@@ -1,4 +1,5 @@
 import type { CommentJobPayload } from '@parakh/shared';
+import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
@@ -8,9 +9,17 @@ import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
+/**
+ * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
+ *
+ * @param attempts Queue delivery count. Kept for a uniform executor signature —
+ *   queue-handler passes message.attempts to every handler so the delivery
+ *   metadata is available if a redelivery ever needs different behavior.
+ */
 export async function executeCommentResponseJob(
   payload: CommentJobPayload,
-  env: Env
+  env: Env,
+  attempts = 1
 ): Promise<void> {
   const {
     installationId,
@@ -77,14 +86,14 @@ export async function executeCommentResponseJob(
           await postReply("⚠️ A review is already in progress, please wait and try again.");
         }
       } else {
-        // Mark the trigger comment with 👀 while the review runs, then pass the
+        // Mark the trigger comment with SEEN while the review runs, then pass the
         // reaction through so triggerReview can persist it on the new row.
         // Best-effort: a reaction failure must not block the review itself.
         let reactionId: number | undefined;
         try {
-          reactionId = await addCommentReaction(owner, repo, commentId, commentType, 'eyes', token);
+          reactionId = await addCommentReaction(owner, repo, commentId, commentType, REACTIONS.SEEN, token);
         } catch (err) {
-          console.warn(`[comment-response] Failed to add 👀 reaction on trigger comment:`, err);
+          console.warn(`[comment-response] Failed to add SEEN reaction on trigger comment:`, err);
         }
         const enqueued = await triggerReview(
           installationId, owner, repo, prNumber,
@@ -110,10 +119,16 @@ export async function executeCommentResponseJob(
           { installationId, owner, repo, prNumber, commentBody },
           env
         );
-        const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
-        await postReply(
-          `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
-        );
+        if (rule.kind === 'instruction') {
+          await postReply(
+            `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`
+          );
+        } else {
+          const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+          await postReply(
+            `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
+          );
+        }
       } catch (err) {
         console.error('[comment-response] Failed to save CORRECTION as rule:', err);
         await postReply("Couldn't save that right now — please try again.");

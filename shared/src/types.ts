@@ -6,6 +6,15 @@ export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
 /** Rule priority — determines severity weight for violations. */
 export type RulePriority = 'high' | 'normal';
 
+/**
+ * Rule kind — decides how a rule is applied during review:
+ * - 'standard': an enforceable coding standard. Violations surface as rule findings.
+ * - 'instruction': a suppression directive ("stop flagging X"). Never enforced as a
+ *   standard; instead excluded from the enforce list, rendered as a "do NOT report"
+ *   hint in the prompt, and matched deterministically to drop findings.
+ */
+export type RuleKind = 'standard' | 'instruction';
+
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
@@ -32,6 +41,8 @@ export interface Rule {
   status: RuleStatus;
   scope: Record<string, unknown>;
   priority: RulePriority;
+  /** 'standard' (enforce) or 'instruction' (suppress). Defaults to 'standard'. */
+  kind?: RuleKind;
   supersedes: string | null;
   superseded_by: string | null;
   source_pr: number | null;

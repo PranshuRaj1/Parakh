@@ -19,7 +19,7 @@ import { CfaAiClient, type CfaAiEnv } from '../cfai/client.js';
 import { OpenRouterClient, type OpenRouterEnv } from '../openrouter/client.js';
 import { LLMClient, type ProviderName, type LLMProvider } from './provider.js';
 import { MemoryCooldownStore, RedisCooldownStore, type CooldownStore } from '../gemini/cooldown-store.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisHGetAll, createRedisHSet, createRedisHDel, createRedisExpire } from '../redis.js';
 
 export interface LLMClients {
   llm: LLMClient;
@@ -97,5 +97,11 @@ function makeCooldownStore(key: string, env: Env): CooldownStore {
   if (!env.UPSTASH_REDIS_URL || !env.UPSTASH_REDIS_TOKEN) {
     return new MemoryCooldownStore();
   }
-  return new RedisCooldownStore(key, createRedisGet(env), createRedisSet(env));
+  return new RedisCooldownStore({
+    redisKey: key,
+    redisHGetAll: createRedisHGetAll(env),
+    redisHSet: createRedisHSet(env),
+    redisHDel: createRedisHDel(env),
+    redisExpire: createRedisExpire(env),
+  });
 }

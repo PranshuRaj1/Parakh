@@ -137,6 +137,45 @@ export function matchesScope(filePath: string, scope: Record<string, unknown>): 
   });
 }
 
+// ─── Finding Suppression ──────────────────────────────────────────────────────
+
+/**
+ * Junk patterns Parakh never raises, regardless of LLM behavior. The EOF-newline
+ * check is the canonical one the project explicitly considers useless.
+ */
+const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
+  /newline at (the )?end of (the )?file/i,
+];
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build deterministic suppression patterns from instruction rules. An instruction
+ * like `stop flagging "No newline at the end of the file"` contributes the quoted
+ * phrase as a literal case-insensitive match, so findings whose body repeats it
+ * are dropped even if the LLM ignores the prompt-level suppression.
+ */
+export function extractSuppressionPatterns(instructions: Rule[]): RegExp[] {
+  const patterns: RegExp[] = [...BUILTIN_SUPPRESSED_PATTERNS];
+  for (const rule of instructions) {
+    for (const match of rule.body?.matchAll(/"([^"]+)"/g) ?? []) {
+      const phrase = match[1].trim();
+      if (phrase.length < 4) continue;
+      patterns.push(new RegExp(escapeRegExp(phrase), 'i'));
+    }
+  }
+  return patterns;
+}
+
+/** Drop findings the developer asked never to raise (deterministic, LLM-independent). */
+export function suppressFindings(findings: Finding[], instructions: Rule[]): Finding[] {
+  const patterns = extractSuppressionPatterns(instructions);
+  if (patterns.length === 0) return findings;
+  return findings.filter((f) => !patterns.some((re) => re.test(f.body)));
+}
+
 export function parseDiffByFile(diff: string): Map<string, string> {
   const files = new Map<string, string>();
   const fileDiffs = diff.split(/^diff --git /m).slice(1);
@@ -302,6 +341,7 @@ async function reviewSingleFile(
   fileName: string,
   fileChunks: Map<string, string>,
   activeRules: Rule[],
+  suppressPatterns: RegExp[],
   env: Env,
   signal: AbortSignal,
   reviewId: string,
@@ -407,6 +447,9 @@ async function reviewSingleFile(
 
   for (const rf of result.ruleFindings) {
     const rule = applicableRules.find(r => r.id === rf.rule_id);
+    // An instruction rule is a suppression directive, not an enforceable
+    // standard — never surface (or count evidence for) a finding citing it.
+    if (rule?.kind === 'instruction') continue;
     const priority = rule?.priority || 'normal';
     findings.push({
       severity: resolveSeverityForRuleViolation(priority),
@@ -424,7 +467,7 @@ async function reviewSingleFile(
     }
   }
 
-  return findings;
+  return findings.filter((f) => !suppressPatterns.some((re) => re.test(f.body)));
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -763,6 +806,10 @@ async function executeReviewJobInternal(
     });
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
+    // Compile suppression patterns once per job — instruction rules don't change
+    // mid-review, so per-file recompilation would be wasted work.
+    const suppressPatterns = extractSuppressionPatterns(activeRules.filter(r => r.kind === 'instruction'));
+
     // Budget guard: counts the subrequests we control (DB, Redis, GitHub,
     // Gemini, Groq). Free plan caps an invocation at 50 total; this stops us
     // well under that and lets the queue redelivery resume from per-file state
@@ -835,7 +882,7 @@ async function executeReviewJobInternal(
             const fileName = batch[i];
             try {
               const findings = await reviewSingleFile(
-                llm, fileName, fileChunks, activeRules, env, signal,
+                llm, fileName, fileChunks, activeRules, suppressPatterns, env, signal,
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
                 captureReasoning, retentionDays, reasoningBuffer, budget
               );

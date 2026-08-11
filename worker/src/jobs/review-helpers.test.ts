@@ -5,8 +5,11 @@ import {
   formatReviewComment,
   appendDashboardLink,
   parseRetentionDays,
+  isIgnoredLockfile,
+  suppressFindings,
+  extractSuppressionPatterns,
 } from './review.js';
-import type { Finding } from '@parakh/shared';
+import type { Finding, Rule } from '@parakh/shared';
 
 function finding(severity: Finding['severity'], overrides: Partial<Finding> = {}): Finding {
   return {
@@ -16,6 +19,26 @@ function finding(severity: Finding['severity'], overrides: Partial<Finding> = {}
     body: 'some issue',
     suggestion: null,
     rule_id: null,
+    ...overrides,
+  };
+}
+
+function rule(overrides: Partial<Rule> = {}): Rule {
+  return {
+    id: 'rule-1',
+    repo: 'acme/app',
+    body: 'some standard',
+    embedding: null,
+    status: 'ACTIVE',
+    scope: {},
+    priority: 'normal',
+    supersedes: null,
+    superseded_by: null,
+    source_pr: null,
+    evidence_count: 0,
+    reinforcement_count: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    superseded_at: null,
     ...overrides,
   };
 }
@@ -85,6 +108,80 @@ describe('parseDiffByFile', () => {
 
   it('returns an empty map for an empty diff', () => {
     expect(parseDiffByFile('').size).toBe(0);
+  });
+});
+
+describe('isIgnoredLockfile', () => {
+  it('matches lockfiles at the repo root', () => {
+    expect(isIgnoredLockfile('package-lock.json')).toBe(true);
+    expect(isIgnoredLockfile('yarn.lock')).toBe(true);
+    expect(isIgnoredLockfile('pnpm-lock.yaml')).toBe(true);
+  });
+
+  it('matches lockfiles nested in subdirectories', () => {
+    expect(isIgnoredLockfile('apps/web/package-lock.json')).toBe(true);
+    expect(isIgnoredLockfile('packages/foo/yarn.lock')).toBe(true);
+  });
+
+  it('does not match regular source files', () => {
+    expect(isIgnoredLockfile('src/cron.ts')).toBe(false);
+    expect(isIgnoredLockfile('package.json')).toBe(false);
+    expect(isIgnoredLockfile('docs/guide.md')).toBe(false);
+  });
+});
+
+describe('suppressFindings', () => {
+  it('drops EOF-newline findings via the built-in pattern, even with no instruction rules', () => {
+    const result = suppressFindings([
+      finding('LOW', { body: 'No newline at the end of the file' }),
+      finding('MEDIUM', { body: 'unbounded loop' }),
+    ], []);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].body).toBe('unbounded loop');
+  });
+
+  it('drops findings matching a quoted phrase from an instruction rule', () => {
+    const instruction = rule({
+      kind: 'instruction',
+      body: 'stop flagging "No newline at the end of the file" in any future review',
+    });
+    const result = suppressFindings([
+      finding('LOW', { body: 'No newline at the end of the file' }),
+      finding('MEDIUM', { body: 'real issue' }),
+    ], [instruction]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].body).toBe('real issue');
+  });
+
+  it('keeps findings untouched when nothing is suppressed', () => {
+    const result = suppressFindings([
+      finding('HIGH', { body: 'missing auth check' }),
+    ], []);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].body).toBe('missing auth check');
+  });
+});
+
+describe('extractSuppressionPatterns', () => {
+  it('always includes the built-in EOF-newline pattern', () => {
+    expect(extractSuppressionPatterns([]).some((re) => re.test('No newline at the end of the file'))).toBe(true);
+  });
+
+  it('extracts quoted phrases from instruction rule bodies', () => {
+    const patterns = extractSuppressionPatterns([
+      rule({ kind: 'instruction', body: 'never raise "unbounded loops" in future reviews' }),
+    ]);
+    expect(patterns.some((re) => re.test('This introduces unbounded loops'))).toBe(true);
+  });
+
+  it('ignores quoted phrases shorter than 4 characters', () => {
+    const patterns = extractSuppressionPatterns([
+      rule({ kind: 'instruction', body: 'stop flagging "X" and "abc" forever' }),
+    ]);
+    expect(patterns.length).toBe(1); // only the built-in pattern
   });
 });
 

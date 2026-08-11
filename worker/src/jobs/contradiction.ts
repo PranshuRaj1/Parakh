@@ -37,10 +37,14 @@ import type { Env } from '../index.js';
  * This runs ASYNCHRONOUSLY after rule creation (enqueued from correction.ts or rule-api.ts).
  * The rule is already ACTIVE — this is a safety net, not a gate.
  * See accepted risk: race window on auto-activate.
+ *
+ * @param attempts Queue delivery count — uniform executor signature shared with
+ *   executeReviewJob/executeCommentResponseJob. Currently unused by the body.
  */
 export async function executeContradictionJob(
   payload: ContradictionJobPayload,
-  env: Env
+  env: Env,
+  attempts = 1
 ): Promise<void> {
   const { owner, repo, prNumber, ruleId, ruleBody, embedding } = payload;
   const fullRepo = `${owner}/${repo}`;
