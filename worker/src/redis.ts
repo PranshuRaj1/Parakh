@@ -40,8 +40,14 @@ export function createRedisHGetAll(env: Env): (key: string) => Promise<Record<st
     if (!response.ok) {
       throw new Error(`Redis HGETALL failed (${response.status}) for key ${key}`);
     }
-    const data = (await response.json()) as { result: Record<string, string> | null };
-    return data.result;
+    const data = (await response.json()) as { result: string[] | null };
+    if (!data.result || data.result.length === 0) return null;
+    
+    const obj: Record<string, string> = {};
+    for (let i = 0; i < data.result.length; i += 2) {
+      obj[data.result[i]] = data.result[i + 1];
+    }
+    return obj;
   };
 }
 
