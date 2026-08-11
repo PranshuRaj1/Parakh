@@ -9,7 +9,6 @@ import type { ReviewJobPayload, Finding, Rule, StageReasonCode, ReviewStage, Rev
 import {
   computeScore,
   displayScore,
-  dedupeFindings,
   resolveSeverityForRuleViolation,
   POSITIVE_THRESHOLD,
   NEGATIVE_THRESHOLD,
@@ -136,6 +135,45 @@ export function matchesScope(filePath: string, scope: Record<string, unknown>): 
     const regex = globToRegExp(pattern);
     return regex.test(filePath);
   });
+}
+
+// ─── Finding Suppression ──────────────────────────────────────────────────────
+
+/**
+ * Junk patterns Parakh never raises, regardless of LLM behavior. The EOF-newline
+ * check is the canonical one the project explicitly considers useless.
+ */
+const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
+  /newline at (the )?end of (the )?file/i,
+];
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build deterministic suppression patterns from instruction rules. An instruction
+ * like `stop flagging "No newline at the end of the file"` contributes the quoted
+ * phrase as a literal case-insensitive match, so findings whose body repeats it
+ * are dropped even if the LLM ignores the prompt-level suppression.
+ */
+export function extractSuppressionPatterns(instructions: Rule[]): RegExp[] {
+  const patterns: RegExp[] = [...BUILTIN_SUPPRESSED_PATTERNS];
+  for (const rule of instructions) {
+    for (const match of rule.body?.matchAll(/"([^"]+)"/g) ?? []) {
+      const phrase = match[1].trim();
+      if (phrase.length < 4) continue;
+      patterns.push(new RegExp(escapeRegExp(phrase), 'i'));
+    }
+  }
+  return patterns;
+}
+
+/** Drop findings the developer asked never to raise (deterministic, LLM-independent). */
+export function suppressFindings(findings: Finding[], instructions: Rule[]): Finding[] {
+  const patterns = extractSuppressionPatterns(instructions);
+  if (patterns.length === 0) return findings;
+  return findings.filter((f) => !patterns.some((re) => re.test(f.body)));
 }
 
 export function parseDiffByFile(diff: string): Map<string, string> {
@@ -303,6 +341,7 @@ async function reviewSingleFile(
   fileName: string,
   fileChunks: Map<string, string>,
   activeRules: Rule[],
+  suppressPatterns: RegExp[],
   env: Env,
   signal: AbortSignal,
   reviewId: string,
@@ -316,15 +355,7 @@ async function reviewSingleFile(
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return [];
 
-  // Split rules by enforcement mode. Only 'enforce' rules are standards code
-  // must comply with — those are what the LLM checks for. 'suppress' rules are
-  // NEVER sent to the LLM: a "never flag X" rule fed to the model as an
-  // enforceable standard makes it report X as a violation OF that rule. They
-  // instead drive the deterministic post-filter below.
-  const enforceRules = activeRules.filter((r) => (r.mode ?? 'enforce') === 'enforce');
-  const suppressRules = activeRules.filter((r) => r.mode === 'suppress');
-
-  const applicableRules = enforceRules.filter(r =>
+  const applicableRules = activeRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
   );
 
@@ -416,6 +447,9 @@ async function reviewSingleFile(
 
   for (const rf of result.ruleFindings) {
     const rule = applicableRules.find(r => r.id === rf.rule_id);
+    // An instruction rule is a suppression directive, not an enforceable
+    // standard — never surface (or count evidence for) a finding citing it.
+    if (rule?.kind === 'instruction') continue;
     const priority = rule?.priority || 'normal';
     findings.push({
       severity: resolveSeverityForRuleViolation(priority),
@@ -425,53 +459,15 @@ async function reviewSingleFile(
       suggestion: rf.suggestion || null,
       rule_id: rf.rule_id,
     });
-  }
-
-  // Deterministic suppression post-filter: drop any finding whose body matches
-  // a suppress rule's patterns AND whose file is in that rule's scope. This is
-  // where the memory system actually suppresses — suppress rules never reach
-  // the LLM as enforceable standards (that mismatch is what made old "never
-  // flag X" rules backfire into violations).
-  const surviving = findings.filter(
-    (f) => !isSuppressedByRule(f, fileName, suppressRules)
-  );
-
-  // Increment evidence_count per surviving rule-violation instance.
-  for (const f of surviving) {
-    if (!f.rule_id) continue;
-    const rule = applicableRules.find(r => r.id === f.rule_id);
+    
+    // Increment evidence_count per violation instance
     if (rule) {
       budget.spend(1); // DB write
       await incrementEvidenceCount(rule.id, env);
     }
   }
 
-  return surviving;
-}
-
-/**
- * True when a finding should be dropped because a suppress rule names its topic.
- * Gated by BOTH scope (rule.scope vs the file) and pattern (case-insensitive
- * substring match against the finding body).
- */
-function isSuppressedByRule(
-  f: Finding,
-  fileName: string,
-  suppressRules: Rule[]
-): boolean {
-  for (const rule of suppressRules) {
-    if (!matchesScope(fileName, rule.scope as Record<string, unknown>)) continue;
-    const patterns = rule.patterns ?? [];
-    if (patterns.length === 0) continue;
-    const body = f.body.toLowerCase();
-    if (patterns.some((p) => p && body.includes(p.toLowerCase()))) {
-      console.log(
-        `[review] Suppressed finding ${fileName}:${f.line} via rule ${rule.id}`
-      );
-      return true;
-    }
-  }
-  return false;
+  return findings.filter((f) => !suppressPatterns.some((re) => re.test(f.body)));
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -810,6 +806,10 @@ async function executeReviewJobInternal(
     });
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
+    // Compile suppression patterns once per job — instruction rules don't change
+    // mid-review, so per-file recompilation would be wasted work.
+    const suppressPatterns = extractSuppressionPatterns(activeRules.filter(r => r.kind === 'instruction'));
+
     // Budget guard: counts the subrequests we control (DB, Redis, GitHub,
     // Gemini, Groq). Free plan caps an invocation at 50 total; this stops us
     // well under that and lets the queue redelivery resume from per-file state
@@ -882,7 +882,7 @@ async function executeReviewJobInternal(
             const fileName = batch[i];
             try {
               const findings = await reviewSingleFile(
-                llm, fileName, fileChunks, activeRules, env, signal,
+                llm, fileName, fileChunks, activeRules, suppressPatterns, env, signal,
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
                 captureReasoning, retentionDays, reasoningBuffer, budget
               );
@@ -1082,13 +1082,9 @@ async function finalizeReview(
   }
 
   await startStage(reviewId, 'SCORING', stageAttempt, env);
-  // Dedupe before scoring: the same issue frequently arrives as both a generic
-  // finding and a rule violation (and sometimes twice in one array). Without
-  // this it gets summed 2–3x toward the penalty.
-  const deduped = dedupeFindings(findings);
-  const rawScore = computeScore(deduped);
+  const rawScore = computeScore(findings);
   const score = displayScore(rawScore);
-  await updateReviewResults(reviewId, score, deduped, env);
+  await updateReviewResults(reviewId, score, findings, env);
   await completeStage(reviewId, 'SCORING', stageAttempt, env);
 
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
@@ -1110,7 +1106,7 @@ async function finalizeReview(
     const comment = formatReviewComment(
       rawScore,
       score,
-      deduped,
+      findings,
       fullRepo,
       prNumber,
       env.DASHBOARD_BASE_URL

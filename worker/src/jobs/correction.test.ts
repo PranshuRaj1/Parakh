@@ -1,23 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { generateEmbeddingMock, classifyPriorityMock, classifyRuleModeMock } = vi.hoisted(() => ({
-  generateEmbeddingMock: vi.fn(),
-  classifyPriorityMock: vi.fn(),
-  classifyRuleModeMock: vi.fn(),
+const { mockGenerateEmbedding, mockClassifyPriority } = vi.hoisted(() => ({
+  mockGenerateEmbedding: vi.fn(),
+  mockClassifyPriority: vi.fn(),
 }));
 
-vi.mock('../gemini/client.js', () => ({
-  GeminiClient: class {
-    generateEmbedding = generateEmbeddingMock;
-    classifyPriority = classifyPriorityMock;
-    classifyRuleMode = classifyRuleModeMock;
-  },
+// Stub the LLM factory so the correction path can run without a real model:
+// generateEmbedding produces the stored embedding, classifyPriority classifies
+// severity weight (fail-open to 'normal').
+vi.mock('../llm/factory.js', () => ({
+  createLLMClients: () => ({
+    llm: {
+      classifyPriority: mockClassifyPriority,
+      generateEmbedding: mockGenerateEmbedding,
+    },
+    gemini: {},
+    groq: {},
+  }),
 }));
 
 vi.mock('../db/rules.js', () => ({ insertRule: vi.fn() }));
 
-import { saveCorrectionAsRule } from './correction.js';
+import { saveCorrectionAsRule, isInstructionRule } from './correction.js';
 import { insertRule } from '../db/rules.js';
 
 const mocked = {
@@ -47,19 +52,17 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-9' } as never);
-  generateEmbeddingMock.mockReset().mockResolvedValue([0.1, 0.2]);
-  classifyPriorityMock.mockReset().mockResolvedValue('normal');
-  classifyRuleModeMock.mockReset().mockResolvedValue({ mode: 'enforce', patterns: [] });
+  mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
+  mockClassifyPriority.mockReset().mockResolvedValue('normal');
   vi.mocked(env.WATCHDOG_QUEUE.send).mockReset().mockResolvedValue(undefined);
 });
 
 describe('saveCorrectionAsRule', () => {
-  it('embeds, classifies priority and mode, inserts an ACTIVE rule with source_pr, and enqueues a contradiction check', async () => {
+  it('embeds, classifies priority, inserts an ACTIVE rule with source_pr, and enqueues a contradiction check', async () => {
     await saveCorrectionAsRule(makeInput(), env);
 
-    expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues');
-    expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues');
-    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newline issues');
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('never flag EOF newline issues');
+    expect(mockClassifyPriority).toHaveBeenCalledWith('never flag EOF newline issues');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
@@ -67,8 +70,7 @@ describe('saveCorrectionAsRule', () => {
         embedding: [0.1, 0.2],
         status: 'ACTIVE',
         priority: 'normal',
-        mode: 'enforce',
-        patterns: [],
+        kind: 'instruction',
         source_pr: 7,
       }),
       env
@@ -87,33 +89,8 @@ describe('saveCorrectionAsRule', () => {
     );
   });
 
-  it('persists a suppress rule with its extracted patterns', async () => {
-    classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline', 'end of the file'] });
-
-    await saveCorrectionAsRule(makeInput({ commentBody: 'never flag EOF newline issues' }), env);
-
-    expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode: 'suppress',
-        patterns: ['newline', 'end of the file'],
-      }),
-      env
-    );
-  });
-
-  it('fails open to enforce when rule-mode classification errors', async () => {
-    classifyRuleModeMock.mockRejectedValue(new Error('timeout'));
-
-    await saveCorrectionAsRule(makeInput(), env);
-
-    expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'enforce', patterns: [] }),
-      env
-    );
-  });
-
   it('fails open to normal priority when priority classification errors', async () => {
-    classifyPriorityMock.mockRejectedValue(new Error('timeout'));
+    mockClassifyPriority.mockRejectedValue(new Error('timeout'));
 
     await saveCorrectionAsRule(makeInput(), env);
 
@@ -135,6 +112,7 @@ describe('saveCorrectionAsRule', () => {
   it('removes the @parakh command metadata before storing and embedding the rule', async () => {
     await saveCorrectionAsRule(makeInput({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('we never flag EOF newline issues');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'we never flag EOF newline issues' }),
       env
@@ -142,5 +120,39 @@ describe('saveCorrectionAsRule', () => {
     expect(env.WATCHDOG_QUEUE.send).toHaveBeenCalledWith(
       expect.objectContaining({ ruleBody: 'we never flag EOF newline issues' })
     );
+  });
+
+  it('stores forward-looking suppression directives as instruction rules', async () => {
+    await saveCorrectionAsRule(
+      makeInput({ commentBody: '@parakh stop flagging "No newline at the end of the file" in any future review' }),
+      env
+    );
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'instruction' }),
+      env
+    );
+  });
+
+  it('stores ordinary corrections as standard rules', async () => {
+    await saveCorrectionAsRule(makeInput({ commentBody: 'use snake_case for database columns' }), env);
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'standard' }),
+      env
+    );
+  });
+});
+
+describe('isInstructionRule', () => {
+  it('detects suppression phrasing', () => {
+    expect(isInstructionRule('stop flagging EOF newlines')).toBe(true);
+    expect(isInstructionRule('do not raise unbounded loops in future reviews')).toBe(true);
+    expect(isInstructionRule('never flag X')).toBe(true);
+  });
+
+  it('treats plain standards as non-instructions', () => {
+    expect(isInstructionRule('use snake_case for database columns')).toBe(false);
+    expect(isInstructionRule('always handle promise rejections')).toBe(false);
   });
 });

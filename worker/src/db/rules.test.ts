@@ -30,8 +30,7 @@ function ruleInput(embedding: number[]) {
     embedding,
     status: 'ACTIVE' as const,
     priority: 'normal' as const,
-    mode: 'suppress' as const,
-    patterns: ['newline'],
+    kind: 'instruction' as const,
     source_pr: 7,
   };
 }

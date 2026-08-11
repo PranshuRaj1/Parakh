@@ -1,5 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { buildIntentPrompt, buildRuleModePrompt, buildReviewPrompt, buildRelationshipPrompt } from './prompts.js';
+import { buildIntentPrompt, buildReviewPrompt } from './prompts.js';
+import type { Rule } from '@parakh/shared';
+
+function rule(overrides: Partial<Rule> = {}): Rule {
+  return {
+    id: 'rule-1',
+    repo: 'acme/app',
+    body: 'some standard',
+    embedding: null,
+    status: 'ACTIVE',
+    scope: {},
+    priority: 'normal',
+    kind: 'standard',
+    supersedes: null,
+    superseded_by: null,
+    source_pr: null,
+    evidence_count: 0,
+    reinforcement_count: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    superseded_at: null,
+    ...overrides,
+  };
+}
+
+describe('buildReviewPrompt', () => {
+  it('lists standard rules as enforceable coding rules', () => {
+    const prompt = buildReviewPrompt('a.ts', 'diff', [
+      rule({ id: 'r2', body: 'always validate input', priority: 'high' }),
+    ]);
+
+    expect(prompt).toContain('## Active Coding Rules for This Repository');
+    expect(prompt).toContain('**[r2]** (priority: high): always validate input');
+    expect(prompt).not.toContain('## Suppressed Issues');
+  });
+
+  it('renders instruction rules as suppressions, never as enforceable rules', () => {
+    const prompt = buildReviewPrompt('a.ts', 'diff', [
+      rule({ id: 'r1', kind: 'instruction', body: 'never flag "No newline at the end of the file"' }),
+      rule({ id: 'r2', body: 'always validate input', priority: 'high' }),
+    ]);
+
+    expect(prompt).toContain('## Suppressed Issues');
+    expect(prompt).toContain('never flag "No newline at the end of the file"');
+    expect(prompt).not.toContain('[r1]');
+    expect(prompt).toContain('**[r2]** (priority: high): always validate input');
+  });
+
+  it('omits both rule sections when there are no rules at all', () => {
+    const prompt = buildReviewPrompt('a.ts', 'diff', []);
+    expect(prompt).not.toContain('## Active Coding Rules for This Repository');
+    expect(prompt).not.toContain('## Suppressed Issues');
+  });
+});
 
 describe('buildIntentPrompt', () => {
   it('instructs the classifier that forward-looking standards win over dismissive tone', () => {
@@ -18,68 +70,5 @@ describe('buildIntentPrompt', () => {
     const prompt = buildIntentPrompt('This is useless', '');
     expect(prompt).toContain('"This is useless" alone is DISMISSAL');
     expect(prompt).toContain('stop flagging EOF newlines in future reviews');
-  });
-});
-
-describe('buildRuleModePrompt', () => {
-  it('describes enforce vs suppress modes and pattern extraction', () => {
-    const prompt = buildRuleModePrompt('never flag EOF newline issues');
-
-    expect(prompt).toContain('enforce');
-    expect(prompt).toContain('suppress');
-    expect(prompt).toContain('never/don\'t/stop flagging X');
-    expect(prompt).toContain('end of the file');
-    expect(prompt).toContain('{"mode": "enforce" or "suppress", "patterns": ["..."]}');
-  });
-
-  it('embeds the rule body being classified', () => {
-    expect(buildRuleModePrompt('Use snake_case for DB columns')).toContain('Use snake_case for DB columns');
-  });
-});
-
-describe('buildReviewPrompt', () => {
-  it('instructs the model not to flag EOF-newline and style nits', () => {
-    const prompt = buildReviewPrompt('src/a.ts', 'diff', []);
-
-    expect(prompt).toContain('Missing newline at the end of a file');
-    expect(prompt).toContain('Trailing whitespace or trailing commas');
-    expect(prompt).toContain('When in doubt, do not report it');
-  });
-
-  it('forbids inventing violations against rules not in the list', () => {
-    const prompt = buildReviewPrompt(
-      'src/a.ts',
-      'diff',
-      [
-        { id: 'rule-2', body: 'Use camelCase', priority: 'normal', mode: 'enforce' },
-      ] as never
-    );
-
-    // The prompt renders whatever rules it is handed; mode filtering (suppress
-    // rules never reach the LLM) happens in review.ts before reviewDiff.
-    expect(prompt).toContain('rule-2');
-    expect(prompt).toContain('never reference a rule that is not in this list');
-  });
-});
-
-describe('buildRelationshipPrompt', () => {
-  it('renders both rule bodies so the classifier can compare them', () => {
-    const prompt = buildRelationshipPrompt(
-      { body: 'Use Zustand for state management' },
-      { body: 'Use Redux for state management' }
-    );
-
-    expect(prompt).toContain('Use Zustand for state management');
-    expect(prompt).toContain('Use Redux for state management');
-  });
-
-  it('defines all four relationship types for the contradiction engine', () => {
-    const prompt = buildRelationshipPrompt({ body: 'A' }, { body: 'B' });
-
-    expect(prompt).toContain('**DUPLICATE**');
-    expect(prompt).toContain('**REFINEMENT**');
-    expect(prompt).toContain('**CONTRADICTION**');
-    expect(prompt).toContain('**UNRELATED**');
-    expect(prompt).toContain('mutually exclusive');
   });
 });

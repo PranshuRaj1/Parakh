@@ -2,16 +2,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 import type { Intent } from '@parakh/shared';
 
-const { classifyIntentMock, draftReplyMock } = vi.hoisted(() => ({
-  classifyIntentMock: vi.fn(),
-  draftReplyMock: vi.fn(),
-}));
+const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(() => {
+  const providerShape = () => ({
+    reviewDiff: vi.fn(),
+    classifyIntent: vi.fn(),
+    classifyRelationship: vi.fn(),
+    classifyPriority: vi.fn(),
+    draftReply: vi.fn(),
+    generateEmbedding: vi.fn(),
+  });
+  return {
+    classifyIntentMock: vi.fn(),
+    draftReplyMock: vi.fn(),
+    geminiMock: providerShape(),
+    groqMock: providerShape(),
+  };
+});
 
-vi.mock('../gemini/client.js', () => ({
-  GeminiClient: class {
-    classifyIntent = classifyIntentMock;
-    draftReply = draftReplyMock;
-  },
+// Stub the LLM factory: classifyIntent + draftReply drive the comment-response
+// paths under test. llm/gemini/groq get full LLMProvider-shaped vi.fn()s so any
+// future call into them fails loudly instead of a silent TypeError on {}. The
+// provider mocks are hoisted so they stay stable/trackable across calls.
+vi.mock('../llm/factory.js', () => ({
+  createLLMClients: () => ({
+    llm: {
+      reviewDiff: vi.fn(),
+      classifyIntent: classifyIntentMock,
+      classifyRelationship: vi.fn(),
+      classifyPriority: vi.fn(),
+      draftReply: draftReplyMock,
+      generateEmbedding: vi.fn(),
+    },
+    gemini: geminiMock,
+    groq: groqMock,
+  }),
 }));
 
 vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));
@@ -73,10 +97,11 @@ function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_c
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  classifyIntentMock.mockReset();
+  draftReplyMock.mockReset();
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
-  mocked.saveCorrectionAsRule.mockReset();
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null });
 });
 
@@ -143,6 +168,19 @@ describe('executeCommentResponseJob', () => {
     );
   });
 
+  it('posts a waiting warning when the lock is held and no review is enqueued', async () => {
+    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    mocked.getResumableReview.mockResolvedValue(null);
+    mocked.triggerReview.mockResolvedValue(false);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
+    );
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
+  });
+
   it('saves CORRECTION intents as active rules and confirms', async () => {
     classifyIntentMock.mockResolvedValueOnce('CORRECTION');
     mocked.saveCorrectionAsRule.mockResolvedValue({
@@ -157,6 +195,19 @@ describe('executeCommentResponseJob', () => {
     );
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+    );
+  });
+
+  it('acknowledges suppression directives with the instruction wording', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-9', body: 'stop flagging "No newline at the end of the file"', priority: 'normal', kind: 'instruction',
+    } as never);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token'
     );
   });
 

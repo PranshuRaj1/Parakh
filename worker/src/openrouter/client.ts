@@ -14,14 +14,14 @@
  * intentionally not implemented so the LLMClient chain skips it for embeddings.
  */
 
-import type { Rule, Intent, Relationship, RulePriority, RuleMode } from '@parakh/shared';
+import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import {
   AllKeysExhaustedError,
   DailyQuotaExhaustedError,
 } from '../gemini/keyPool.js';
 import { parseJson } from '../llm/parse-json.js';
-import type { LLMProvider, RuleModeResult } from '../llm/provider.js';
+import type { LLMProvider } from '../llm/provider.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -199,21 +199,6 @@ export class OpenRouterClient implements LLMProvider {
     const { buildPriorityPrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(buildPriorityPrompt(ruleBody), { json: true });
     return parseJson<{ priority?: RulePriority }>(raw).priority ?? 'normal';
-  }
-
-  /**
-   * Classify a rule's enforcement mode and extract suppression patterns.
-   * Returns "enforce"/"suppress" plus case-insensitive patterns for the
-   * deterministic suppression post-filter.
-   */
-  async classifyRuleMode(ruleBody: string): Promise<RuleModeResult> {
-    const { buildRuleModePrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildRuleModePrompt(ruleBody), { json: true });
-    const parsed = parseJson<{ mode?: RuleMode; patterns?: string[] }>(raw);
-    return {
-      mode: parsed.mode ?? 'enforce',
-      patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
-    };
   }
 
   async draftReply(context: string, question: string): Promise<string> {

@@ -107,7 +107,6 @@ const {
   reviewDiffMock,
   generateEmbeddingMock,
   classifyPriorityMock,
-  classifyRuleModeMock,
   classifyRelationshipMock,
 } = vi.hoisted(() => ({
   classifyIntentMock: vi.fn(),
@@ -115,7 +114,6 @@ const {
   reviewDiffMock: vi.fn(),
   generateEmbeddingMock: vi.fn(),
   classifyPriorityMock: vi.fn(),
-  classifyRuleModeMock: vi.fn(),
   classifyRelationshipMock: vi.fn(),
 }));
 
@@ -127,7 +125,6 @@ vi.mock('../llm/factory.js', () => ({
       reviewDiff: reviewDiffMock,
       generateEmbedding: generateEmbeddingMock,
       classifyPriority: classifyPriorityMock,
-      classifyRuleMode: classifyRuleModeMock,
       classifyRelationship: classifyRelationshipMock,
     },
   }),
@@ -268,7 +265,7 @@ function setupLeaves() {
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null } as never);
   mocked.insertRule.mockResolvedValue({
-    id: 'rule-new', body: 'never flag EOF newline issues', priority: 'normal', mode: 'enforce', patterns: [],
+    id: 'rule-new', body: 'never flag EOF newline issues', priority: 'normal', kind: 'instruction',
   } as never);
 }
 
@@ -276,7 +273,6 @@ function setupLLMMocks() {
   classifyIntentMock.mockResolvedValue('CORRECTION');
   generateEmbeddingMock.mockResolvedValue(Array(768).fill(0.1));
   classifyPriorityMock.mockResolvedValue('normal');
-  classifyRuleModeMock.mockResolvedValue({ mode: 'enforce', patterns: [] });
   classifyRelationshipMock.mockResolvedValue('UNRELATED');
 }
 
@@ -287,7 +283,7 @@ beforeEach(() => {
   for (const fn of Object.values(mocked)) fn.mockReset();
   for (const fn of [
     classifyIntentMock, draftReplyMock, reviewDiffMock,
-    generateEmbeddingMock, classifyPriorityMock, classifyRuleModeMock, classifyRelationshipMock,
+    generateEmbeddingMock, classifyPriorityMock, classifyRelationshipMock,
   ]) fn.mockReset();
   setupRedisMocks();
   setupLeaves();
@@ -345,7 +341,7 @@ describe('memory: webhook HTTP layer (CORRECTION routing)', () => {
 // ─── Queue → comment-response → rule save → contradiction enqueue ────────────
 
 describe('memory: queue → comment-response → saveCorrectionAsRule wiring', () => {
-  it('saves a CORRECTION as an ACTIVE rule, posts the Learned reply, and enqueues a CONTRADICTION job', async () => {
+  it('saves a CORRECTION as an ACTIVE rule, posts the Noted reply, and enqueues a CONTRADICTION job', async () => {
     const { env, sent } = makeEnv();
     const batch = {
       queue: 'watchdog',
@@ -356,27 +352,26 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     // The full learn chain must run. Intent is classified on the RAW comment
     // (in comment-response), but the stored rule text has the @parakh command
-    // prefix stripped (correction.ts) before embedding/priority/mode.
+    // prefix stripped (correction.ts) before embedding/priority. The directive
+    // phrasing marks it an 'instruction' rule (suppression), never a standard.
     expect(classifyIntentMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review', '');
     expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
     expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
-    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
         body: 'never flag EOF newline issues in any future review',
         status: 'ACTIVE',
         priority: 'normal',
-        mode: 'enforce',
-        patterns: [],
+        kind: 'instruction',
         source_pr: 7,
       }),
       env
     );
 
-    // Confirmation reply.
+    // Confirmation reply — instruction rules get the "Noted" suppression reply.
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+      'acme', 'app', 7, expect.stringContaining('Noted'), 'token'
     );
 
     // Contradiction check enqueued with the rule payload (real installationId).
@@ -396,18 +391,17 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
   });
 
-  it('persists suppress-mode corrections with their patterns', async () => {
-    classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline', 'end of the file'] });
+  it('stores plain corrections (no suppression phrasing) as standard rules', async () => {
     const { env, sent } = makeEnv();
     const batch = {
       queue: 'watchdog',
-      messages: [makeCommentMessage('never flag EOF newline issues')],
+      messages: [makeCommentMessage('use snake_case for database columns')],
     } as never;
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'suppress', patterns: ['newline', 'end of the file'] }),
+      expect.objectContaining({ kind: 'standard' }),
       env
     );
     expect(sent).toHaveLength(1);
@@ -440,7 +434,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 100, expect.stringContaining('Learned'), 'token'
+      'acme', 'app', 7, 100, expect.stringContaining('Noted'), 'token'
     );
     expect(mocked.postComment).not.toHaveBeenCalled();
   });
@@ -469,7 +463,7 @@ describe('memory: CONTRADICTION job wiring', () => {
   it('supersedes a contradictory rule and notifies the PR', async () => {
     mocked.findSimilarRules.mockResolvedValue([{
       id: 'rule-old', repo: 'acme/app', body: 'flag EOF newline issues as critical',
-      status: 'ACTIVE', scope: {}, priority: 'normal', mode: 'enforce', patterns: [],
+      status: 'ACTIVE', scope: {}, priority: 'normal', kind: 'standard',
       supersedes: null, superseded_by: null, source_pr: null, evidence_count: 0,
       reinforcement_count: 0, created_at: '2024-01-01T00:00:00Z', superseded_at: null,
       similarity: 0.9,
@@ -495,7 +489,7 @@ describe('memory: CONTRADICTION job wiring', () => {
   it('deactivates the new rule and reinforces the existing one on DUPLICATE', async () => {
     mocked.findSimilarRules.mockResolvedValue([{
       id: 'rule-old', repo: 'acme/app', body: 'never flag EOF newline issues',
-      status: 'ACTIVE', scope: {}, priority: 'normal', mode: 'suppress', patterns: ['newline'],
+      status: 'ACTIVE', scope: {}, priority: 'normal', kind: 'instruction',
       supersedes: null, superseded_by: null, source_pr: null, evidence_count: 0,
       reinforcement_count: 0, created_at: '2024-01-01T00:00:00Z', superseded_at: null,
       similarity: 0.9,

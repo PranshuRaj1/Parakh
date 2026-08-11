@@ -31,14 +31,14 @@ export async function handleQueueBatch(
           break;
 
         case 'COMMENT_RESPONSE':
-          console.log(`[queue] Processing COMMENT_RESPONSE job: ${payload.owner}/${payload.repo}#${payload.prNumber}`);
-          await executeCommentResponseJob(payload, env);
+          console.log(`[queue] Processing COMMENT_RESPONSE job: ${payload.owner}/${payload.repo}#${payload.prNumber} (attempt ${message.attempts})`);
+          await executeCommentResponseJob(payload, env, message.attempts);
           message.ack();
           break;
 
         case 'CONTRADICTION':
-          console.log(`[queue] Processing CONTRADICTION job for rule ${payload.ruleId}`);
-          await executeContradictionJob(payload, env);
+          console.log(`[queue] Processing CONTRADICTION job for rule ${payload.ruleId} (attempt ${message.attempts})`);
+          await executeContradictionJob(payload, env, message.attempts);
           message.ack();
           break;
 
@@ -47,7 +47,7 @@ export async function handleQueueBatch(
           message.ack(); // Don't retry unknown types
       }
     } catch (err) {
-      console.error(`[queue] Job failed:`, err);
+      console.error(`[queue] Job failed (type ${payload?.type}, attempt ${message.attempts}):`, err);
       message.retry();
     }
   }

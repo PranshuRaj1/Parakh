@@ -39,11 +39,14 @@ describe('computeScore', () => {
   it('saturates LOW: each additional nit hurts less', () => {
     // sat(1) ≈ 0.0725, sat(20) ≈ 0.3927 — twenty nits barely outrank one
     const one = computeScore([finding('LOW')]);
+    const nineteen = computeScore(Array(19).fill(finding('LOW')));
     const twenty = computeScore(Array(20).fill(finding('LOW')));
     expect(one).toBeCloseTo(4.9275, 3);
     expect(twenty).toBeCloseTo(4.6073, 3);
-    // The 1st nit removed more than the 20th adds (diminishing returns).
-    expect(5 - one).toBeGreaterThan(twenty - one);
+    // Diminishing returns: the 1st nit costs more than the 20th one adds.
+    const marginalFirst = 5 - one;
+    const marginalTwentieth = nineteen - twenty;
+    expect(marginalFirst).toBeGreaterThan(marginalTwentieth);
   });
 
   it('saturates MEDIUM', () => {
@@ -103,7 +106,9 @@ describe('dedupeFindings', () => {
   it('collapses duplicates that differ only in case/punctuation/whitespace', () => {
     const a = finding('LOW', { body: 'No newline at end of file!' });
     const b = finding('MEDIUM', { body: 'no  newline at end of file' });
-    expect(dedupeFindings([a, b])).toHaveLength(1);
+    const out = dedupeFindings([a, b]);
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe('MEDIUM');
   });
 
   it('keeps findings on different lines', () => {

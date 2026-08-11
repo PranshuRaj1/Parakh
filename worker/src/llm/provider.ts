@@ -18,19 +18,12 @@
  * provider-health signals, so we never hide a bad request behind a failover.
  */
 
-import type { Rule, Intent, Relationship, RulePriority, RuleMode } from '@parakh/shared';
+import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import type { Env } from '../index.js';
 import { AllKeysExhaustedError } from '../gemini/keyPool.js';
 
 export type ProviderName = 'gemini' | 'groq' | 'cfai' | 'openrouter';
-
-/** Result of classifying a rule's enforcement mode + suppression patterns. */
-export interface RuleModeResult {
-  mode: RuleMode;
-  /** Case-insensitive substrings matched against finding bodies (suppress rules only). */
-  patterns: string[];
-}
 
 export interface LLMProvider {
   /** Review a file diff against active rules. */
@@ -41,8 +34,6 @@ export interface LLMProvider {
   classifyRelationship(newRule: { body: string }, existingRule: { body: string }): Promise<Relationship>;
   /** Classify a rule's priority. */
   classifyPriority(ruleBody: string): Promise<RulePriority>;
-  /** Classify a rule's enforcement mode and extract suppression patterns. */
-  classifyRuleMode(ruleBody: string): Promise<RuleModeResult>;
   /** Draft a free-text reply to a developer's question. */
   draftReply(context: string, question: string): Promise<string>;
   /**
@@ -171,10 +162,6 @@ export class LLMClient {
 
   async classifyPriority(ruleBody: string): Promise<RulePriority> {
     return this.route((p) => p.classifyPriority(ruleBody));
-  }
-
-  async classifyRuleMode(ruleBody: string): Promise<RuleModeResult> {
-    return this.route((p) => p.classifyRuleMode(ruleBody));
   }
 
   async draftReply(context: string, question: string): Promise<string> {

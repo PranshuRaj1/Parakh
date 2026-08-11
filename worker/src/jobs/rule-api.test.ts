@@ -1,18 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { generateEmbeddingMock, classifyPriorityMock, classifyRuleModeMock } = vi.hoisted(() => ({
-  generateEmbeddingMock: vi.fn(),
-  classifyPriorityMock: vi.fn(),
-  classifyRuleModeMock: vi.fn(),
+const { mockGenerateEmbedding, mockClassifyPriority } = vi.hoisted(() => ({
+  mockGenerateEmbedding: vi.fn(),
+  mockClassifyPriority: vi.fn(),
 }));
 
-vi.mock('../gemini/client.js', () => ({
-  GeminiClient: class {
-    generateEmbedding = generateEmbeddingMock;
-    classifyPriority = classifyPriorityMock;
-    classifyRuleMode = classifyRuleModeMock;
-  },
+// Stub the LLM factory so rule creation can run without a real model call:
+// classifyPriority is used when no priority override is supplied, and
+// generateEmbedding produces the embedding vector stored on the new rule.
+vi.mock('../llm/factory.js', () => ({
+  createLLMClients: () => ({
+    llm: {
+      classifyPriority: mockClassifyPriority,
+      generateEmbedding: mockGenerateEmbedding,
+    },
+    gemini: {},
+    groq: {},
+  }),
 }));
 
 vi.mock('./contradiction.js', () => ({ executeContradictionJob: vi.fn() }));
@@ -43,9 +48,8 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocked.executeContradictionJob.mockReset().mockResolvedValue(undefined);
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-1' } as never);
-  generateEmbeddingMock.mockReset().mockResolvedValue([0.1, 0.2]);
-  classifyPriorityMock.mockReset().mockResolvedValue('normal');
-  classifyRuleModeMock.mockReset().mockResolvedValue({ mode: 'enforce', patterns: [] });
+  mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
+  mockClassifyPriority.mockReset().mockResolvedValue('normal');
 });
 
 describe('handleCreateRule', () => {
@@ -57,48 +61,25 @@ describe('handleCreateRule', () => {
   it('uses the supplied priority override without asking the LLM', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets', priority: 'high' }, env, makeCtx());
 
-    expect(classifyPriorityMock).not.toHaveBeenCalled();
+    expect(mockClassifyPriority).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high', mode: 'enforce', patterns: [] }),
+      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high' }),
       env
     );
   });
 
   it('classifies priority when not supplied', async () => {
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
-    expect(classifyPriorityMock).toHaveBeenCalledWith('Never store secrets');
+    expect(mockClassifyPriority).toHaveBeenCalledWith('Never store secrets');
   });
 
   it('fails open to normal priority when priority classification errors', async () => {
-    classifyPriorityMock.mockRejectedValue(new Error('timeout'));
+    mockClassifyPriority.mockRejectedValue(new Error('timeout'));
 
     await handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx());
 
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({ priority: 'normal' }),
-      env
-    );
-  });
-
-  it('classifies mode and persists a suppress rule with its patterns', async () => {
-    classifyRuleModeMock.mockResolvedValue({ mode: 'suppress', patterns: ['newline'] });
-
-    await handleCreateRule({ repo: 'acme/app', body: 'never flag EOF newlines' }, env, makeCtx());
-
-    expect(classifyRuleModeMock).toHaveBeenCalledWith('never flag EOF newlines');
-    expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'suppress', patterns: ['newline'] }),
-      env
-    );
-  });
-
-  it('fails open to enforce when rule-mode classification errors', async () => {
-    classifyRuleModeMock.mockRejectedValue(new Error('timeout'));
-
-    await handleCreateRule({ repo: 'acme/app', body: 'x' }, env, makeCtx());
-
-    expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'enforce', patterns: [] }),
       env
     );
   });
@@ -111,7 +92,7 @@ describe('handleCreateRule', () => {
       ctx
     );
 
-    expect(generateEmbeddingMock).toHaveBeenCalledWith('Never store secrets');
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('Never store secrets');
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',

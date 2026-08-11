@@ -20,27 +20,24 @@ import type {
   Intent,
   Relationship,
   RulePriority,
-  RuleMode,
 } from '@parakh/shared';
 import {
   reviewResponseSchema,
   intentResponseSchema,
   relationshipResponseSchema,
   priorityResponseSchema,
-  ruleModeResponseSchema,
 } from './schemas.js';
 import {
   buildReviewPrompt,
   buildIntentPrompt,
   buildRelationshipPrompt,
   buildPriorityPrompt,
-  buildRuleModePrompt,
   buildReplyPrompt,
 } from './prompts.js';
 import { getKeyPool, isRateLimitError, isModelUnavailableError, isDailyQuotaError, AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_COOLDOWN_MS } from './keyPool.js';
 import { MemoryCooldownStore, type CooldownStore } from './cooldown-store.js';
 import { sanitizeErrorText } from '../jobs/sanitize.js';
-import type { LLMProvider, RuleModeResult } from '../llm/provider.js';
+import type { LLMProvider } from '../llm/provider.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -427,37 +424,6 @@ export class GeminiClient implements LLMProvider {
       const text = result.response.text();
       const parsed = JSON.parse(text) as { priority: RulePriority };
       return parsed.priority;
-    });
-  }
-
-  // ── Rule Mode Classification ─────────────────────────────────────────
-
-  /**
-   * Classify a rule's enforcement mode and extract suppression patterns.
-   * Returns "enforce"/"suppress" plus case-insensitive patterns for the
-   * deterministic suppression post-filter.
-   */
-  async classifyRuleMode(ruleBody: string): Promise<RuleModeResult> {
-    return this.withKeyRotation(async (apiKey) => {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const prompt = buildRuleModePrompt(ruleBody);
-
-      const model = genAI.getGenerativeModel({
-        model: this.generationModel,
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: 'application/json',
-          responseSchema: ruleModeResponseSchema as Parameters<typeof model.generateContent>[0] extends { generationConfig?: { responseSchema?: infer S } } ? S : never,
-        },
-      });
-
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
-      const parsed = JSON.parse(text) as { mode?: RuleMode; patterns?: string[] };
-      return {
-        mode: parsed.mode ?? 'enforce',
-        patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
-      };
     });
   }
 

@@ -20,7 +20,6 @@ function makeProvider(
     classifyIntent: async () => 'GENERAL',
     classifyRelationship: async () => 'UNRELATED',
     classifyPriority: async () => 'normal',
-    classifyRuleMode: async () => ({ mode: 'enforce', patterns: [] }),
     draftReply: async () => 'ok',
   };
 }

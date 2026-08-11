@@ -14,7 +14,7 @@
  * via PR comment" and "rule created via dashboard".
  */
 
-import type { ContradictionJobPayload, RuleMode, RulePriority } from '@parakh/shared';
+import type { ContradictionJobPayload, RuleKind, RulePriority } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
@@ -22,6 +22,34 @@ import type { Env } from '../index.js';
 /** Keep logged rule bodies bounded so a long rule can't bloat logs or leak PII. */
 function truncateBody(body: string, max = 80): string {
   return body.length > max ? `${body.slice(0, max)}…` : body;
+}
+
+/**
+ * Phrasing that marks a correction as a SUPPRESSION directive rather than an
+ * enforceable standard. If present, the rule is stored as kind='instruction':
+ * excluded from the enforce list, rendered as a prompt suppression, and matched
+ * deterministically to drop findings.
+ */
+const INSTRUCTION_HINTS = [
+  'stop flagging',
+  'stop raising',
+  'stop reporting',
+  'stop flag',
+  'never flag',
+  'never raise',
+  "don't flag",
+  'dont flag',
+  'do not flag',
+  "don't raise",
+  'dont raise',
+  'do not raise',
+  'in any future review',
+  'in future reviews',
+];
+
+export function isInstructionRule(ruleBody: string): boolean {
+  const lower = ruleBody.toLowerCase();
+  return INSTRUCTION_HINTS.some((hint) => lower.includes(hint));
 }
 
 /**
@@ -57,7 +85,7 @@ export async function saveCorrectionAsRule(
   // below). Log for manual review.
   let priority: RulePriority = 'normal';
   try {
-    priority = await llm.classifyPriority(ruleBody);
+    priority = (await llm.classifyPriority(ruleBody)) ?? 'normal';
   } catch (err) {
     console.error(
       `[correction] Priority classification failed for "${truncateBody(ruleBody)}" — defaulting to normal:`,
@@ -65,22 +93,9 @@ export async function saveCorrectionAsRule(
     );
   }
 
-  // Classify enforcement mode + suppression patterns. Fail-open: on any
-  // classification error, default to 'enforce' with no patterns — the worst
-  // case is a suppress rule that silently doesn't suppress (safe), never a
-  // blocked rule creation or a mis-routed enforce rule. Log for manual review.
-  let mode: RuleMode = 'enforce';
-  let patterns: string[] = [];
-  try {
-    const classification = await llm.classifyRuleMode(ruleBody);
-    mode = classification.mode;
-    patterns = classification.patterns;
-  } catch (err) {
-    console.error(
-      `[correction] Rule-mode classification failed for "${truncateBody(ruleBody)}" — defaulting to enforce:`,
-      err
-    );
-  }
+  // Suppression directives ("stop flagging X") are stored as 'instruction' rules,
+  // never enforced as standards.
+  const kind: RuleKind = isInstructionRule(ruleBody) ? 'instruction' : 'standard';
 
   // Insert rule as ACTIVE — auto-activate, not SUGGESTED
   const rule = await insertRule(
@@ -90,14 +105,13 @@ export async function saveCorrectionAsRule(
       embedding,
       status: 'ACTIVE',
       priority,
-      mode,
-      patterns,
+      kind,
       source_pr: input.prNumber,
     },
     env
   );
 
-  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority}, mode: ${mode})`);
+  console.log(`[correction] Created ACTIVE rule ${rule.id} for ${fullRepo} (priority: ${priority}, kind: ${kind})`);
 
   // Enqueue contradiction check (async safety net, same queue as dashboard rules)
   const contradictionPayload: ContradictionJobPayload = {

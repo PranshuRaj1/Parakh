@@ -49,12 +49,36 @@ describe('handleQueueBatch', () => {
     await handleQueueBatch(batch, env);
 
     expect(reviewJob).toHaveBeenCalledWith(batch.messages[0].body, env, 1);
-    expect(commentJob).toHaveBeenCalledWith(batch.messages[1].body, env);
-    expect(contradictionJob).toHaveBeenCalledWith(batch.messages[2].body, env);
+    expect(commentJob).toHaveBeenCalledWith(batch.messages[1].body, env, 1);
+    expect(contradictionJob).toHaveBeenCalledWith(batch.messages[2].body, env, 1);
     for (const m of batch.messages) {
       expect(m.ack).toHaveBeenCalledTimes(1);
       expect(m.retry).not.toHaveBeenCalled();
     }
+  });
+
+  it('passes the queue delivery count through to the job handlers', async () => {
+    reviewJob.mockResolvedValue(undefined);
+    commentJob.mockResolvedValue(undefined);
+    contradictionJob.mockResolvedValue(undefined);
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' },
+      { type: 'COMMENT_RESPONSE', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentId: 9, commentBody: 'x', commentType: 'issue_comment', githubDeliveryId: 'd' },
+      { type: 'CONTRADICTION', installationId: 0, owner: 'acme', repo: 'app', prNumber: 0, ruleId: 'rule-1', ruleBody: 'b', embedding: [1, 2] },
+    ]);
+    const [reviewMsg, commentMsg, contradictionMsg] = batch.messages;
+    reviewMsg.attempts = 3;
+    commentMsg.attempts = 2;
+    contradictionMsg.attempts = 1;
+
+    await handleQueueBatch(batch, env);
+
+    expect(reviewJob).toHaveBeenCalledWith(reviewMsg.body, env, 3);
+    expect(commentJob).toHaveBeenCalledWith(commentMsg.body, env, 2);
+    expect(contradictionJob).toHaveBeenCalledWith(contradictionMsg.body, env, 1);
+    expect(reviewMsg.ack).toHaveBeenCalled();
+    expect(commentMsg.ack).toHaveBeenCalled();
+    expect(contradictionMsg.ack).toHaveBeenCalled();
   });
 
   it('acks unknown job types without dispatching', async () => {

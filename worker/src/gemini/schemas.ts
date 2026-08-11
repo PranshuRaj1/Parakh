@@ -137,24 +137,3 @@ export const priorityResponseSchema = {
   required: ['priority'],
 };
 
-/**
- * Rule-mode classification schema — enforce vs suppress + suppression patterns.
- */
-export const ruleModeResponseSchema = {
-  type: 'OBJECT' as SchemaType,
-  properties: {
-    mode: {
-      type: 'STRING' as SchemaType,
-      enum: ['enforce', 'suppress'],
-      description: 'Rule mode: "enforce" for standards code must comply with, "suppress" for issues that should never be flagged.',
-    },
-    patterns: {
-      type: 'ARRAY' as SchemaType,
-      description: 'Case-insensitive substrings matched against finding bodies (suppress rules only). Empty for enforce rules.',
-      items: {
-        type: 'STRING' as SchemaType,
-      },
-    },
-  },
-  required: ['mode', 'patterns'],
-};

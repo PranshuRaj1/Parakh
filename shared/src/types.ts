@@ -7,11 +7,13 @@ export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
 export type RulePriority = 'high' | 'normal';
 
 /**
- * Rule enforcement mode. 'enforce' rules are standards code must comply with
- * (sent to the LLM). 'suppress' rules are NEVER sent to the LLM — they drive a
- * deterministic post-filter that drops matching findings.
+ * Rule kind — decides how a rule is applied during review:
+ * - 'standard': an enforceable coding standard. Violations surface as rule findings.
+ * - 'instruction': a suppression directive ("stop flagging X"). Never enforced as a
+ *   standard; instead excluded from the enforce list, rendered as a "do NOT report"
+ *   hint in the prompt, and matched deterministically to drop findings.
  */
-export type RuleMode = 'enforce' | 'suppress';
+export type RuleKind = 'standard' | 'instruction';
 
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -39,9 +41,8 @@ export interface Rule {
   status: RuleStatus;
   scope: Record<string, unknown>;
   priority: RulePriority;
-  mode: RuleMode;
-  /** Case-insensitive substrings; a suppress rule drops findings whose body matches any pattern. */
-  patterns: string[];
+  /** 'standard' (enforce) or 'instruction' (suppress). Defaults to 'standard'. */
+  kind?: RuleKind;
   supersedes: string | null;
   superseded_by: string | null;
   source_pr: number | null;

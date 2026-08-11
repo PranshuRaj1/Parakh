@@ -15,7 +15,7 @@
  * and "rule created via dashboard" — both trigger the contradiction engine.
  */
 
-import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload, RuleMode } from '@parakh/shared';
+import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
@@ -49,12 +49,11 @@ export async function handleCreateRule(
   const embedding = await llm.generateEmbedding(request.body);
 
   // 3. Classify priority (or use override from request). Fail-open to 'normal'
-  //    on error so rule creation is never blocked by a classifier outage —
-  //    consistent with the fail-open rule-mode logic below.
+  //    on error so rule creation is never blocked by a classifier outage.
   let priority = request.priority;
   if (!priority) {
     try {
-      priority = await llm.classifyPriority(request.body);
+      priority = (await llm.classifyPriority(request.body)) ?? 'normal';
     } catch (err) {
       priority = 'normal';
       console.error(
@@ -64,24 +63,9 @@ export async function handleCreateRule(
     }
   }
 
-  // 4. Classify enforcement mode + suppression patterns. Fail-open: on any
-  //    classification error, default to 'enforce' with no patterns — the worst
-  //    case is a suppress rule that silently doesn't suppress (safe), never a
-  //    blocked rule creation or a mis-routed enforce rule. Log for manual review.
-  let mode: RuleMode = 'enforce';
-  let patterns: string[] = [];
-  try {
-    const classification = await llm.classifyRuleMode(request.body);
-    mode = classification.mode;
-    patterns = classification.patterns;
-  } catch (err) {
-    console.error(
-      `[rule-api] Rule-mode classification failed for "${truncateBody(request.body)}" — defaulting to enforce:`,
-      err
-    );
-  }
-
-  // 5. Insert rule as ACTIVE
+  // 4. Insert rule as ACTIVE. Dashboard rules are enforceable standards
+  //    (kind defaults to 'standard' in the insert); suppression directives are
+  //    created via @parakh corrections.
   const rule = await insertRule(
     {
       repo: request.repo,
@@ -90,8 +74,6 @@ export async function handleCreateRule(
       status: 'ACTIVE',
       scope: request.scope || {},
       priority,
-      mode,
-      patterns,
     },
     env
   );
