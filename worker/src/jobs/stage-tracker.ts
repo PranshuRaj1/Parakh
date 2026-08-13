@@ -142,22 +142,18 @@ export const STAGE_TIMEOUTS_MS = {
 const BASE_REVIEW_MS = 30_000;
 const OPERATION_REVIEW_MS = 90_000;
 const FILE_CONCURRENCY = 2;
+const REVIEW_CHECKPOINT_RESERVE_MS = 90_000;
 export const QUEUE_CONSUMER_WALL_TIME_MS = 15 * 60_000;
 export const DELIVERY_CHECKPOINT_MS = 10 * 60_000;
 export const MAX_REVIEW_STAGE_TIMEOUT_MS = 12 * 60_000;
 export const WATCHDOG_GRACE_MS = 120_000;
 
-/**
- * REVIEWING timeout grows linearly with file count and is NOT capped:
- * a 30-file PR at 30s/file legitimately takes ~15min, and the earlier
- * 5-minute ceiling would abort mid-review (abandoning the subrequest budget
- * and any posted comments). Long reviews are bounded by the per-stage
- * subrequest budget and Cloudflare's CPU/queue limits instead.
- */
 export function getReviewingFilesTimeout(filesTotal: number): number {
   return Math.min(
     MAX_REVIEW_STAGE_TIMEOUT_MS,
-    BASE_REVIEW_MS + Math.ceil(filesTotal / FILE_CONCURRENCY) * OPERATION_REVIEW_MS
+    BASE_REVIEW_MS
+      + Math.ceil(filesTotal / FILE_CONCURRENCY) * OPERATION_REVIEW_MS
+      + REVIEW_CHECKPOINT_RESERVE_MS
   );
 }
 

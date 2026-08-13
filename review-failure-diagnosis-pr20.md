@@ -289,6 +289,8 @@ The follow-up patch applies the diagnosis in five layers:
 4. Neon, Upstash Redis, GitHub API, and GitHub App token requests now abort after 15 seconds instead of being able to hold the invocation indefinitely.
 5. Concurrent file completions serialize their Redis state commits. A completed file is added to durable state before evidence counters and per-file telemetry run, and optional writes are capped at five per delivery.
 
+The production retest showed that a five-file batch could consume the full original 300-second stage budget before the final stage handoff, even though all file checkpoints were durable. The final timeout calculation therefore includes an additional 90-second checkpoint reserve. A five-file delivery now has a 390-second application timeout and an 510-second watchdog deadline, both comfortably inside the Queue limit.
+
 The All-Keys-exhausted path no longer sleeps inside the Queue consumer. It uses the same persisted three-attempt file retry state and delayed Queue redelivery as the provider fallback path.
 
 ## Regression coverage

@@ -47,12 +47,13 @@ describe('withTimeout', () => {
 
 describe('getReviewingFilesTimeout', () => {
   it('scales with the number of files from a base', () => {
-    expect(getReviewingFilesTimeout(0)).toBe(30_000);
-    expect(getReviewingFilesTimeout(1)).toBe(120_000);
-    expect(getReviewingFilesTimeout(2)).toBe(120_000);
+    expect(getReviewingFilesTimeout(0)).toBe(120_000);
+    expect(getReviewingFilesTimeout(1)).toBe(210_000);
+    expect(getReviewingFilesTimeout(2)).toBe(210_000);
+    expect(getReviewingFilesTimeout(5)).toBe(390_000);
   });
 
-  it('scales without an absolute ceiling — long reviews are bounded by budget', () => {
+  it('caps large reviews below the queue platform limit', () => {
     expect(getReviewingFilesTimeout(20)).toBeLessThan(QUEUE_CONSUMER_WALL_TIME_MS);
     expect(getReviewingFilesTimeout(100)).toBe(12 * 60_000);
     expect(getReviewingFilesTimeout(1000)).toBe(12 * 60_000);
