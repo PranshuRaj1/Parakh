@@ -50,6 +50,15 @@ GROQ_GENERATION_MODEL = "llama-3.3-70b-versatile"
 # appended automatically when their credentials are present as secrets.
 LLM_PRIMARY = "gemini"
 LLM_FALLBACK = "groq"
+# Future review-pipeline capabilities are declared now but remain inert until
+# their owning implementation lands. Shadow mode defaults on so a later
+# grouping implementation can collect comparisons without changing output.
+SEMANTIC_DIFF_ENABLED = "false"
+BEHAVIOR_GROUPING_ENABLED = "false"
+BEHAVIOR_GROUPING_SHADOW = "true"
+GROUPED_REVIEW_OUTPUT_ENABLED = "false"
+STALENESS_CHECK_ENABLED = "false"
+DETERMINISTIC_ANALYSIS_ENABLED = "false"
 # Optional tertiary/quaternary generation models (no secrets on the vars side).
 CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"

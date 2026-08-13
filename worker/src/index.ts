@@ -53,6 +53,16 @@ export interface Env {
   LLM_PRIMARY?: string;
   LLM_FALLBACK?: string;
 
+  // Staged review-pipeline features. These are strings because Wrangler
+  // environment bindings arrive as strings. The central parser in
+  // config/feature-flags.ts owns defaults and dependency checks.
+  SEMANTIC_DIFF_ENABLED?: string;
+  BEHAVIOR_GROUPING_ENABLED?: string;
+  BEHAVIOR_GROUPING_SHADOW?: string;
+  GROUPED_REVIEW_OUTPUT_ENABLED?: string;
+  STALENESS_CHECK_ENABLED?: string;
+  DETERMINISTIC_ANALYSIS_ENABLED?: string;
+
   // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
   // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps
   // the per-call spend and REASONING_RETENTION_DAYS prunes stored rows.
