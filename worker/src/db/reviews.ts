@@ -6,7 +6,7 @@
  */
 
 import { getDb } from './client.js';
-import type { Review, ReviewStatus, Finding, RepoSettings, ReviewStepEvent, ReviewReasoning } from '@parakh/shared';
+import type { Review, ReviewMode, ReviewStatus, Finding, RepoSettings, ReviewStepEvent, ReviewReasoning } from '@parakh/shared';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,13 @@ export async function insertReview(
     github_delivery_id?: string | null;
     head_sha?: string | null;
     base_sha?: string | null;
+    requested_review_mode?: ReviewMode;
+    effective_review_mode?: ReviewMode;
+    parent_review_id?: string | null;
+    comparison_base_sha?: string | null;
+    fallback_reason?: string | null;
+    active_rules_hash?: string | null;
+    pipeline_version?: string;
   },
   env: EnvWithDB
 ): Promise<Review> {
@@ -40,7 +47,10 @@ export async function insertReview(
   const rows = await sql`
     INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
                          seen_reaction_id, trigger_reason, github_delivery_id,
-                         head_sha, base_sha)
+                         head_sha, base_sha, requested_review_mode,
+                         effective_review_mode, parent_review_id,
+                         comparison_base_sha, fallback_reason, active_rules_hash,
+                         pipeline_version)
     VALUES (
       ${review.repo},
       ${review.pr_number},
@@ -52,7 +62,14 @@ export async function insertReview(
       ${review.trigger_reason ?? 'opened'},
       ${review.github_delivery_id ?? null},
       ${review.head_sha ?? null},
-      ${review.base_sha ?? null}
+      ${review.base_sha ?? null},
+      ${review.requested_review_mode ?? 'full'},
+      ${review.effective_review_mode ?? 'full'},
+      ${review.parent_review_id ?? null},
+      ${review.comparison_base_sha ?? null},
+      ${review.fallback_reason ?? null},
+      ${review.active_rules_hash ?? null},
+      ${review.pipeline_version ?? '1'}
     )
     RETURNING *
   `;
@@ -75,6 +92,21 @@ export async function updateReviewShaPin(
     UPDATE reviews
     SET head_sha = ${headSha},
         base_sha = ${baseSha}
+    WHERE id = ${id}
+  `;
+}
+
+export async function updateReviewCompatibilityMetadata(
+  id: string,
+  activeRulesHash: string,
+  pipelineVersion: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET active_rules_hash = ${activeRulesHash},
+        pipeline_version = ${pipelineVersion}
     WHERE id = ${id}
   `;
 }
@@ -292,11 +324,10 @@ export async function getReview(
 }
 
 /**
- * Find the latest non-terminal review for a PR.
- * Used by REVIEW_REQUEST handler to check for resumable reviews.
- * Returns reviews in RUNNING or QUEUED status.
+ * Find the latest active review for a PR. Callers compare its pinned head and
+ * requested mode while holding the enqueue lock before deciding to resume.
  */
-export async function getResumableReview(
+export async function getActiveReviewByPR(
   repo: string,
   prNumber: number,
   env: EnvWithDB
@@ -306,7 +337,7 @@ export async function getResumableReview(
     SELECT * FROM reviews
     WHERE repo = ${repo}
       AND pr_number = ${prNumber}
-      AND status IN ('RUNNING', 'QUEUED')
+      AND status IN ('RUNNING', 'QUEUED', 'PAUSED_DAILY_QUOTA')
     ORDER BY created_at DESC
     LIMIT 1
   `;

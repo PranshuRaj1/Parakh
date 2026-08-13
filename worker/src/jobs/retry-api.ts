@@ -33,16 +33,16 @@ export async function handleRetryReview(
 
     if (_ctx) {
       _ctx.waitUntil(
-        triggerReview(
-          review.installation_id,
+        triggerReview({
+          installationId: review.installation_id,
           owner,
           repo,
-          review.pr_number,
-          'manual_mention',
-          env,
-          review.id,
-          review.github_delivery_id ?? undefined
-        ).catch(err => {
+          prNumber: review.pr_number,
+          reason: 'manual_mention',
+          requestedMode: review.requested_review_mode ?? 'full',
+          resumeReviewId: review.id,
+          githubDeliveryId: review.github_delivery_id ?? undefined,
+        }, env).catch(err => {
           console.error('[retry-api] Failed to execute triggerReview:', err);
         })
       );
