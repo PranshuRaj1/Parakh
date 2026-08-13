@@ -72,6 +72,7 @@ describe('finding ledger reconciliation', () => {
     );
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0]).toMatchObject({ finding_id: 'finding-1', line: 30 });
+    expect(result.summary.newCount).toBe(0);
   });
 
   it('keeps distinct new repeated violations instead of collapsing them by body', async () => {

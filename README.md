@@ -219,6 +219,16 @@ The dashboard runs with `next dev` from `dashboard/` and reads the same `DATABAS
 2. Deploy the worker: `cd worker && npm run deploy`.
 3. Verify on the dashboard that the new review reaches COMPLETED.
 
+Incremental rollout is intentionally gated:
+
+1. Keep `INCREMENTAL_REVIEW_ENABLED=false` and `INCREMENTAL_REVIEW_SHADOW=true` while collecting traffic.
+2. Run `psql "$DATABASE_URL" -f db/reports/incremental-shadow-gate.sql`.
+3. Run `npm run test:baseline` and the incremental planner tests; these verify unchanged output hashes and fixture-labelled ancestry/fallback decisions.
+4. Do not enable execution until the report has at least 30 eligible comparisons, returns `shadow_gate_passed=true`, and both test gates pass.
+5. Keep push-triggered re-reviews disabled during the manual rollout; use `@parakh review` or `@parakh full review`.
+
+To stop incremental execution, set `INCREMENTAL_REVIEW_ENABLED=false` in `worker/wrangler.toml` and redeploy. Full reviews remain available. To restore an earlier Worker build, run `npx wrangler deployments list`, then `npx wrangler rollback <version-id>`. A Vercel dashboard rollback is independent: run `vercel rollback <deployment-url>` from `dashboard/`.
+
 ### Testing
 
 ```bash

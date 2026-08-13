@@ -316,13 +316,39 @@ export function appendDashboardLink(
   return `${comment}\n---\n🔍 *Want the model's reasoning? See per-file analysis on the [Parakh dashboard](${base}/pulls/${owner}/${repoName}/${prNumber}).*\n`;
 }
 
+export interface ReviewCommentContext {
+  mode: ReviewMode;
+  rangeStartSha: string | null;
+  rangeEndSha: string;
+  newFindingCount: number;
+  existingUnresolvedCount: number;
+  resolvedCount: number;
+  fallbackReason: string | null;
+  noChangesSinceParent: boolean;
+}
+
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+export function selectDisplayedReviewScore(
+  rawScore: number,
+  noChangesSinceParent: boolean,
+  previousScore: number | null
+): number {
+  return noChangesSinceParent && previousScore !== null
+    ? previousScore
+    : displayScore(rawScore);
+}
+
 export function formatReviewComment(
   score: number,
   displayedScore: number,
   findings: Finding[],
   repo: string,
   prNumber: number,
-  dashboardBaseUrl?: string
+  dashboardBaseUrl?: string,
+  context?: ReviewCommentContext
 ): string {
   const severityEmoji: Record<string, string> = {
     CRITICAL: '🔴',
@@ -331,7 +357,24 @@ export function formatReviewComment(
     LOW: '🔵',
   };
 
-  let comment = `## Parakh Code Review — ${displayedScore}/5\n\n`;
+  const reviewLabel = context
+    ? context.mode === 'incremental' ? 'Incremental Review' : 'Full Review'
+    : 'Code Review';
+  let comment = `## Parakh ${reviewLabel} — ${displayedScore}/5\n\n`;
+
+  if (context) {
+    const start = context.rangeStartSha ? shortSha(context.rangeStartSha) : 'PR base';
+    comment += `**Reviewed range:** \`${start}\` → \`${shortSha(context.rangeEndSha)}\`\n`;
+    comment += `**Snapshot:** ${context.newFindingCount} new · ${context.existingUnresolvedCount} existing unresolved · ${context.resolvedCount} resolved\n`;
+    comment += `**Complete PR score:** ${displayedScore}/5\n`;
+    if (context.fallbackReason) {
+      comment += `**Fallback:** ${context.fallbackReason.replace(/_/g, ' ')}\n`;
+    }
+    comment += '\n';
+    if (context.noChangesSinceParent) {
+      comment += `✅ No commits were added after \`${start}\`. No model calls were made, and the previous score was retained.\n\n`;
+    }
+  }
 
   if (findings.length === 0) {
     comment += '✅ No issues found. Clean code!\n';
@@ -1026,6 +1069,12 @@ async function executeReviewJobInternal(
       (path) => !isIgnoredLockfile(path)
     );
     const priorFindingsByFile = preparedLedger.priorFindingsByFile;
+    const finalizeOutput: FinalizeReviewOutput = {
+      rangeStartSha: effectiveMode === 'incremental' ? parent?.head_sha ?? null : baseSha,
+      fallbackReason: planningFallbackReason,
+      noChangesSinceParent: effectiveMode === 'incremental' && executionDiff.trim().length === 0,
+      previousScore: effectiveMode === 'incremental' ? parent?.score ?? null : null,
+    };
 
     if (state && (
       state.diffHash !== executionDiffHash ||
@@ -1076,7 +1125,7 @@ async function executeReviewJobInternal(
       await finalizeReview(
         reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env,
         stageAttempt, metrics, headSha ?? 'unknown', effectiveMode,
-        state.reconciliationOutcomes, state.reconciliationSummary
+        state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput
       );
       metricsOutcome = 'completed';
       return;
@@ -1297,7 +1346,7 @@ async function executeReviewJobInternal(
     await finalizeReview(
       reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt, metrics,
       headSha ?? 'unknown', effectiveMode,
-      state.reconciliationOutcomes, state.reconciliationSummary
+      state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput
     );
     metricsOutcome = 'completed';
 
@@ -1370,6 +1419,13 @@ async function executeReviewJobInternal(
   }
 }
 
+interface FinalizeReviewOutput {
+  rangeStartSha: string | null;
+  fallbackReason: string | null;
+  noChangesSinceParent: boolean;
+  previousScore: number | null;
+}
+
 async function finalizeReview(
   reviewId: string,
   findings: Finding[],
@@ -1383,7 +1439,8 @@ async function finalizeReview(
   headSha: string,
   effectiveMode: ReviewMode,
   reconciliationOutcomes: FindingReconciliationOutcome[],
-  reconciliationSummary: ReconciliationSummary
+  reconciliationSummary: ReconciliationSummary,
+  output: FinalizeReviewOutput
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -1402,7 +1459,11 @@ async function finalizeReview(
 
   await startStage(reviewId, 'SCORING', stageAttempt, env);
   const rawScore = computeScore(ledgerFindings);
-  const score = displayScore(rawScore);
+  const score = selectDisplayedReviewScore(
+    rawScore,
+    output.noChangesSinceParent,
+    output.previousScore
+  );
   metrics.recordScore(rawScore, score);
   await updateReviewResults(reviewId, score, ledgerFindings, env);
   await saveReviewReconciliation(reviewId, reconciliationOutcomes, persistedSummary, env);
@@ -1430,7 +1491,17 @@ async function finalizeReview(
       ledgerFindings,
       fullRepo,
       prNumber,
-      env.DASHBOARD_BASE_URL
+      env.DASHBOARD_BASE_URL,
+      {
+        mode: effectiveMode,
+        rangeStartSha: output.rangeStartSha,
+        rangeEndSha: headSha,
+        newFindingCount: persistedSummary.newCount,
+        existingUnresolvedCount: Math.max(0, ledgerFindings.length - persistedSummary.newCount),
+        resolvedCount: persistedSummary.resolvedCount,
+        fallbackReason: output.fallbackReason,
+        noChangesSinceParent: output.noChangesSinceParent,
+      }
     );
     await postCommentOnce(
       owner,

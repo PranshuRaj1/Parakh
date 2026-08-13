@@ -5,6 +5,7 @@ import {
   formatReviewComment,
   appendDashboardLink,
   parseRetentionDays,
+  selectDisplayedReviewScore,
   isIgnoredLockfile,
   suppressFindings,
   extractSuppressionPatterns,
@@ -186,6 +187,12 @@ describe('extractSuppressionPatterns', () => {
 });
 
 describe('formatReviewComment', () => {
+  it('retains the previous score only when an incremental range has no commits', () => {
+    expect(selectDisplayedReviewScore(2.2, true, 4.5)).toBe(4.5);
+    expect(selectDisplayedReviewScore(2.2, false, 4.5)).toBe(2.2);
+    expect(selectDisplayedReviewScore(2.2, true, null)).toBe(2.2);
+  });
+
   it('reports clean code when there are no findings', () => {
     const comment = formatReviewComment(5, 5, [], 'acme/app', 7);
     expect(comment).toContain('Parakh Code Review — 5/5');
@@ -215,6 +222,52 @@ describe('formatReviewComment', () => {
     expect(comment).toContain('*(rule violation)*');
     expect(comment).toContain('src/secure.ts:1');
     expect(comment).toContain('validate input');
+  });
+
+  it('labels an incremental review and reports its complete snapshot', () => {
+    const comment = formatReviewComment(3.5, 3.5, [finding('HIGH')], 'acme/app', 7, undefined, {
+      mode: 'incremental',
+      rangeStartSha: '1111111abcdef',
+      rangeEndSha: '2222222abcdef',
+      newFindingCount: 1,
+      existingUnresolvedCount: 2,
+      resolvedCount: 3,
+      fallbackReason: null,
+      noChangesSinceParent: false,
+    });
+    expect(comment).toContain('Parakh Incremental Review — 3.5/5');
+    expect(comment).toContain('`1111111` → `2222222`');
+    expect(comment).toContain('1 new · 2 existing unresolved · 3 resolved');
+    expect(comment).toContain('Complete PR score');
+  });
+
+  it('explains full-review fallback and an unchanged incremental range', () => {
+    const fallback = formatReviewComment(5, 5, [], 'acme/app', 7, undefined, {
+      mode: 'full',
+      rangeStartSha: 'aaaaaaa111',
+      rangeEndSha: 'bbbbbbb222',
+      newFindingCount: 0,
+      existingUnresolvedCount: 0,
+      resolvedCount: 0,
+      fallbackReason: 'rules_changed',
+      noChangesSinceParent: false,
+    });
+    expect(fallback).toContain('Parakh Full Review');
+    expect(fallback).toContain('Fallback:** rules changed');
+
+    const unchanged = formatReviewComment(5, 5, [], 'acme/app', 7, undefined, {
+      mode: 'incremental',
+      rangeStartSha: 'ccccccc111',
+      rangeEndSha: 'ccccccc111',
+      newFindingCount: 0,
+      existingUnresolvedCount: 0,
+      resolvedCount: 0,
+      fallbackReason: null,
+      noChangesSinceParent: true,
+    });
+    expect(unchanged).toContain('No commits were added');
+    expect(unchanged).toContain('No model calls were made');
+    expect(unchanged).toContain('previous score was retained');
   });
 });
 

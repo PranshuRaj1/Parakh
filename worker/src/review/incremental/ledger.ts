@@ -210,9 +210,11 @@ export async function reconcileFileFindings(
     const candidates = priorCandidates.filter((existing) => semanticKey(existing) === semanticKey(raw));
     let findingId: string;
     let firstSeenHeadSha = headSha;
+    let isNewFinding = true;
     if (candidates.length === 1 && !reusedPriorIds.has(candidates[0].finding_id)) {
       findingId = candidates[0].finding_id;
       firstSeenHeadSha = candidates[0].first_seen_head_sha;
+      isNewFinding = false;
       const index = findings.findIndex((finding) => finding.finding_id === findingId);
       if (index >= 0) {
         fingerprints.delete(await strictFindingFingerprint(findings[index]));
@@ -234,7 +236,7 @@ export async function reconcileFileFindings(
       last_validated_head_sha: headSha,
     });
     fingerprints.add(fingerprint);
-    summary.newCount++;
+    if (isNewFinding) summary.newCount++;
   }
 
   return { findings, outcomes, summary };
