@@ -62,6 +62,8 @@ export interface Env {
   GROUPED_REVIEW_OUTPUT_ENABLED?: string;
   STALENESS_CHECK_ENABLED?: string;
   DETERMINISTIC_ANALYSIS_ENABLED?: string;
+  INCREMENTAL_REVIEW_ENABLED?: string;
+  INCREMENTAL_REVIEW_SHADOW?: string;
 
   // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
   // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps

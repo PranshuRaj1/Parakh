@@ -59,6 +59,8 @@ BEHAVIOR_GROUPING_SHADOW = "true"
 GROUPED_REVIEW_OUTPUT_ENABLED = "false"
 STALENESS_CHECK_ENABLED = "false"
 DETERMINISTIC_ANALYSIS_ENABLED = "false"
+INCREMENTAL_REVIEW_ENABLED = "false"
+INCREMENTAL_REVIEW_SHADOW = "true"
 # Optional tertiary/quaternary generation models (no secrets on the vars side).
 CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"

@@ -31,6 +31,7 @@ import { getCachedToken } from '../github/auth.js';
 import {
   fetchDiff,
   fetchDiffPinned,
+  getCompareStatus,
   getPRDetails,
   postComment,
   postCommentOnce,
@@ -46,14 +47,17 @@ import {
   updateReviewReactions,
   getLatestReviewByPR,
   getActiveReviewByPR,
+  getLatestCompletedReviewBefore,
   insertReview,
   getReview,
   setTriggerCommentContext,
   updateTriggerCommentReactionId,
   updateReviewShaPin,
   updateReviewCompatibilityMetadata,
+  updateReviewIncrementalPlan,
   dbMarkDailyQuotaPaused,
   recordReviewFileEvent,
+  recordIncrementalShadowRun,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasonings } from '../db/reviews.js';
@@ -85,6 +89,8 @@ import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
+import { planIncrementalReview } from '../review/incremental/planner.js';
+import { buildShadowObservation } from '../review/incremental/shadow.js';
 import {
   emitReviewBaseline,
   ReviewBaselineCollector,
@@ -770,7 +776,8 @@ async function executeReviewJobInternal(
   const fullRepo = `${owner}/${repo}`;
   const redisGet = createRedisGet(env);
   const redisSet = createRedisSet(env);
-  const metrics = new ReviewBaselineCollector(reviewId, attempts, getFeatureFlags(env));
+  const featureFlags = getFeatureFlags(env);
+  const metrics = new ReviewBaselineCollector(reviewId, attempts, featureFlags);
 
   // Tracked in function scope so the catch can attribute failures accurately.
   let currentStage: ReviewStage = 'FETCHING_DIFF';
@@ -903,13 +910,67 @@ async function executeReviewJobInternal(
     const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
        return getActiveRules(fullRepo, env);
     });
+    const activeRulesHash = await hashActiveRules(activeRules);
     await updateReviewCompatibilityMetadata(
       reviewId,
-      await hashActiveRules(activeRules),
+      activeRulesHash,
       REVIEW_PIPELINE_VERSION,
       env
     );
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
+
+    if (payload.requestedMode === 'incremental' && featureFlags.incrementalReviewShadow && headSha && baseSha) {
+      // Shadow planning is telemetry-only. Any failure is swallowed and the
+      // already-captured full diff remains the sole execution input.
+      try {
+        const parent = await getLatestCompletedReviewBefore(fullRepo, prNumber, reviewId, env);
+        let plan = planIncrementalReview({
+          parent,
+          currentBaseSha: baseSha,
+          activeRulesHash,
+          pipelineVersion: REVIEW_PIPELINE_VERSION,
+          parentIsAncestor: null,
+        });
+
+        if (plan.decision === 'fallback' && plan.reason === 'head_not_descendant' && parent?.head_sha) {
+          const compareStatus = await getCompareStatus(owner, repo, parent.head_sha, headSha, token);
+          plan = planIncrementalReview({
+            parent,
+            currentBaseSha: baseSha,
+            activeRulesHash,
+            pipelineVersion: REVIEW_PIPELINE_VERSION,
+            parentIsAncestor: compareStatus === 'ahead' || compareStatus === 'identical',
+          });
+        }
+
+        let incrementalDiff: string | null = null;
+        if (plan.decision === 'eligible') {
+          incrementalDiff = await fetchDiffPinned(owner, repo, plan.comparisonBaseSha, headSha, token);
+          await updateReviewIncrementalPlan(
+            reviewId, plan.parent.id, plan.comparisonBaseSha, null, env
+          );
+        } else {
+          await updateReviewIncrementalPlan(reviewId, parent?.id ?? null, null, plan.reason, env);
+        }
+
+        const shadowRun = buildShadowObservation({
+          reviewId,
+          parentReviewId: parent?.id ?? null,
+          decision: plan.decision,
+          fallbackReason: plan.decision === 'fallback' ? plan.reason : null,
+          parentHeadSha: parent?.head_sha ?? null,
+          currentHeadSha: headSha,
+          fullDiff: diff,
+          incrementalDiff,
+          executionDiffHash: currentDiffHash,
+          fullDiffHash: currentDiffHash,
+        });
+        await recordIncrementalShadowRun(shadowRun, env);
+        console.log(`[incremental-shadow] ${JSON.stringify(shadowRun)}`);
+      } catch (err) {
+        console.warn('[incremental-shadow] Planner telemetry failed:', err);
+      }
+    }
 
     // Compile suppression patterns once per job — instruction rules don't change
     // mid-review, so per-file recompilation would be wasted work.

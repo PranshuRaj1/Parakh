@@ -20,6 +20,8 @@ describe('getFeatureFlags', () => {
       GROUPED_REVIEW_OUTPUT_ENABLED: ' true ',
       STALENESS_CHECK_ENABLED: 'TRUE',
       DETERMINISTIC_ANALYSIS_ENABLED: 'false',
+      INCREMENTAL_REVIEW_ENABLED: 'TRUE',
+      INCREMENTAL_REVIEW_SHADOW: 'false',
     }));
 
     expect(flags).toEqual({
@@ -29,6 +31,8 @@ describe('getFeatureFlags', () => {
       groupedReviewOutput: true,
       stalenessCheck: true,
       deterministicAnalysis: false,
+      incrementalReview: true,
+      incrementalReviewShadow: false,
     });
   });
 

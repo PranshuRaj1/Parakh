@@ -14,6 +14,8 @@ export interface FeatureFlags {
   groupedReviewOutput: boolean;
   stalenessCheck: boolean;
   deterministicAnalysis: boolean;
+  incrementalReview: boolean;
+  incrementalReviewShadow: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -23,6 +25,8 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   groupedReviewOutput: false,
   stalenessCheck: false,
   deterministicAnalysis: false,
+  incrementalReview: false,
+  incrementalReviewShadow: true,
 });
 
 function parseBooleanFlag(
@@ -74,6 +78,16 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'DETERMINISTIC_ANALYSIS_ENABLED',
       env.DETERMINISTIC_ANALYSIS_ENABLED,
       DEFAULT_FEATURE_FLAGS.deterministicAnalysis
+    ),
+    incrementalReview: parseBooleanFlag(
+      'INCREMENTAL_REVIEW_ENABLED',
+      env.INCREMENTAL_REVIEW_ENABLED,
+      DEFAULT_FEATURE_FLAGS.incrementalReview
+    ),
+    incrementalReviewShadow: parseBooleanFlag(
+      'INCREMENTAL_REVIEW_SHADOW',
+      env.INCREMENTAL_REVIEW_SHADOW,
+      DEFAULT_FEATURE_FLAGS.incrementalReviewShadow
     ),
   };
 

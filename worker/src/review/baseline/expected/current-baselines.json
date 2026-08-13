@@ -30,7 +30,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -89,7 +91,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -128,7 +132,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -168,7 +174,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [],
@@ -205,7 +213,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -244,7 +254,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [],
@@ -281,7 +293,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -320,7 +334,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -359,7 +375,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -398,7 +416,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -442,7 +462,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -481,7 +503,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -521,7 +545,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -560,7 +586,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -608,7 +636,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -647,7 +677,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -686,7 +718,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -725,7 +759,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [
@@ -764,7 +800,9 @@
           "behaviorGroupingShadow": true,
           "groupedReviewOutput": false,
           "stalenessCheck": false,
-          "deterministicAnalysis": false
+          "deterministicAnalysis": false,
+          "incrementalReview": false,
+          "incrementalReviewShadow": true
         }
       },
       "callFiles": [

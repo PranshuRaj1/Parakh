@@ -111,6 +111,23 @@ export async function updateReviewCompatibilityMetadata(
   `;
 }
 
+export async function updateReviewIncrementalPlan(
+  id: string,
+  parentReviewId: string | null,
+  comparisonBaseSha: string | null,
+  planningFallbackReason: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET parent_review_id = ${parentReviewId}::uuid,
+        comparison_base_sha = ${comparisonBaseSha},
+        fallback_reason = COALESCE(${planningFallbackReason}, fallback_reason)
+    WHERE id = ${id}
+  `;
+}
+
 // ─── Repo Settings Queries ───────────────────────────────────────────────────
 
 /**
@@ -342,6 +359,85 @@ export async function getActiveReviewByPR(
     LIMIT 1
   `;
   return (rows[0] as unknown as Review) || null;
+}
+
+export async function getLatestCompletedReviewBefore(
+  repo: string,
+  prNumber: number,
+  currentReviewId: string,
+  env: EnvWithDB
+): Promise<Review | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT candidate.*
+    FROM reviews candidate
+    JOIN reviews current_review ON current_review.id = ${currentReviewId}::uuid
+    WHERE candidate.repo = ${repo}
+      AND candidate.pr_number = ${prNumber}
+      AND candidate.status = 'COMPLETED'
+      AND candidate.created_at < current_review.created_at
+    ORDER BY candidate.created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as Review) || null;
+}
+
+export interface IncrementalShadowRun {
+  reviewId: string;
+  parentReviewId: string | null;
+  decision: 'eligible' | 'fallback' | 'not_requested' | 'disabled';
+  fallbackReason: string | null;
+  parentHeadSha: string | null;
+  currentHeadSha: string;
+  fullInputCharacters: number;
+  incrementalInputCharacters: number | null;
+  fullEstimatedTokens: number;
+  incrementalEstimatedTokens: number | null;
+  fullFileCount: number;
+  incrementalFileCount: number | null;
+  inputRatio: number | null;
+  executionDiffHash: string;
+  fullDiffHash: string;
+  executionMatchesFull: boolean;
+}
+
+export async function recordIncrementalShadowRun(
+  run: IncrementalShadowRun,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    INSERT INTO incremental_review_shadow_runs (
+      review_id, parent_review_id, decision, fallback_reason, parent_head_sha,
+      current_head_sha, full_input_characters, incremental_input_characters,
+      full_estimated_tokens, incremental_estimated_tokens, full_file_count,
+      incremental_file_count, input_ratio, execution_diff_hash, full_diff_hash,
+      execution_matches_full
+    ) VALUES (
+      ${run.reviewId}::uuid, ${run.parentReviewId}::uuid, ${run.decision},
+      ${run.fallbackReason}, ${run.parentHeadSha}, ${run.currentHeadSha},
+      ${run.fullInputCharacters}, ${run.incrementalInputCharacters},
+      ${run.fullEstimatedTokens}, ${run.incrementalEstimatedTokens},
+      ${run.fullFileCount}, ${run.incrementalFileCount}, ${run.inputRatio},
+      ${run.executionDiffHash}, ${run.fullDiffHash}, ${run.executionMatchesFull}
+    )
+    ON CONFLICT (review_id) DO UPDATE SET
+      parent_review_id = EXCLUDED.parent_review_id,
+      decision = EXCLUDED.decision,
+      fallback_reason = EXCLUDED.fallback_reason,
+      parent_head_sha = EXCLUDED.parent_head_sha,
+      current_head_sha = EXCLUDED.current_head_sha,
+      full_input_characters = EXCLUDED.full_input_characters,
+      incremental_input_characters = EXCLUDED.incremental_input_characters,
+      full_estimated_tokens = EXCLUDED.full_estimated_tokens,
+      incremental_estimated_tokens = EXCLUDED.incremental_estimated_tokens,
+      full_file_count = EXCLUDED.full_file_count,
+      incremental_file_count = EXCLUDED.incremental_file_count,
+      input_ratio = EXCLUDED.input_ratio,
+      execution_diff_hash = EXCLUDED.execution_diff_hash,
+      full_diff_hash = EXCLUDED.full_diff_hash,
+      execution_matches_full = EXCLUDED.execution_matches_full
+  `;
 }
 
 // ─── Stage Tracking DB Operations ─────────────────────────────────────────────

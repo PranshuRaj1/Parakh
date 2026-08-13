@@ -151,6 +151,19 @@ export async function postComment(
   });
 }
 
+/** Check whether `headSha` descends from `baseSha` without downloading a diff. */
+export async function getCompareStatus(
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+  token: string
+): Promise<'ahead' | 'behind' | 'diverged' | 'identical'> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`;
+  const result = await githubFetch<{ status: 'ahead' | 'behind' | 'diverged' | 'identical' }>(url, token);
+  return result.status;
+}
+
 export async function postCommentOnce(
   owner: string,
   repo: string,
