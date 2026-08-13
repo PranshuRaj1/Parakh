@@ -23,7 +23,6 @@ import {
   POSITIVE_THRESHOLD,
   NEGATIVE_THRESHOLD,
   REACTIONS,
-  GEMINI_RATE_LIMITS,
   MAX_FILES_PER_BATCH,
   REVIEW_STATE_TTL_SECONDS,
   REVIEW_LOCK_TTL_SECONDS,
@@ -88,13 +87,15 @@ import {
   StageTimeoutError,
   STAGE_TIMEOUTS_MS,
   getReviewingFilesTimeout,
-  getStageDeadline
+  getStageDeadline,
+  shouldCheckpointDelivery,
 } from './stage-tracker.js';
 import type { Env } from '../index.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
 import { ReviewRetryScheduledError, getReviewRetryDelaySeconds } from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
+import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
 import { buildShadowObservation } from '../review/incremental/shadow.js';
@@ -117,15 +118,7 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
-
-/** If no file completes within this window, the attempt is considered stalled
- *  (e.g. every key rate-limited) and fails fast so the queue can resume. */
-const NO_PROGRESS_STALL_MS = 10 * 60_000;
 
 /** Concurrent files reviewed within a batch (env FILE_CONCURRENCY overrides). */
 const DEFAULT_FILE_CONCURRENCY = 2;
@@ -511,6 +504,12 @@ interface ReviewedFileResult {
   findings: Finding[];
   outcomes: FindingReconciliationOutcome[];
   summary: ReconciliationSummary;
+  telemetry?: {
+    findingsCount: number;
+    matchedRuleIds: string[];
+    provider: string | null;
+    model: string;
+  };
 }
 
 async function reviewSingleFile(
@@ -544,8 +543,12 @@ async function reviewSingleFile(
   // Throttled to every DETAIL_UPDATE_EVERY files + the last file so a large PR
   // doesn't burn one DB subrequest per file (13 files → ~3 writes).
   if (fileIndex % DETAIL_UPDATE_EVERY === 0 || fileIndex === totalFiles) {
-    await updateReasonDetail(reviewId, 'PROCESSING', `file ${fileIndex}/${totalFiles}: ${fileName}`, env);
-    budget.spend(1);
+    try {
+      budget.spend(1);
+      await updateReasonDetail(reviewId, 'PROCESSING', `file ${fileIndex}/${totalFiles}: ${fileName}`, env);
+    } catch (telemetryErr) {
+      console.warn(`[review] Failed to update progress for ${fileName}:`, telemetryErr);
+    }
   }
 
   let result: ReviewResult | IncrementalReviewResult;
@@ -599,44 +602,31 @@ async function reviewSingleFile(
     });
   }
 
-  // Per-file telemetry row — COMPLETED, with the provider that served it and
-  // the finding count so large-PR progress is pixel-verifiable.
-  try {
-    budget.spend(1);
-    await recordReviewFileEvent({
-      reviewId,
-      file: fileName,
-      status: 'COMPLETED',
-      provider: llm.servedProvider,
-      model: llm.modelName,
-      findingsCount: result.genericFindings.length + result.ruleFindings.length,
-    }, env);
-  } catch (telemetryErr) {
-    console.warn(`[review] Failed to record file event for ${fileName}:`, telemetryErr);
-  }
-
   const resolved = resolveReviewResult(result, fileName, applicableRules, suppressPatterns);
   metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
-
-  for (const ruleId of resolved.matchedRuleIds) {
-    budget.spend(1); // DB write
-    await incrementEvidenceCount(ruleId, env);
-  }
+  const telemetry = {
+    findingsCount: result.genericFindings.length + result.ruleFindings.length,
+    matchedRuleIds: resolved.matchedRuleIds,
+    provider: llm.servedProvider,
+    model: llm.modelName,
+  };
 
   if (priorFindings !== null) {
     const incremental = result as IncrementalReviewResult;
-    return reconcileFileFindings(
+    const reconciled = await reconcileFileFindings(
       priorFindings,
       resolved.findings,
       incremental.priorFindingResolutions,
       headSha
     );
+    return { ...reconciled, telemetry };
   }
 
   return {
     findings: resolved.findings,
     outcomes: [],
     summary: emptyReconciliationSummary(),
+    telemetry,
   };
 }
 
@@ -891,6 +881,7 @@ async function executeReviewJobInternal(
   token: string,
   attempts = 1
 ): Promise<void> {
+  const deliveryStartedAt = Date.now();
   const { reviewId, owner, repo, prNumber } = payload;
   const fullRepo = `${owner}/${repo}`;
   const redisGet = createRedisGet(env);
@@ -1185,28 +1176,50 @@ async function executeReviewJobInternal(
     const retentionDays = parseRetentionDays(env.REASONING_RETENTION_DAYS);
     const reasoningBuffer: ReasoningEntry[] = [];
     let filesProcessedInThisAttempt = 0;
+    let optionalTelemetryWrites = 0;
+    const canWriteOptionalTelemetry = (): boolean =>
+      optionalTelemetryWrites < MAX_FILES_PER_BATCH
+      && activeBudget.hasRoomFor(1)
+      && !shouldCheckpointDelivery(
+        deliveryStartedAt,
+        Date.now(),
+        OUTBOUND_REQUEST_TIMEOUT_MS
+      );
+    let stateCommit: Promise<void> = Promise.resolve();
+    const commitReviewState = async (mutate: () => void): Promise<void> => {
+      const commit = stateCommit.then(async () => {
+        mutate();
+        activeBudget.spend(1);
+        await saveReviewState(fullRepo, prNumber, state!, redisSet);
+      });
+      stateCommit = commit.catch(() => undefined);
+      await commit;
+    };
 
     currentStage = 'REVIEWING_FILES';
-    const filesTimeout = getReviewingFilesTimeout(filesToProcess.length);
+    const deliveryFileCount = Math.min(filesToProcess.length, MAX_FILES_PER_BATCH);
+    const filesTimeout = getReviewingFilesTimeout(deliveryFileCount);
     await startStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
       batchIndex: state.batchIndex,
-      fileNames: filesToProcess.slice(0, MAX_FILES_PER_BATCH),
+      fileNames: filesToProcess.slice(0, deliveryFileCount),
     }, getStageDeadline(filesTimeout));
 
-    const stageStartedAt = Date.now();
+    if (shouldCheckpointDelivery(deliveryStartedAt, Date.now(), filesTimeout)) {
+      await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+        checkpoint: true,
+        reason: 'delivery_deadline',
+        completedCount: state.completedFiles.length,
+        totalCount: state.allFiles.length,
+      });
+      await updateReviewStatus(reviewId, 'QUEUED', env);
+      metricsOutcome = 'checkpoint';
+      checkpointReason = 'delivery_deadline';
+      throw new ReviewRetryScheduledError(1);
+    }
 
     await withTimeout('REVIEWING_FILES', filesTimeout, async (signal) => {
       while (filesToProcess.length > 0) {
         if (signal.aborted) break;
-
-        // Fail fast if no file completed within the stall budget (e.g. every
-        // Gemini key rate-limited for minutes): end the attempt so a fresh
-        // delivery resumes instead of idling until the stage times out.
-        if (filesProcessedInThisAttempt === 0 && Date.now() - stageStartedAt > NO_PROGRESS_STALL_MS) {
-          const err = new Error(`No file completed within ${Math.round(NO_PROGRESS_STALL_MS / 60000)}m — every Gemini key rate-limited?`);
-          err.name = 'StageTimeoutError';
-          throw err;
-        }
 
         const batch = filesToProcess.splice(0, MAX_FILES_PER_BATCH);
 
@@ -1226,11 +1239,8 @@ async function executeReviewJobInternal(
         // which looped in backoff until the stage timed out with 0 files done.
         const concurrency = Math.min(DEFAULT_FILE_CONCURRENCY, batch.length);
         let cursor = 0;
-        let exhaustedAllKeys = false;
-        const exhaustedIndices: number[] = [];
-
         const reviewWorker = async () => {
-          while (!exhaustedAllKeys && !signal.aborted) {
+          while (!signal.aborted) {
             const i = cursor++;
             if (i >= batch.length) return;
             const fileName = batch[i];
@@ -1242,22 +1252,48 @@ async function executeReviewJobInternal(
                 effectiveMode === 'incremental' ? (priorFindingsByFile.get(fileName) ?? []) : null,
                 headSha ?? 'unknown'
               );
-              allFindings.push(...reviewed.findings);
-              state!.reconciliationOutcomes.push(...reviewed.outcomes);
-              state!.reconciliationSummary = mergeReconciliationSummaries(
-                state!.reconciliationSummary,
-                reviewed.summary
-              );
-              state!.completedFiles.push(fileName);
-              delete state!.fileFailures[fileName];
-              filesProcessedInThisAttempt++;
-              lastReasonCode = 'PROCESSING';
-              lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
-              // Per-file state save: progress survives a crash/budget checkpoint,
-              // so a redelivery resumes from the exact file rather than 1/N.
-              activeBudget.spend(1); // saveReviewState
-              state!.accumulatedFindings = allFindings;
-              await saveReviewState(fullRepo, prNumber, state!, redisSet);
+              await commitReviewState(() => {
+                allFindings.push(...reviewed.findings);
+                state!.reconciliationOutcomes.push(...reviewed.outcomes);
+                state!.reconciliationSummary = mergeReconciliationSummaries(
+                  state!.reconciliationSummary,
+                  reviewed.summary
+                );
+                state!.completedFiles.push(fileName);
+                delete state!.fileFailures[fileName];
+                filesProcessedInThisAttempt++;
+                lastReasonCode = 'PROCESSING';
+                lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
+                state!.accumulatedFindings = allFindings;
+              });
+              if (reviewed.telemetry) {
+                for (const ruleId of reviewed.telemetry.matchedRuleIds) {
+                  if (!canWriteOptionalTelemetry()) break;
+                  try {
+                    optionalTelemetryWrites++;
+                    activeBudget.spend(1);
+                    await incrementEvidenceCount(ruleId, env);
+                  } catch (telemetryErr) {
+                    console.warn(`[review] Failed to increment evidence for ${ruleId}:`, telemetryErr);
+                  }
+                }
+                if (canWriteOptionalTelemetry()) {
+                  try {
+                    optionalTelemetryWrites++;
+                    activeBudget.spend(1);
+                    await recordReviewFileEvent({
+                      reviewId,
+                      file: fileName,
+                      status: 'COMPLETED',
+                      provider: reviewed.telemetry.provider,
+                      model: reviewed.telemetry.model,
+                      findingsCount: reviewed.telemetry.findingsCount,
+                    }, env);
+                  } catch (telemetryErr) {
+                    console.warn(`[review] Failed to record file event for ${fileName}:`, telemetryErr);
+                  }
+                }
+              }
             } catch (err) {
               if (err instanceof DailyQuotaExhaustedError) {
                 // Daily quota won't recover in 60s — backoff-thrashing is
@@ -1266,49 +1302,48 @@ async function executeReviewJobInternal(
                 // surfaces to the pipeline catch below.
                 throw err;
               }
-              if (err instanceof AllKeysExhaustedError) {
-                // This file + the rest of the batch go back for the retry pass.
-                exhaustedAllKeys = true;
-                exhaustedIndices.push(i);
-                return;
-              }
-              if (err instanceof AllProvidersFailedError) {
+              if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) {
                 const previous = state!.fileFailures[fileName]?.attempts ?? 0;
                 const attemptsForFile = previous + 1;
-                const lastError = sanitizeErrorText(err.lastError?.message ?? err.message);
-                state!.fileFailures[fileName] = { attempts: attemptsForFile, lastError };
+                const providerError = err instanceof AllProvidersFailedError ? err.lastError : err;
+                const lastError = sanitizeErrorText(providerError?.message ?? err.message);
+                let terminalOutcome: ReviewedFileResult | null = null;
                 if (attemptsForFile >= 3) {
-                  if (!state!.terminalFailedFiles.includes(fileName)) state!.terminalFailedFiles.push(fileName);
                   if (effectiveMode === 'incremental') {
-                    const responseFailure = err.lastError instanceof ProviderResponseError
-                      ? err.lastError.reason === 'missing' ? 'MODEL_RESULT_MISSING' : 'MODEL_RESULT_MALFORMED'
+                    const responseFailure = providerError instanceof ProviderResponseError
+                      ? providerError.reason === 'missing' ? 'MODEL_RESULT_MISSING' : 'MODEL_RESULT_MALFORMED'
                       : 'PROVIDER_FAILURE';
                     const prior = priorFindingsByFile.get(fileName) ?? [];
-                    let terminalOutcome: ReviewedFileResult;
                     if (
                       responseFailure === 'MODEL_RESULT_MISSING'
-                      && err.lastError instanceof ProviderResponseError
-                      && err.lastError.response
+                      && providerError instanceof ProviderResponseError
+                      && providerError.response
                     ) {
-                      const partial = err.lastError.response as IncrementalReviewResult;
+                      const partial = providerError.response as IncrementalReviewResult;
                       const applicableRules = activeRules.filter((rule) => matchesScope(fileName, rule.scope));
                       const resolved = resolveReviewResult(partial, fileName, applicableRules, suppressPatterns);
                       metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
-                      for (const ruleId of resolved.matchedRuleIds) {
-                        activeBudget.spend(1);
-                        await incrementEvidenceCount(ruleId, env);
-                      }
                       terminalOutcome = await reconcileFileFindings(prior, resolved.findings, null, headSha ?? 'unknown');
                     } else {
                       terminalOutcome = retainPriorFindings(prior, responseFailure);
                     }
-                    allFindings.push(...terminalOutcome.findings);
-                    state!.reconciliationOutcomes.push(...terminalOutcome.outcomes);
-                    state!.reconciliationSummary = mergeReconciliationSummaries(state!.reconciliationSummary, terminalOutcome.summary);
                   }
                 }
-                state!.accumulatedFindings = allFindings;
-                await saveReviewState(fullRepo, prNumber, state!, redisSet);
+                await commitReviewState(() => {
+                  state!.fileFailures[fileName] = { attempts: attemptsForFile, lastError };
+                  if (attemptsForFile >= 3 && !state!.terminalFailedFiles.includes(fileName)) {
+                    state!.terminalFailedFiles.push(fileName);
+                  }
+                  if (terminalOutcome) {
+                    allFindings.push(...terminalOutcome.findings);
+                    state!.reconciliationOutcomes.push(...terminalOutcome.outcomes);
+                    state!.reconciliationSummary = mergeReconciliationSummaries(
+                      state!.reconciliationSummary,
+                      terminalOutcome.summary
+                    );
+                  }
+                  state!.accumulatedFindings = allFindings;
+                });
                 continue;
               }
               if (err instanceof SubrequestBudgetExceededError) {
@@ -1327,58 +1362,34 @@ async function executeReviewJobInternal(
         };
 
         await Promise.all(Array.from({ length: concurrency }, () => reviewWorker()));
-
-        if (exhaustedAllKeys) {
-          // Return files that were never claimed (cursor → end) plus the file
-          // that exhausted the keys, so the backoff pass retries them.
-          const returnIndices = [...exhaustedIndices];
-          for (let k = cursor; k < batch.length; k++) returnIndices.push(k);
-          returnIndices.sort((a, b) => a - b);
-          filesToProcess.unshift(...returnIndices.map(k => batch[k]));
-        }
-
-        if (exhaustedAllKeys) {
+        await commitReviewState(() => {
+          state!.batchIndex++;
           state!.accumulatedFindings = allFindings;
-          await saveReviewState(fullRepo, prNumber, state!, redisSet);
-
-          // Backoff within the same attempt row
-          const backoffDuration = 60 * 1000; // 1 minute
-          const backoffUntil = new Date(Date.now() + backoffDuration).toISOString();
-          lastReasonCode = 'RATE_LIMITED_BACKOFF';
-          lastReasonDetail = `backoff until ${backoffUntil}`;
-          await updateReason(reviewId, 'RATE_LIMITED_BACKOFF', lastReasonDetail, env);
-
-          await delay(backoffDuration);
-          continue;
-        }
-
-        state!.batchIndex++;
-        state!.accumulatedFindings = allFindings;
-        await saveReviewState(fullRepo, prNumber, state!, redisSet);
-
-        if (filesToProcess.length > 0) {
-          await delay(GEMINI_RATE_LIMITS.PER_FILE_DELAY_MS);
-        }
+        });
+        break;
       }
     });
 
     const retryableFailures = Object.entries(state.fileFailures)
       .filter(([file, failure]) => failure.attempts < 3 && !state.terminalFailedFiles.includes(file));
-    if (retryableFailures.length > 0) {
+    if (retryableFailures.length > 0 || filesToProcess.length > 0) {
       state.accumulatedFindings = allFindings;
       await saveReviewState(fullRepo, prNumber, state, redisSet);
+      const reason = retryableFailures.length > 0 ? 'provider_retry' : 'delivery_batch';
       await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
         checkpoint: true,
-        reason: 'provider_retry',
+        reason,
         failedFiles: retryableFailures.map(([file]) => file),
         completedCount: state.completedFiles.length,
         totalCount: state.allFiles.length,
       });
       await updateReviewStatus(reviewId, 'QUEUED', env);
-      const highestAttempt = Math.max(...retryableFailures.map(([, failure]) => failure.attempts));
+      const delaySeconds = retryableFailures.length > 0
+        ? getReviewRetryDelaySeconds(Math.max(...retryableFailures.map(([, failure]) => failure.attempts)))
+        : 1;
       metricsOutcome = 'checkpoint';
-      checkpointReason = 'provider_retry';
-      throw new ReviewRetryScheduledError(getReviewRetryDelaySeconds(highestAttempt));
+      checkpointReason = reason;
+      throw new ReviewRetryScheduledError(delaySeconds);
     }
 
     if (state.terminalFailedFiles.length > 0) {

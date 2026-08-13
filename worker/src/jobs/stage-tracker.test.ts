@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { withTimeout, StageTimeoutError, getReviewingFilesTimeout, getStageDeadline, WATCHDOG_GRACE_MS } from './stage-tracker.js';
+import {
+  withTimeout,
+  StageTimeoutError,
+  getReviewingFilesTimeout,
+  getStageDeadline,
+  shouldCheckpointDelivery,
+  DELIVERY_CHECKPOINT_MS,
+  QUEUE_CONSUMER_WALL_TIME_MS,
+  WATCHDOG_GRACE_MS,
+} from './stage-tracker.js';
 
 describe('withTimeout', () => {
   it('resolves with the work result when it finishes in time', async () => {
@@ -44,12 +53,20 @@ describe('getReviewingFilesTimeout', () => {
   });
 
   it('scales without an absolute ceiling — long reviews are bounded by budget', () => {
-    expect(getReviewingFilesTimeout(100)).toBe(30_000 + 90_000 * 50);
-    expect(getReviewingFilesTimeout(1000)).toBe(30_000 + 90_000 * 500);
+    expect(getReviewingFilesTimeout(20)).toBeLessThan(QUEUE_CONSUMER_WALL_TIME_MS);
+    expect(getReviewingFilesTimeout(100)).toBe(12 * 60_000);
+    expect(getReviewingFilesTimeout(1000)).toBe(12 * 60_000);
   });
 
   it('places the watchdog deadline after the stage timeout and grace', () => {
     const timeout = getReviewingFilesTimeout(26);
     expect(Date.parse(getStageDeadline(timeout, 1_000))).toBe(1_000 + timeout + WATCHDOG_GRACE_MS);
+    expect(timeout + WATCHDOG_GRACE_MS).toBeLessThan(QUEUE_CONSUMER_WALL_TIME_MS);
+  });
+
+  it('checkpoints before another bounded batch can cross the delivery budget', () => {
+    const startedAt = 1_000;
+    expect(shouldCheckpointDelivery(startedAt, startedAt + DELIVERY_CHECKPOINT_MS - 300_001, 300_000)).toBe(false);
+    expect(shouldCheckpointDelivery(startedAt, startedAt + DELIVERY_CHECKPOINT_MS - 300_000, 300_000)).toBe(true);
   });
 });

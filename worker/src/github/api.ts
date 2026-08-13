@@ -5,6 +5,8 @@
  * This module ONLY makes HTTP calls. No business logic, no LLM, no DB.
  */
 
+import { createRequestSignal } from '../request-timeout.js';
+
 const GITHUB_API_BASE = 'https://api.github.com';
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'Parakh-Bot';
@@ -38,6 +40,7 @@ async function githubFetch<T>(url: string, token: string, options: RequestInit =
   const response = await fetch(url, {
     ...options,
     headers: requestHeaders,
+    signal: options.signal ?? createRequestSignal(),
   });
 
   if (!response.ok) {
@@ -63,6 +66,7 @@ export async function fetchDiff(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}`;
   const response = await fetch(url, {
     headers: headers(token, 'application/vnd.github.diff'),
+    signal: createRequestSignal(),
   });
 
   if (!response.ok) {
@@ -88,6 +92,7 @@ export async function fetchDiffPinned(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`;
   const response = await fetch(url, {
     headers: headers(token, 'application/vnd.github.diff'),
+    signal: createRequestSignal(),
   });
 
   if (!response.ok) {
@@ -258,6 +263,7 @@ export async function removeReaction(
   const response = await fetch(url, {
     method: 'DELETE',
     headers: headers(token),
+    signal: createRequestSignal(),
   });
 
   // 204 No Content is success for DELETE
@@ -322,6 +328,7 @@ export async function removeCommentReaction(
     {
       method: 'DELETE',
       headers: headers(token),
+      signal: createRequestSignal(),
     }
   );
 

@@ -142,6 +142,9 @@ export const STAGE_TIMEOUTS_MS = {
 const BASE_REVIEW_MS = 30_000;
 const OPERATION_REVIEW_MS = 90_000;
 const FILE_CONCURRENCY = 2;
+export const QUEUE_CONSUMER_WALL_TIME_MS = 15 * 60_000;
+export const DELIVERY_CHECKPOINT_MS = 10 * 60_000;
+export const MAX_REVIEW_STAGE_TIMEOUT_MS = 12 * 60_000;
 export const WATCHDOG_GRACE_MS = 120_000;
 
 /**
@@ -152,9 +155,20 @@ export const WATCHDOG_GRACE_MS = 120_000;
  * subrequest budget and Cloudflare's CPU/queue limits instead.
  */
 export function getReviewingFilesTimeout(filesTotal: number): number {
-  return BASE_REVIEW_MS + Math.ceil(filesTotal / FILE_CONCURRENCY) * OPERATION_REVIEW_MS;
+  return Math.min(
+    MAX_REVIEW_STAGE_TIMEOUT_MS,
+    BASE_REVIEW_MS + Math.ceil(filesTotal / FILE_CONCURRENCY) * OPERATION_REVIEW_MS
+  );
 }
 
 export function getStageDeadline(timeoutMs: number, now = Date.now()): string {
   return new Date(now + timeoutMs + WATCHDOG_GRACE_MS).toISOString();
+}
+
+export function shouldCheckpointDelivery(
+  deliveryStartedAt: number,
+  now: number,
+  nextWorkBudgetMs = 0
+): boolean {
+  return now + nextWorkBudgetMs >= deliveryStartedAt + DELIVERY_CHECKPOINT_MS;
 }

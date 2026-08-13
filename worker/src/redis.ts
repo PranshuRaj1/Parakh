@@ -1,4 +1,5 @@
 import type { Env } from './index.js';
+import { createRequestSignal } from './request-timeout.js';
 
 async function parseRedisResponse(response: Response, op: string, key: string): Promise<{ result: unknown }> {
   try {
@@ -12,6 +13,7 @@ export function createRedisGet(env: Env): (key: string) => Promise<string | null
   return async (key: string) => {
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
+      signal: createRequestSignal(),
     });
     if (!response.ok) {
       throw new Error(`Redis GET failed (${response.status}) for key ${key}`);
@@ -26,6 +28,7 @@ export function createRedisSet(env: Env): (key: string, value: string, opts?: { 
     const args = opts?.ex ? `/${encodeURIComponent(key)}/${encodeURIComponent(value)}/EX/${opts.ex}` : `/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
     const response = await fetch(`${env.UPSTASH_REDIS_URL}/set${args}`, {
       headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` },
+      signal: createRequestSignal(),
     });
     if (!response.ok) {
       throw new Error(`Redis SET failed (${response.status}) for key ${key}`);
@@ -43,7 +46,7 @@ export function createRedisHGetAll(env: Env): (key: string) => Promise<Record<st
   return async (key: string) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/hgetall/${encodeURIComponent(key)}`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis HGETALL failed (${response.status}) for key ${key}`);
@@ -69,7 +72,7 @@ export function createRedisHSet(env: Env): (key: string, field: string, value: s
   return async (key: string, field: string, value: string) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/hset/${encodeURIComponent(key)}/${encodeURIComponent(field)}/${encodeURIComponent(value)}`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis HSET failed (${response.status}) for key ${key}`);
@@ -85,7 +88,7 @@ export function createRedisHDel(env: Env): (key: string, field: string) => Promi
   return async (key: string, field: string) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/hdel/${encodeURIComponent(key)}/${encodeURIComponent(field)}`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis HDEL failed (${response.status}) for key ${key}`);
@@ -102,7 +105,7 @@ export function createRedisExpire(env: Env): (key: string, seconds: number) => P
   return async (key: string, seconds: number) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/expire/${encodeURIComponent(key)}/${seconds}`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis EXPIRE failed (${response.status}) for key ${key}`);
@@ -119,7 +122,7 @@ export function createRedisSetNX(env: Env): (key: string, value: string, exSecon
   return async (key: string, value: string, exSeconds: number) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/set/${encodeURIComponent(key)}/${value}/EX/${exSeconds}/NX`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis SETNX failed (${response.status}) for key ${key}`);
@@ -136,7 +139,7 @@ export function createRedisDel(env: Env): (key: string) => Promise<void> {
   return async (key: string) => {
     const response = await fetch(
       `${env.UPSTASH_REDIS_URL}/del/${encodeURIComponent(key)}`,
-      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
     );
     if (!response.ok) {
       throw new Error(`Redis DEL failed (${response.status}) for key ${key}`);

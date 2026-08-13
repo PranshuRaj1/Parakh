@@ -9,6 +9,7 @@
 
 import { neon } from '@neondatabase/serverless';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
+import { createRequestSignal } from '../request-timeout.js';
 
 /**
  * Get a SQL query function bound to the DATABASE_URL.
@@ -18,5 +19,5 @@ import type { NeonQueryFunction } from '@neondatabase/serverless';
  * @returns A tagged template function for executing SQL queries
  */
 export function getDb(databaseUrl: string): NeonQueryFunction<false, false> {
-  return neon(databaseUrl);
+  return neon(databaseUrl, { fetchOptions: { signal: createRequestSignal() } });
 }

@@ -107,4 +107,37 @@ describe('handleQueueBatch', () => {
     await handleQueueBatch(batch, env);
     expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 9 });
   });
+
+  it('resumes the same review on a second delivery after a batch checkpoint', async () => {
+    reviewJob.mockReset();
+    reviewJob
+      .mockRejectedValueOnce(new ReviewRetryScheduledError(1))
+      .mockResolvedValueOnce(undefined);
+    const payload: JobPayload = {
+      type: 'REVIEW',
+      installationId: 1,
+      owner: 'acme',
+      repo: 'app',
+      prNumber: 7,
+      reviewId: 'r1',
+      requestedMode: 'full',
+      effectiveMode: 'full',
+    };
+    const first = makeBatch([payload]);
+
+    await handleQueueBatch(first, env);
+
+    expect(first.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 1 });
+    expect(first.messages[0].ack).not.toHaveBeenCalled();
+
+    const second = makeBatch([payload]);
+    second.messages[0].attempts = 2;
+
+    await handleQueueBatch(second, env);
+
+    expect(reviewJob).toHaveBeenNthCalledWith(1, payload, env, 1);
+    expect(reviewJob).toHaveBeenNthCalledWith(2, payload, env, 2);
+    expect(second.messages[0].ack).toHaveBeenCalledTimes(1);
+    expect(second.messages[0].retry).not.toHaveBeenCalled();
+  });
 });

@@ -10,6 +10,7 @@
  */
 
 import { TOKEN_CACHE_BUFFER_SECONDS } from '@parakh/shared';
+import { createRequestSignal } from '../request-timeout.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ export async function getInstallationToken(
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'Parakh-Bot',
       },
+      signal: createRequestSignal(),
     }
   );
 
