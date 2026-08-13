@@ -14,7 +14,7 @@
  * intentionally not implemented so the LLMClient chain skips it for embeddings.
  */
 
-import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import {
   AllKeysExhaustedError,
@@ -176,6 +176,26 @@ export class OpenRouterClient implements LLMProvider {
     return {
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
+      thinking: null,
+    };
+  }
+
+  async reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult> {
+    const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.chat(
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+      { json: true }
+    );
+    const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
+    return {
+      genericFindings: parsed.genericFindings || [],
+      ruleFindings: parsed.ruleFindings || [],
+      priorFindingResolutions: parsed.priorFindingResolutions ?? null,
       thinking: null,
     };
   }

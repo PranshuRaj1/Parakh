@@ -17,6 +17,15 @@ function makeProvider(
       if (onReview === 'boom') throw new Error(`${name} boom`);
       return { genericFindings: [{ severity: 'LOW', file: 'x.ts', line: 1 }], ruleFindings: [], thinking: null };
     },
+    reviewIncrementalDiff: async () => {
+      if (onReview === 'exhausted') throw new AllKeysExhaustedError(new Error(`${name} rate-limited`));
+      if (onReview === 'daily') throw new DailyQuotaExhaustedError(new Error(`${name} daily quota`));
+      if (onReview === 'boom') throw new Error(`${name} boom`);
+      return {
+        genericFindings: [], ruleFindings: [], thinking: null,
+        priorFindingResolutions: [{ findingId: 'prior-1', status: 'STILL_PRESENT' }],
+      };
+    },
     classifyIntent: async () => 'GENERAL',
     classifyRelationship: async () => 'UNRELATED',
     classifyPriority: async () => 'normal',
@@ -58,6 +67,17 @@ describe('resolveProviderChain', () => {
 });
 
 describe('LLMClient chain routing', () => {
+  it('routes incremental reviews through the same provider chain', async () => {
+    const exhausted = makeProvider('gemini', 'g', 'exhausted');
+    const healthy = makeProvider('groq', 'q', 'ok');
+    const client = new LLMClient([exhausted, healthy]);
+    const result = await client.reviewIncrementalDiff('f.ts', 'd', [], []);
+    expect(result.priorFindingResolutions).toEqual([
+      { findingId: 'prior-1', status: 'STILL_PRESENT' },
+    ]);
+    expect(client.servedProvider).toBe('groq');
+  });
+
   it('falls through providers only on exhaustion, serving from the first healthy one', async () => {
     const slow = makeProvider('gemini', 'g', 'daily');
     const mid = makeProvider('groq', 'q', 'exhausted');

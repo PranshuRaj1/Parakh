@@ -18,7 +18,7 @@
  * provider-health signals, so we never hide a bad request behind a failover.
  */
 
-import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import type { Env } from '../index.js';
 import { AllKeysExhaustedError } from '../gemini/keyPool.js';
@@ -28,6 +28,12 @@ export type ProviderName = 'gemini' | 'groq' | 'cfai' | 'openrouter';
 export interface LLMProvider {
   /** Review a file diff against active rules. */
   reviewDiff(fileName: string, diff: string, activeRules: Rule[]): Promise<ReviewResult>;
+  reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult>;
   /** Classify the intent of a reply to a bot comment. */
   classifyIntent(comment: string, parentBotComment: string): Promise<Intent>;
   /** Classify the relationship between two rules. */
@@ -147,6 +153,17 @@ export class LLMClient {
 
   async reviewDiff(fileName: string, diff: string, activeRules: Rule[]): Promise<ReviewResult> {
     return this.route((p) => p.reviewDiff(fileName, diff, activeRules));
+  }
+
+  async reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult> {
+    return this.route((provider) =>
+      provider.reviewIncrementalDiff(fileName, diff, activeRules, priorFindings)
+    );
   }
 
   async classifyIntent(comment: string, parentBotComment: string): Promise<Intent> {

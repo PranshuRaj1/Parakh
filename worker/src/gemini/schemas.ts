@@ -92,6 +92,29 @@ export const reviewResponseSchema = {
   required: ['genericFindings', 'ruleFindings'],
 };
 
+export const incrementalReviewResponseSchema = {
+  ...reviewResponseSchema,
+  properties: {
+    ...reviewResponseSchema.properties,
+    priorFindingResolutions: {
+      type: 'ARRAY' as SchemaType,
+      items: {
+        type: 'OBJECT' as SchemaType,
+        properties: {
+          findingId: { type: 'STRING' as SchemaType },
+          status: {
+            type: 'STRING' as SchemaType,
+            enum: ['STILL_PRESENT', 'RESOLVED', 'UNCERTAIN'],
+          },
+          line: { type: 'NUMBER' as SchemaType, nullable: true },
+        },
+        required: ['findingId', 'status'],
+      },
+    },
+  },
+  required: ['genericFindings', 'ruleFindings', 'priorFindingResolutions'],
+};
+
 /**
  * Intent classification schema — four buckets.
  */

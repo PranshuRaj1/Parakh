@@ -14,7 +14,7 @@
  * thinking: null. Reasoning stays Gemini-only.
  */
 
-import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import {
   getGroqKeyPool,
@@ -245,6 +245,26 @@ export class GroqClient implements LLMProvider {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
         // Groq has no thinking parts — reasoning capture is Gemini-only.
+        thinking: null,
+      };
+    });
+  }
+
+  async reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult> {
+    const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
+    const prompt = buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings);
+    return this.withKeyRotation(async (apiKey) => {
+      const raw = await this.chat(apiKey, prompt, { json: true });
+      const parsed = this.parseJson<Partial<IncrementalReviewResult>>(raw);
+      return {
+        genericFindings: parsed.genericFindings || [],
+        ruleFindings: parsed.ruleFindings || [],
+        priorFindingResolutions: parsed.priorFindingResolutions ?? null,
         thinking: null,
       };
     });

@@ -14,7 +14,7 @@
  * thinking: null, same as Groq.
  */
 
-import type { Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
 import { parseJson } from '../llm/parse-json.js';
@@ -172,6 +172,27 @@ export class CfaAiClient implements LLMProvider {
     return {
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
+      thinking: null,
+    };
+  }
+
+  async reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult> {
+    const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.run(
+      this.generationModel,
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+      true
+    );
+    const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
+    return {
+      genericFindings: parsed.genericFindings || [],
+      ruleFindings: parsed.ruleFindings || [],
+      priorFindingResolutions: parsed.priorFindingResolutions ?? null,
       thinking: null,
     };
   }

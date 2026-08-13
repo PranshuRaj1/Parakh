@@ -1,6 +1,6 @@
 import type { Rule } from '@parakh/shared';
 
-export const REVIEW_PIPELINE_VERSION = '2a';
+export const REVIEW_PIPELINE_VERSION = '2c';
 
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);

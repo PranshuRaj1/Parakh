@@ -20,15 +20,19 @@ import type {
   Intent,
   Relationship,
   RulePriority,
+  Finding,
+  IncrementalReviewResult,
 } from '@parakh/shared';
 import {
   reviewResponseSchema,
+  incrementalReviewResponseSchema,
   intentResponseSchema,
   relationshipResponseSchema,
   priorityResponseSchema,
 } from './schemas.js';
 import {
   buildReviewPrompt,
+  buildIncrementalReviewPrompt,
   buildIntentPrompt,
   buildRelationshipPrompt,
   buildPriorityPrompt,
@@ -335,6 +339,42 @@ export class GeminiClient implements LLMProvider {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
         // Scrub secrets before persisting — same pass as error stacks.
+        thinking: this.reasoningEnabled && thinking ? sanitizeErrorText(thinking) : null,
+      };
+    });
+  }
+
+  async reviewIncrementalDiff(
+    fileName: string,
+    diff: string,
+    activeRules: Rule[],
+    priorFindings: Finding[]
+  ): Promise<IncrementalReviewResult> {
+    return this.withKeyRotation(async (apiKey) => {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const generationConfig: Record<string, unknown> = {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: incrementalReviewResponseSchema,
+      };
+      if (this.reasoningEnabled) {
+        generationConfig.thinkingConfig = { thinkingBudget: this.thinkingBudget };
+      }
+      const model = genAI.getGenerativeModel({
+        model: this.generationModel,
+        generationConfig: generationConfig as never,
+      });
+      const result = await model.generateContent(
+        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings)
+      );
+      const { jsonText, thinking } = extractResponseWithThinking(
+        result.response as unknown as Parameters<typeof extractResponseWithThinking>[0]
+      );
+      const parsed = JSON.parse(jsonText || result.response.text()) as IncrementalReviewResult;
+      return {
+        genericFindings: parsed.genericFindings || [],
+        ruleFindings: parsed.ruleFindings || [],
+        priorFindingResolutions: parsed.priorFindingResolutions ?? null,
         thinking: this.reasoningEnabled && thinking ? sanitizeErrorText(thinking) : null,
       };
     });

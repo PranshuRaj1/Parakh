@@ -6,7 +6,7 @@
  */
 
 import { SEVERITY_TAXONOMY } from '@parakh/shared';
-import type { Rule } from '@parakh/shared';
+import type { Finding, Rule } from '@parakh/shared';
 
 // ─── Review Prompt ───────────────────────────────────────────────────────────
 
@@ -104,6 +104,32 @@ If the code looks clean, return empty arrays for both.
 ${diff}
 \`\`\`
 `;
+}
+
+export function buildIncrementalReviewPrompt(
+  fileName: string,
+  diff: string,
+  activeRules: Rule[],
+  priorFindings: Finding[]
+): string {
+  return `${buildReviewPrompt(fileName, diff, activeRules)}
+
+## Prior Unresolved Findings
+
+The findings below came from the previous completed review. For every finding ID, return exactly
+one resolution: STILL_PRESENT, RESOLVED, or UNCERTAIN. Use UNCERTAIN whenever this delta does not
+provide enough evidence. Never claim RESOLVED merely because the relevant line is absent from the
+delta. You may include an updated line for STILL_PRESENT.
+
+${JSON.stringify(priorFindings.map((finding) => ({
+    findingId: finding.finding_id,
+    file: finding.file,
+    line: finding.line,
+    body: finding.body,
+    ruleId: finding.rule_id,
+  })), null, 2)}
+
+Add a third output array named priorFindingResolutions alongside genericFindings and ruleFindings.`;
 }
 
 // ─── Intent Classification Prompt ────────────────────────────────────────────

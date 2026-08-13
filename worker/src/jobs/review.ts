@@ -14,6 +14,7 @@ import type {
   Review,
   ReviewMode,
   ReviewTriggerResult,
+  IncrementalReviewResult,
 } from '@parakh/shared';
 import {
   computeScore,
@@ -55,9 +56,11 @@ import {
   updateReviewShaPin,
   updateReviewCompatibilityMetadata,
   updateReviewIncrementalPlan,
+  updateReviewEffectiveMode,
   dbMarkDailyQuotaPaused,
   recordReviewFileEvent,
   recordIncrementalShadowRun,
+  saveReviewReconciliation,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasonings } from '../db/reviews.js';
@@ -91,6 +94,17 @@ import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibilit
 import { getFeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
 import { buildShadowObservation } from '../review/incremental/shadow.js';
+import { parseDiffChanges, prepareIncrementalLedger } from '../review/incremental/changes.js';
+import {
+  emptyReconciliationSummary,
+  ensureLedgerFindings,
+  mergeReconciliationSummaries,
+  reconcileFileFindings,
+  retainPriorFindings,
+  type FindingReconciliationOutcome,
+  type LedgerFinding,
+  type ReconciliationSummary,
+} from '../review/incremental/ledger.js';
 import {
   emitReviewBaseline,
   ReviewBaselineCollector,
@@ -372,6 +386,8 @@ interface ReviewState {
   batchIndex: number;
   diffHash: ResumeValidationHash;
   attemptCounter: number;
+  reconciliationOutcomes: FindingReconciliationOutcome[];
+  reconciliationSummary: ReconciliationSummary;
 }
 
 async function loadReviewState(repo: string, prNumber: number, reviewId: string, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -412,6 +428,12 @@ interface ReasoningEntry {
 /** Throttle live per-file progress writes to every N files to save subrequests. */
 const DETAIL_UPDATE_EVERY = 5;
 
+interface ReviewedFileResult {
+  findings: Finding[];
+  outcomes: FindingReconciliationOutcome[];
+  summary: ReconciliationSummary;
+}
+
 async function reviewSingleFile(
   llm: LLMClient,
   fileName: string,
@@ -427,10 +449,12 @@ async function reviewSingleFile(
   retentionDays: number,
   reasoningBuffer: ReasoningEntry[],
   budget: SubrequestBudget,
-  metrics: ReviewBaselineCollector
-): Promise<Finding[]> {
+  metrics: ReviewBaselineCollector,
+  priorFindings: LedgerFinding[] | null,
+  headSha: string
+): Promise<ReviewedFileResult> {
   const fileDiff = fileChunks.get(fileName);
-  if (!fileDiff) return [];
+  if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
 
   const applicableRules = activeRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
@@ -445,12 +469,14 @@ async function reviewSingleFile(
     budget.spend(1);
   }
 
-  let result: ReviewResult;
+  let result: ReviewResult | IncrementalReviewResult;
   try {
     // The real Gemini/Groq calls happen inside the provider's key rotation,
     // which spends from the budget per actual attempt — so no spend here.
     metrics.recordReviewCall();
-    result = await llm.reviewDiff(fileName, fileDiff, applicableRules);
+    result = priorFindings === null
+      ? await llm.reviewDiff(fileName, fileDiff, applicableRules)
+      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;
@@ -482,7 +508,20 @@ async function reviewSingleFile(
         retentionDays,
       });
     }
-    return [];
+    if (priorFindings !== null) return retainPriorFindings(priorFindings, 'PROVIDER_FAILURE');
+    return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
+  }
+
+  const hasValidFindingArrays = Array.isArray(result.genericFindings)
+    && Array.isArray(result.ruleFindings);
+  const hasValidResolutionShape = priorFindings === null
+    || (result as IncrementalReviewResult).priorFindingResolutions === null
+    || Array.isArray((result as IncrementalReviewResult).priorFindingResolutions);
+  if (!hasValidFindingArrays || !hasValidResolutionShape) {
+    if (priorFindings !== null) {
+      return retainPriorFindings(priorFindings, 'MODEL_RESULT_MALFORMED');
+    }
+    throw new Error(`Provider returned a malformed review result for ${fileName}`);
   }
 
   if (captureReasoning && result.thinking) {
@@ -518,7 +557,21 @@ async function reviewSingleFile(
     await incrementEvidenceCount(ruleId, env);
   }
 
-  return resolved.findings;
+  if (priorFindings !== null) {
+    const incremental = result as IncrementalReviewResult;
+    return reconcileFileFindings(
+      priorFindings,
+      resolved.findings,
+      incremental.priorFindingResolutions,
+      headSha
+    );
+  }
+
+  return {
+    findings: resolved.findings,
+    outcomes: [],
+    summary: emptyReconciliationSummary(),
+  };
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -852,58 +905,20 @@ async function executeReviewJobInternal(
 
     currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
-    const diff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async () => {
+    const fullDiff = await withTimeout('FETCHING_DIFF', STAGE_TIMEOUTS_MS.FETCHING_DIFF, async () => {
       // Compare pinned base…head when available; otherwise fall back to the PR
       // diff (unpinned, but still correct for a fresh single-shot review).
       return headSha && baseSha
         ? fetchDiffPinned(owner, repo, baseSha, headSha, token)
         : fetchDiff(owner, repo, prNumber, token);
     });
-    const fileChunks = parseDiffByFile(diff);
-    const currentDiffHash = await hashResumeValidationDiff(diff);
-    const reviewableFileCount = Array.from(fileChunks.keys()).filter(
+    const fullFileChunks = parseDiffByFile(fullDiff);
+    const fullDiffHash = await hashResumeValidationDiff(fullDiff);
+    const fullReviewableFileCount = Array.from(fullFileChunks.keys()).filter(
       (file) => !isIgnoredLockfile(file)
     ).length;
-    metrics.captureInput(diff, currentDiffHash, fileChunks.size, reviewableFileCount);
+    metrics.captureInput(fullDiff, fullDiffHash, fullFileChunks.size, fullReviewableFileCount);
     await completeStage(reviewId, 'FETCHING_DIFF', stageAttempt, env, metrics.stageDetail());
-
-    if (state && (
-      state.diffHash !== currentDiffHash ||
-      state.reviewId !== reviewId ||
-      state.requestedMode !== payload.requestedMode ||
-      state.effectiveMode !== payload.effectiveMode
-    )) {
-      console.warn('[review] Resume state does not match the pinned review — starting fresh');
-      state = null;
-    }
-
-    if (!state) {
-      const allFiles = Array.from(fileChunks.keys()).filter((f) => !isIgnoredLockfile(f));
-      state = {
-        reviewId,
-        requestedMode: payload.requestedMode,
-        effectiveMode: payload.effectiveMode,
-        allFiles,
-        completedFiles: [],
-        accumulatedFindings: [],
-        batchIndex: 0,
-        diffHash: currentDiffHash,
-        attemptCounter: stageAttempt,
-      };
-    }
-
-    await saveReviewState(fullRepo, prNumber, state, redisSet);
-
-    const remainingFiles = state.allFiles.filter(f => !state.completedFiles.includes(f));
-
-    if (remainingFiles.length === 0) {
-      await finalizeReview(
-        reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env,
-        stageAttempt, metrics
-      );
-      metricsOutcome = 'completed';
-      return;
-    }
 
     currentStage = 'LOADING_RULES';
     await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
@@ -919,11 +934,22 @@ async function executeReviewJobInternal(
     );
     await completeStage(reviewId, 'LOADING_RULES', stageAttempt, env);
 
-    if (payload.requestedMode === 'incremental' && featureFlags.incrementalReviewShadow && headSha && baseSha) {
-      // Shadow planning is telemetry-only. Any failure is swallowed and the
-      // already-captured full diff remains the sole execution input.
+    let effectiveMode: ReviewMode = 'full';
+    let executionDiff = fullDiff;
+    let parent: Review | null = null;
+    let incrementalDiff: string | null = null;
+    let planningFallbackReason: string | null = payload.requestedMode === 'incremental'
+      ? 'incremental_disabled'
+      : null;
+
+    const shouldPlanIncremental = payload.requestedMode === 'incremental'
+      && (featureFlags.incrementalReviewShadow || featureFlags.incrementalReview)
+      && headSha
+      && baseSha;
+
+    if (shouldPlanIncremental && headSha && baseSha) {
       try {
-        const parent = await getLatestCompletedReviewBefore(fullRepo, prNumber, reviewId, env);
+        parent = await getLatestCompletedReviewBefore(fullRepo, prNumber, reviewId, env);
         let plan = planIncrementalReview({
           parent,
           currentBaseSha: baseSha,
@@ -943,33 +969,117 @@ async function executeReviewJobInternal(
           });
         }
 
-        let incrementalDiff: string | null = null;
         if (plan.decision === 'eligible') {
           incrementalDiff = await fetchDiffPinned(owner, repo, plan.comparisonBaseSha, headSha, token);
           await updateReviewIncrementalPlan(
             reviewId, plan.parent.id, plan.comparisonBaseSha, null, env
           );
+          if (featureFlags.incrementalReview) {
+            effectiveMode = 'incremental';
+            executionDiff = incrementalDiff;
+            planningFallbackReason = null;
+          }
         } else {
+          planningFallbackReason = plan.reason;
           await updateReviewIncrementalPlan(reviewId, parent?.id ?? null, null, plan.reason, env);
         }
 
-        const shadowRun = buildShadowObservation({
-          reviewId,
-          parentReviewId: parent?.id ?? null,
-          decision: plan.decision,
-          fallbackReason: plan.decision === 'fallback' ? plan.reason : null,
-          parentHeadSha: parent?.head_sha ?? null,
-          currentHeadSha: headSha,
-          fullDiff: diff,
-          incrementalDiff,
-          executionDiffHash: currentDiffHash,
-          fullDiffHash: currentDiffHash,
-        });
-        await recordIncrementalShadowRun(shadowRun, env);
-        console.log(`[incremental-shadow] ${JSON.stringify(shadowRun)}`);
+        if (featureFlags.incrementalReviewShadow && !featureFlags.incrementalReview) {
+          const shadowRun = buildShadowObservation({
+            reviewId,
+            parentReviewId: parent?.id ?? null,
+            decision: plan.decision,
+            fallbackReason: plan.decision === 'fallback' ? plan.reason : null,
+            parentHeadSha: parent?.head_sha ?? null,
+            currentHeadSha: headSha,
+            fullDiff,
+            incrementalDiff,
+            executionDiffHash: fullDiffHash,
+            fullDiffHash,
+          });
+          await recordIncrementalShadowRun(shadowRun, env);
+          console.log(`[incremental-shadow] ${JSON.stringify(shadowRun)}`);
+        }
       } catch (err) {
-        console.warn('[incremental-shadow] Planner telemetry failed:', err);
+        planningFallbackReason = 'planner_failed';
+        console.warn('[incremental] Planner failed; using full review:', err);
       }
+    }
+
+    await updateReviewEffectiveMode(reviewId, effectiveMode, planningFallbackReason, env);
+
+    const fileChunks = parseDiffByFile(executionDiff);
+    const executionDiffHash = await hashResumeValidationDiff(executionDiff);
+    const reviewableFileCount = Array.from(fileChunks.keys()).filter(
+      (file) => !isIgnoredLockfile(file)
+    ).length;
+    metrics.captureInput(executionDiff, executionDiffHash, fileChunks.size, reviewableFileCount);
+
+    const changes = effectiveMode === 'incremental' ? parseDiffChanges(executionDiff) : [];
+    const parentLedger = effectiveMode === 'incremental' && parent?.findings && parent.head_sha
+      ? ensureLedgerFindings(parent.findings, parent.head_sha)
+      : [];
+    const preparedLedger = prepareIncrementalLedger(
+      parentLedger,
+      changes,
+      headSha ?? 'unknown',
+      (path) => !isIgnoredLockfile(path)
+    );
+    const priorFindingsByFile = preparedLedger.priorFindingsByFile;
+
+    if (state && (
+      state.diffHash !== executionDiffHash ||
+      state.reviewId !== reviewId ||
+      state.requestedMode !== payload.requestedMode ||
+      state.effectiveMode !== effectiveMode
+    )) {
+      console.warn('[review] Resume state does not match the pinned review — starting fresh');
+      state = null;
+    }
+
+    // In-flight checkpoints from pre-ledger deployments can safely resume as
+    // full reviews; seed only the new bookkeeping fields they did not store.
+    if (state) {
+      state.reconciliationOutcomes ??= [];
+      state.reconciliationSummary ??= emptyReconciliationSummary();
+    }
+
+    if (!state) {
+      const deterministicallyHandled = new Set(changes
+        .filter((change) => change.kind === 'deleted' || change.kind === 'renamed')
+        .map((change) => change.newPath ?? change.oldPath)
+        .filter((path): path is string => path !== null));
+      const allFiles = Array.from(fileChunks.keys()).filter(
+        (file) => !isIgnoredLockfile(file) && !deterministicallyHandled.has(file)
+      );
+      state = {
+        reviewId,
+        requestedMode: payload.requestedMode,
+        effectiveMode,
+        allFiles,
+        completedFiles: [],
+        accumulatedFindings: effectiveMode === 'incremental' ? preparedLedger.initialFindings : [],
+        batchIndex: 0,
+        diffHash: executionDiffHash,
+        attemptCounter: stageAttempt,
+        reconciliationOutcomes: effectiveMode === 'incremental' ? preparedLedger.outcomes : [],
+        reconciliationSummary: effectiveMode === 'incremental'
+          ? preparedLedger.summary
+          : emptyReconciliationSummary(),
+      };
+    }
+
+    await saveReviewState(fullRepo, prNumber, state, redisSet);
+    const remainingFiles = state.allFiles.filter((file) => !state!.completedFiles.includes(file));
+
+    if (remainingFiles.length === 0) {
+      await finalizeReview(
+        reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env,
+        stageAttempt, metrics, headSha ?? 'unknown', effectiveMode,
+        state.reconciliationOutcomes, state.reconciliationSummary
+      );
+      metricsOutcome = 'completed';
+      return;
     }
 
     // Compile suppression patterns once per job — instruction rules don't change
@@ -1048,12 +1158,19 @@ async function executeReviewJobInternal(
             if (i >= batch.length) return;
             const fileName = batch[i];
             try {
-              const findings = await reviewSingleFile(
+              const reviewed = await reviewSingleFile(
                 llm, fileName, fileChunks, activeRules, suppressPatterns, env, signal,
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
-                captureReasoning, retentionDays, reasoningBuffer, activeBudget, metrics
+                captureReasoning, retentionDays, reasoningBuffer, activeBudget, metrics,
+                effectiveMode === 'incremental' ? (priorFindingsByFile.get(fileName) ?? []) : null,
+                headSha ?? 'unknown'
               );
-              allFindings.push(...findings);
+              allFindings.push(...reviewed.findings);
+              state!.reconciliationOutcomes.push(...reviewed.outcomes);
+              state!.reconciliationSummary = mergeReconciliationSummaries(
+                state!.reconciliationSummary,
+                reviewed.summary
+              );
               state!.completedFiles.push(fileName);
               filesProcessedInThisAttempt++;
               lastReasonCode = 'PROCESSING';
@@ -1178,7 +1295,9 @@ async function executeReviewJobInternal(
     });
 
     await finalizeReview(
-      reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt, metrics
+      reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt, metrics,
+      headSha ?? 'unknown', effectiveMode,
+      state.reconciliationOutcomes, state.reconciliationSummary
     );
     metricsOutcome = 'completed';
 
@@ -1260,7 +1379,11 @@ async function finalizeReview(
   token: string,
   env: Env,
   stageAttempt: number,
-  metrics: ReviewBaselineCollector
+  metrics: ReviewBaselineCollector,
+  headSha: string,
+  effectiveMode: ReviewMode,
+  reconciliationOutcomes: FindingReconciliationOutcome[],
+  reconciliationSummary: ReconciliationSummary
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -1272,11 +1395,17 @@ async function finalizeReview(
     return;
   }
 
+  const ledgerFindings = ensureLedgerFindings(findings, headSha);
+  const persistedSummary = effectiveMode === 'full'
+    ? { ...emptyReconciliationSummary(), newCount: ledgerFindings.length }
+    : reconciliationSummary;
+
   await startStage(reviewId, 'SCORING', stageAttempt, env);
-  const rawScore = computeScore(findings);
+  const rawScore = computeScore(ledgerFindings);
   const score = displayScore(rawScore);
   metrics.recordScore(rawScore, score);
-  await updateReviewResults(reviewId, score, findings, env);
+  await updateReviewResults(reviewId, score, ledgerFindings, env);
+  await saveReviewReconciliation(reviewId, reconciliationOutcomes, persistedSummary, env);
   await completeStage(reviewId, 'SCORING', stageAttempt, env, metrics.stageDetail());
 
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
@@ -1298,7 +1427,7 @@ async function finalizeReview(
     const comment = formatReviewComment(
       rawScore,
       score,
-      findings,
+      ledgerFindings,
       fullRepo,
       prNumber,
       env.DASHBOARD_BASE_URL

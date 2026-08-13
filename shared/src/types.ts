@@ -102,6 +102,7 @@ export interface Review {
   fallback_reason: string | null;
   active_rules_hash: string | null;
   pipeline_version: string;
+  reconciliation_summary: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -134,6 +135,30 @@ export interface Finding {
   suggestion: string | null;
   /** Present only for rule-violation findings. */
   rule_id: string | null;
+  /** Stable only after a finding enters the durable review ledger. */
+  finding_id?: string;
+  first_seen_head_sha?: string;
+  last_validated_head_sha?: string;
+}
+
+export type PriorFindingResolutionStatus =
+  | 'STILL_PRESENT'
+  | 'RESOLVED'
+  | 'UNCERTAIN'
+  | 'MODEL_RESULT_MISSING'
+  | 'MODEL_RESULT_MALFORMED';
+
+export interface PriorFindingResolution {
+  findingId: string;
+  status: PriorFindingResolutionStatus;
+  line?: number;
+}
+
+export interface IncrementalReviewResult {
+  genericFindings: RawGenericFinding[];
+  ruleFindings: RawRuleFinding[];
+  priorFindingResolutions: PriorFindingResolution[] | null;
+  thinking: string | null;
 }
 
 /**

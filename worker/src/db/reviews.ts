@@ -7,6 +7,7 @@
 
 import { getDb } from './client.js';
 import type { Review, ReviewMode, ReviewStatus, Finding, RepoSettings, ReviewStepEvent, ReviewReasoning } from '@parakh/shared';
+import type { FindingReconciliationOutcome, ReconciliationSummary } from '../review/incremental/ledger.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,21 @@ export async function updateReviewIncrementalPlan(
     SET parent_review_id = ${parentReviewId}::uuid,
         comparison_base_sha = ${comparisonBaseSha},
         fallback_reason = COALESCE(${planningFallbackReason}, fallback_reason)
+    WHERE id = ${id}
+  `;
+}
+
+export async function updateReviewEffectiveMode(
+  id: string,
+  effectiveMode: ReviewMode,
+  fallbackReason: string | null,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET effective_review_mode = ${effectiveMode},
+        fallback_reason = ${fallbackReason}
     WHERE id = ${id}
   `;
 }
@@ -359,6 +375,33 @@ export async function getActiveReviewByPR(
     LIMIT 1
   `;
   return (rows[0] as unknown as Review) || null;
+}
+
+export async function saveReviewReconciliation(
+  reviewId: string,
+  outcomes: FindingReconciliationOutcome[],
+  summary: ReconciliationSummary,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  const queries = outcomes.map((outcome) => sql`
+    INSERT INTO review_finding_reconciliations (
+      review_id, finding_id, status, previous_path, current_path
+    ) VALUES (
+      ${reviewId}::uuid, ${outcome.findingId}, ${outcome.status},
+      ${outcome.previousPath}, ${outcome.currentPath}
+    )
+    ON CONFLICT (review_id, finding_id) DO UPDATE SET
+      status = EXCLUDED.status,
+      previous_path = EXCLUDED.previous_path,
+      current_path = EXCLUDED.current_path
+  `);
+  queries.push(sql`
+    UPDATE reviews
+    SET reconciliation_summary = ${JSON.stringify(summary)}::jsonb
+    WHERE id = ${reviewId}
+  `);
+  await sql.transaction(queries);
 }
 
 export async function getLatestCompletedReviewBefore(
