@@ -9,9 +9,9 @@
 ## The product in one sentence
 
 Parakh is a GitHub bot. When you open a PR (or mention `@parakh` in a
-comment), it sends your diff to Google's Gemini model, turns the model's
-output into "findings," scores the PR out of 5, and posts the result as a
-GitHub review with 👍 / 👎 reactions.
+comment), it sends your diff through a configurable LLM provider chain
+(Gemini is the default), turns the model output into "findings," scores the PR
+out of 5, and posts the result as a GitHub review with 👍 / 👎 reactions.
 
 The whole thing runs on **Cloudflare Workers** — which, for our purposes,
 means three hard constraints that shape every design decision below:
@@ -335,12 +335,324 @@ wiring blocks the push before it ever reaches production.
 
 ---
 
+## Proposed Iteration 9 — Review behavior, not file order (not implemented)
+
+The current pipeline's recovery unit and reasoning unit are both a file. That
+is convenient for checkpointing, but it is the wrong altitude for a reviewer.
+A single behavior can cross a route, provider, callback, configuration file,
+template, and test. Reviewing those files independently makes the model—and
+later the human—reconstruct the behavior from disconnected observations.
+
+The next architecture should separate three concerns that happen to be coupled
+today:
+
+- **Evidence unit:** an exact changed hunk or symbol with old/new coordinates.
+- **Review unit:** a behavioral group containing related evidence from any
+  number of files.
+- **Recovery unit:** a small, idempotent unit that fits the Worker budget and
+  can be checkpointed. Initially this can be one behavioral group; oversized
+  groups must split into stable subgroups without losing their shared intent.
+
+File boundaries remain useful fallback and display metadata. They stop being
+the primary unit of reasoning.
+
+### 9.1 Non-negotiable invariant: every claim points back to code
+
+A behavior summary is navigation, not authority. Every intent claim, risk, and
+finding must carry one or more evidence references:
+
+```ts
+interface EvidenceRef {
+  file: string;
+  oldStart?: number;
+  oldEnd?: number;
+  newStart?: number;
+  newEnd?: number;
+  symbol?: string;
+  patchHash: string;
+  kind: 'edit' | 'add' | 'delete' | 'move' | 'context';
+}
+
+interface BehaviorGroup {
+  id: string;                    // stable hash, not an LLM-generated index
+  title: string;
+  intent: {
+    claim: string;               // hypothesis, never treated as established fact
+    confidence: 'high' | 'medium' | 'low';
+    sources: Array<'pr' | 'commit' | 'ticket' | 'code'>;
+    evidence: EvidenceRef[];
+  };
+  changes: EvidenceRef[];        // primary membership
+  context: EvidenceRef[];        // read-only dependencies; may appear in other groups
+  riskSignals: string[];
+}
+```
+
+Removing the summaries must still leave a complete, reviewable diff. Removing
+the evidence must make the summaries invalid. GitHub links are generated from
+the pinned SHA and the `newStart`/`newEnd` coordinates, and all references are
+validated before posting. A summary with no valid evidence is dropped rather
+than displayed as an uncheckable story.
+
+### 9.2 Normalize the diff before asking what it means
+
+The first pass is deterministic and makes the change set less noisy:
+
+1. Parse the pinned unified diff into files, hunks, lines, and coordinates.
+   Replace the current regex-only parser before building anything on top of it;
+   renames, binary files, quoted paths, deletions, and no-newline markers need
+   explicit handling.
+2. Sort evidence by normalized path and coordinate so replay order does not
+   depend on GitHub's response order.
+3. Detect **blocks** moved within or across files using normalized rolling
+   hashes followed by exact verification. Line-by-line matching is not enough:
+   repeated imports, braces, and common statements would create false moves.
+4. Add token-level metadata for paired edited lines so a reviewer can see that
+   `==` became `!=` without treating the whole line as novel.
+
+Moved code is not automatically safe. Moving an initializer, decorator,
+closure, registration call, or block with relative side effects can change
+behavior even when its text is identical. Therefore a pure move is collapsed
+to one semantic event, but the destination scope and neighboring context stay
+available to the reviewer. Token-level deltas also supplement the raw hunk;
+they never replace it, because a one-token change can be the highest-risk part
+of a PR.
+
+This pass reduces duplicate tokens and produces better signals for grouping.
+It must not decide that a change is trivial merely because the textual delta
+is small.
+
+### 9.3 Build a change graph, then form behavioral groups
+
+Do not send the full raw diff to a model and ask it to invent groups. That is
+expensive, hard to reproduce, and prone to plausible groupings with no
+traceable basis. Build a deterministic change graph first:
+
+- nodes are changed symbols or, where parsing is unavailable, changed hunks;
+- strong edges come from imports, calls, references, inheritance, matching
+  route/config keys, and tests that directly exercise a changed symbol;
+- weaker edges come from directory proximity, shared naming, commit, author,
+  and temporal proximity;
+- exact moves and renames preserve identity across old and new locations.
+
+Connected components above a confidence threshold become candidate groups.
+Large components are split with stable size/token limits; isolated evidence
+falls back to a file-based group. A file may contribute primary changes to
+multiple behaviors, and shared infrastructure can be attached as read-only
+context to several groups. Forcing every file into exactly one bucket would
+recreate the same false boundary under a different name.
+
+Author and commit boundaries are useful priors, not truth. Squashes, rebases,
+pairing, bots, and cleanup commits routinely break the assumption that one
+author or one commit equals one task.
+
+### 9.4 Extract intent as a structured, falsifiable hypothesis
+
+PR title/body, commit messages, linked-ticket text, and code structure are
+cheap signals for what the author was trying to do. They are also incomplete,
+stale, and sometimes wrong. The intent pass receives the candidate group's
+compact manifest—not the entire raw PR—and produces the structured `intent`
+object above.
+
+The detailed reviewer then asks two separate questions:
+
+1. Does the evidence support the stated intent?
+2. Even if it does, is the implementation correct, complete, and safe?
+
+This prevents a persuasive PR description from becoming proof that the code
+is correct. Low-confidence or contradictory intent is shown as uncertain and
+must never suppress a finding. If intent extraction fails, review continues
+with a deterministic label derived from paths/symbols; it does not fall back
+to hallucinating a narrative.
+
+### 9.5 Add symbol-level dependency context with a strict budget
+
+For each changed symbol, fetch only the contracts needed to judge it: called
+function signatures, relevant type/interface definitions, route bindings,
+configuration keys, and directly related tests. This context is referenced by
+pinned blob SHA and line range and stored separately from changed evidence so
+the UI cannot imply that unchanged code was edited.
+
+Context expansion is bounded by depth, item count, and tokens. Prefer a
+signature or AST slice over a whole file. When the budget is exhausted, record
+`context_truncated: true` and reduce confidence; silent truncation would make a
+confident review misleading.
+
+### 9.6 Check semantic staleness against the target branch
+
+The currently pinned `base_sha` and `head_sha` make retries review the same
+change, but they do not by themselves explain what changed on the target
+branch after the feature branch diverged. Capture an immutable triple at
+review start:
+
+```text
+merge_base_sha   common ancestor of the PR head and target tip
+base_tip_sha     target-branch tip at review start
+head_sha         PR head at review start
+```
+
+Then derive two change sets:
+
+```text
+PR changes        = diff(merge_base_sha, head_sha)
+upstream changes  = diff(merge_base_sha, base_tip_sha)
+```
+
+Gate the expensive explanation in two steps: intersect files first, then
+symbols/keys. Disjoint files need no model context. A same-file/different-symbol
+overlap is a weak signal; a changed callee, interface, route, schema, or config
+key used by the PR is strong. Only strong or ambiguous overlap becomes a
+staleness review group.
+
+Staleness is not an automatic score penalty. It is evidence of integration
+risk, and the reviewer must identify a concrete incompatibility before it
+becomes a finding. This avoids punishing an old branch that still integrates
+cleanly.
+
+### 9.7 Ground findings before trying to make the model deterministic
+
+The score calculation is already pure and rule-violation severity is assigned
+in code, but generic finding discovery and severity still come from the model.
+Temperature `0` is already set on the review call; setting it again will not
+make hosted inference bit-for-bit reproducible.
+
+The path toward stable scores is to increase deterministic evidence and track
+provenance:
+
+```ts
+interface FindingProvenance {
+  source: 'analyzer' | 'repository-rule' | 'llm';
+  detectorId: string;
+  detectorVersion: string;
+  evidence: EvidenceRef[];
+}
+```
+
+Start with checks that can run on complete reconstructed source and have exact
+line mappings. Do not lint a diff fragment: parsers and linters generally need
+the complete file, configuration, module mode, and sometimes project graph.
+WASM inside a Worker is a candidate only after bundle-size, CPU-time, memory,
+and compatibility benchmarks. Builds, tests, and arbitrary repository tools
+require a separate sandboxed runner; untrusted PR code must never execute in
+the review Worker.
+
+Analyzer and repository-rule findings receive fixed severity/weight mappings.
+The model consumes them as facts, avoids duplicating them, and focuses on
+intent, cross-file correctness, and architecture. Canonical finding IDs and
+evidence overlap prevent the same defect from being counted once per group or
+once per detector.
+
+### 9.8 Cache artifacts, not unexplained model answers
+
+The existing Redis state resumes one review. A content-addressed cache can
+also make exact replays cheaper and stable, but a key based only on `fileDiff`
+is unsafe: identical text can mean something different under new rules,
+surrounding code, analyzer versions, prompts, or models.
+
+Cache the separately inspectable artifacts (normalized evidence, graph,
+intent, analyzer output, and review result) using a versioned key derived from:
+
+```text
+repository + pinned context hashes + normalized group evidence
++ active-rules hash + prompt/schema version + model ID
++ analyzer versions + pipeline version
+```
+
+Batch Redis reads/writes where possible; a GET and SET per file would consume
+the same 50-subrequest budget the cache is meant to protect. Exact cache hits
+may reuse a stored result. Semantic-similarity hits are hints for triage, not
+proof that a review can be skipped.
+
+### 9.9 Extend checkpoint state around groups
+
+The proposed state is versioned so a deployment can invalidate or migrate old
+checkpoints safely:
+
+```ts
+interface ReviewStateV2 {
+  schemaVersion: 2;
+  pipelineVersion: string;
+  reviewId: string;
+  input: { mergeBaseSha: string; baseTipSha: string; headSha: string };
+  inputHash: string;
+  rulesHash: string;
+  normalizedChanges: EvidenceRef[];
+  groups: BehaviorGroup[];
+  completedGroupIds: string[];
+  groupSummaries: Record<string, string>;
+  accumulatedFindings: Finding[];
+  staleness?: { overlappingEvidence: EvidenceRef[]; analyzed: boolean };
+}
+```
+
+Normalization and grouping are checkpointed before detailed review. A
+redelivery never asks a model to regroup already planned evidence. Stable IDs
+make completion idempotent even if groups are processed concurrently. Finalize
+must verify that every primary `EvidenceRef` belongs to a completed group or a
+recorded fallback group.
+
+### 9.10 What the proposed pipeline would look like
+
+```text
+FETCHING_INPUT
+  pin merge base + target tip + PR head
+  fetch PR diff, upstream diff, PR/commit intent metadata
+
+NORMALIZING_DIFF                 deterministic, checkpoint
+  robust parse → stable order → moves/renames → token metadata
+
+PLANNING_REVIEW                  mostly deterministic, checkpoint
+  changed symbols → dependency graph → candidate behavior groups
+  cheap intent extraction only for grounded candidate groups
+  file-based fallback for ungrouped evidence
+
+REVIEWING_GROUPS                 resumable, bounded concurrency
+  attach bounded symbol context → deterministic facts → model review
+  validate every finding against pinned coordinates → canonical dedupe
+
+CHECKING_STALENESS               only when file/symbol overlap exists
+  explain concrete incompatibilities between upstream and PR changes
+
+SCORING → POSTING_COMMENT → REACTING
+  compute once from unique findings
+  render by behavior, with exact code links and per-file fallback
+```
+
+Sequence diagrams should be generated only for groups with actual control-flow
+evidence. Forcing every group into a diagram turns uncertainty into fake
+precision. The normal output is a short behavior summary, its affected paths,
+findings, and exact evidence links.
+
+### 9.11 Rollout order and success criteria
+
+Ship this in layers so each new abstraction proves it earns its cost:
+
+1. Robust diff parser, stable ordering, and validated `EvidenceRef`s.
+2. Exact block-move detection and token metadata, measured for false matches
+   and token reduction.
+3. Deterministic graph grouping with file fallback; no intent model yet.
+4. Structured intent over group manifests and behavior-group review.
+5. Merge-base/upstream overlap detection, gated before explanation.
+6. Deterministic analyzers on complete source, starting with one supported
+   language and a measured execution strategy.
+7. Versioned artifact cache and feedback-based noise filtering after enough
+   real review data exists.
+
+Track: evidence-link validity, percentage of changes assigned to a group,
+fallback rate, token and subrequest cost per changed line, latency, checkpoint
+count, cache-hit rate, finding address/dismissal rate, staleness precision, and
+score variance across exact replays. Behavioral grouping is successful only if
+reviewers reach concrete correctness questions faster without losing their
+ability to inspect the underlying code.
+
+---
+
 ## What the pipeline looks like now
 
 ```
 webhook (PR opened / synchronize) ──► insert reviews row + 👀 reaction
                                        └─► enqueue REVIEW job
-@parakh comment ──► COMMENT_RESPONSE job ──► classify intent (Gemini)
+@parakh comment ──► COMMENT_RESPONSE job ──► classify intent (LLM provider chain)
                      └─► REVIEW_REQUEST ──► triggerReview ──► enqueue REVIEW job
 
 REVIEW job (a delivery = a resumable slice):
@@ -350,7 +662,7 @@ REVIEW job (a delivery = a resumable slice):
   budget = SubrequestBudget(44)
   loop batches of files (concurrency 2):
      heartbeat + refresh lock + update live pointer   (spend 3)
-     per file: Gemini review ─► findings ─► save state (spend ~2-3)
+     per file: LLM review ─► findings ─► save state (spend ~2-3)
      on SubrequestBudgetExceededError ──► checkpoint (throw → redeliver)
   when all files done:
      if !hasRoomFor(finalize) ──► checkpoint (throw → redeliver)
@@ -394,6 +706,7 @@ cron (every minute):
 | `worker/src/jobs/stage-tracker.ts` | Stage events, `withTimeout` (abort-aware), per-stage timeouts |
 | `worker/src/db/reviews.ts` | All DB access: reviews, stage events, SHA pin, reasoning, sweep |
 | `worker/src/gemini/keyPool.ts` | Gemini key rotation, rate-limit / model-unavailable detection |
+| `worker/src/llm/factory.ts` | Configured provider chain (Gemini, Groq, Workers AI, OpenRouter) + shared budget/cooldown wiring |
 | `worker/src/jobs/comment-response.ts` | `@parakh` mention → intent classification → trigger |
 | `worker/src/smoke/pipeline-smoke.test.ts` | Pre-push smoke: real webhook→queue→triggerReview wiring, leaf deps mocked; catches a broken comment→review chain |
 | `.githooks/pre-push` | Runs the smoke test before every `git push` (aborts on failure) |
