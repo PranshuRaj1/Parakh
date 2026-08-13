@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
 import { LLMClient, resolveProviderChain, type LLMProvider, type ProviderName } from './provider.js';
+import { AllProvidersFailedError, ProviderHealthError, ProviderResponseError } from './errors.js';
 
 /** Build a fake provider that records calls and throws/returns per script. */
 function makeProvider(
@@ -98,11 +99,11 @@ describe('LLMClient chain routing', () => {
     expect(client.modelName).toBe('g');
   });
 
-  it('throws the last provider exhaustion when every provider is exhausted', async () => {
+  it('throws an aggregate failure when every provider is exhausted', async () => {
     const a = makeProvider('gemini', 'g', 'exhausted');
     const b = makeProvider('groq', 'q', 'exhausted');
     const client = new LLMClient([a, b]);
-    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllKeysExhaustedError);
+    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllProvidersFailedError);
   });
 
   it('lets DailyQuotaExhaustedError escape when ONLY the last provider is daily-quota-bound', async () => {
@@ -110,6 +111,62 @@ describe('LLMClient chain routing', () => {
     const b = makeProvider('groq', 'q', 'daily');
     const client = new LLMClient([a, b]);
     await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(DailyQuotaExhaustedError);
+  });
+
+  it('falls through retryable provider-health errors', async () => {
+    const unhealthy = makeProvider('gemini', 'g', 'ok');
+    unhealthy.reviewDiff = async () => { throw new ProviderHealthError('gemini', 503, 'unavailable'); };
+    const healthy = makeProvider('groq', 'q', 'ok');
+    const client = new LLMClient([unhealthy, healthy]);
+    await expect(client.reviewDiff('f.ts', 'd', [])).resolves.toBeDefined();
+    expect(client.servedProvider).toBe('groq');
+  });
+
+  it('falls back when a provider returns malformed review arrays', async () => {
+    const malformed = makeProvider('gemini', 'g', 'ok');
+    malformed.reviewDiff = async () => ({ genericFindings: null, ruleFindings: [], thinking: null } as never);
+    const healthy = makeProvider('groq', 'q', 'ok');
+    const client = new LLMClient([malformed, healthy]);
+    await expect(client.reviewDiff('f.ts', 'd', [])).resolves.toBeDefined();
+    expect(client.servedProvider).toBe('groq');
+  });
+
+  it('classifies missing incremental resolutions after provider exhaustion', async () => {
+    const missing = makeProvider('gemini', 'g', 'ok');
+    missing.reviewIncrementalDiff = async () => ({
+      genericFindings: [], ruleFindings: [], priorFindingResolutions: null, thinking: null,
+    });
+    const client = new LLMClient([missing]);
+    const prior = [{ id: 'prior-1', severity: 'HIGH', file: 'f.ts', line: 1, body: 'issue' }] as never;
+    try {
+      await client.reviewIncrementalDiff('f.ts', 'd', [], prior);
+      throw new Error('expected provider exhaustion');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AllProvidersFailedError);
+      const failure = error as AllProvidersFailedError;
+      expect(failure.lastError).toBeInstanceOf(ProviderResponseError);
+      expect((failure.lastError as ProviderResponseError).reason).toBe('missing');
+    }
+  });
+
+  it('gives every configured provider a bounded slice inside the operation deadline', async () => {
+    const calls: string[] = [];
+    const hanging = (name: ProviderName) => {
+      const provider = makeProvider(name, name, 'ok');
+      provider.reviewDiff = async () => {
+        calls.push(name);
+        return new Promise<never>(() => undefined);
+      };
+      return provider;
+    };
+    const client = new LLMClient(
+      [hanging('gemini'), hanging('groq'), hanging('cfai'), hanging('openrouter')],
+      { providerMs: 40, operationMs: 120 }
+    );
+    const started = Date.now();
+    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllProvidersFailedError);
+    expect(calls).toEqual(['gemini', 'groq', 'cfai', 'openrouter']);
+    expect(Date.now() - started).toBeLessThan(250);
   });
 
   it('does not fall through to the next provider for non-exhaustion Gemini failures', async () => {
@@ -155,6 +212,6 @@ describe('LLMClient generateEmbedding chain', () => {
     const b = makeProvider('groq', 'q', 'ok'); // no generateEmbedding at all
     const client = new LLMClient([a, b]);
 
-    await expect(client.generateEmbedding('x')).rejects.toBeInstanceOf(AllKeysExhaustedError);
+    await expect(client.generateEmbedding('x')).rejects.toBeInstanceOf(AllProvidersFailedError);
   });
 });

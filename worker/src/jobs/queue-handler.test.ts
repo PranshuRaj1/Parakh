@@ -10,6 +10,7 @@ import { handleQueueBatch } from './queue-handler.js';
 import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
+import { ReviewRetryScheduledError } from './review-retry.js';
 
 const reviewJob = vi.mocked(executeReviewJob);
 const commentJob = vi.mocked(executeCommentResponseJob);
@@ -96,5 +97,14 @@ describe('handleQueueBatch', () => {
     await handleQueueBatch(batch, env);
     expect(batch.messages[0].retry).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it('uses the requested delay for review-level provider retries', async () => {
+    reviewJob.mockRejectedValue(new ReviewRetryScheduledError(9));
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+    await handleQueueBatch(batch, env);
+    expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 9 });
   });
 });

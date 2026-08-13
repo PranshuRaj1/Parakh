@@ -22,6 +22,7 @@ import {
 } from '../gemini/keyPool.js';
 import { parseJson } from '../llm/parse-json.js';
 import type { LLMProvider } from '../llm/provider.js';
+import { classifyHttpFailure, ProviderResponseError, type LLMRequestContext } from '../llm/errors.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -93,6 +94,9 @@ export class OpenRouterClient implements LLMProvider {
       }
       return new AllKeysExhaustedError(err);
     }
+    if (status === 408 || status === 524 || status >= 500) {
+      return classifyHttpFailure('openrouter', status);
+    }
     return new Error(`[openrouter] ${status}: ${text.slice(0, 300)}`);
   }
 
@@ -103,7 +107,7 @@ export class OpenRouterClient implements LLMProvider {
    * requesting `{"type":"json_object"}` where supported; parsing stays
    * tolerant across models that ignore it.
    */
-  private async chat(prompt: string, opts: { json?: boolean } = {}): Promise<string> {
+  private async chat(prompt: string, opts: { json?: boolean } = {}, context?: LLMRequestContext): Promise<string> {
     if (!this.envCreds.OPENROUTER_API_KEY) {
       throw new AllKeysExhaustedError(
         new Error('OpenRouter API key is not configured'),
@@ -136,6 +140,7 @@ export class OpenRouterClient implements LLMProvider {
         'X-Title': 'Parakh PR reviewer',
       },
       body: jsonStringify(payload),
+      signal: context?.signal,
     });
 
     if (!response.ok) {
@@ -149,11 +154,11 @@ export class OpenRouterClient implements LLMProvider {
     try {
       data = await response.json() as typeof data;
     } catch {
-      throw new Error('[openrouter] invalid JSON response');
+      throw new ProviderResponseError('openrouter', 'openrouter returned invalid JSON');
     }
     const content = data.choices?.[0]?.message?.content ?? '';
     if (!content) {
-      throw new Error('[openrouter] empty completion');
+      throw new ProviderResponseError('openrouter', 'openrouter returned an empty completion', 'missing');
     }
     return content;
   }
@@ -163,12 +168,13 @@ export class OpenRouterClient implements LLMProvider {
   async reviewDiff(
     fileName: string,
     diff: string,
-    activeRules: Rule[]
+    activeRules: Rule[],
+    context?: LLMRequestContext
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules), {
       json: true,
-    });
+    }, context);
     const parsed = parseJson<{
       genericFindings?: ReviewResult['genericFindings'];
       ruleFindings?: ReviewResult['ruleFindings'];
@@ -184,12 +190,13 @@ export class OpenRouterClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    priorFindings: Finding[]
+    priorFindings: Finding[],
+    context?: LLMRequestContext
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(
       buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
-      { json: true }
+      { json: true }, context
     );
     const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
     return {
@@ -200,29 +207,30 @@ export class OpenRouterClient implements LLMProvider {
     };
   }
 
-  async classifyIntent(comment: string, parentBotComment: string): Promise<Intent> {
+  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildIntentPrompt(comment, parentBotComment), { json: true });
+    const raw = await this.chat(buildIntentPrompt(comment, parentBotComment), { json: true }, context);
     return parseJson<{ intent?: Intent }>(raw).intent ?? 'GENERAL';
   }
 
   async classifyRelationship(
     newRule: { body: string },
-    existingRule: { body: string }
+    existingRule: { body: string },
+    context?: LLMRequestContext
   ): Promise<Relationship> {
     const { buildRelationshipPrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildRelationshipPrompt(newRule, existingRule), { json: true });
+    const raw = await this.chat(buildRelationshipPrompt(newRule, existingRule), { json: true }, context);
     return parseJson<{ relationship?: Relationship }>(raw).relationship ?? 'UNRELATED';
   }
 
-  async classifyPriority(ruleBody: string): Promise<RulePriority> {
+  async classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority> {
     const { buildPriorityPrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildPriorityPrompt(ruleBody), { json: true });
+    const raw = await this.chat(buildPriorityPrompt(ruleBody), { json: true }, context);
     return parseJson<{ priority?: RulePriority }>(raw).priority ?? 'normal';
   }
 
-  async draftReply(context: string, question: string): Promise<string> {
+  async draftReply(context: string, question: string, requestContext?: LLMRequestContext): Promise<string> {
     const { buildReplyPrompt } = await import('../gemini/prompts.js');
-    return this.chat(buildReplyPrompt(context, question));
+    return this.chat(buildReplyPrompt(context, question), {}, requestContext);
   }
 }

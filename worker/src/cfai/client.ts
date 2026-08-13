@@ -19,6 +19,7 @@ import type { ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
 import { parseJson } from '../llm/parse-json.js';
 import type { LLMProvider } from '../llm/provider.js';
+import { classifyHttpFailure, ProviderResponseError, type LLMRequestContext } from '../llm/errors.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -97,6 +98,9 @@ export class CfaAiClient implements LLMProvider {
       }
       return new AllKeysExhaustedError(err);
     }
+    if (status === 408 || status === 524 || status >= 500) {
+      return classifyHttpFailure('cfai', status);
+    }
     return new Error(`[cfai] ${status}: ${text}`);
   }
 
@@ -107,7 +111,7 @@ export class CfaAiClient implements LLMProvider {
    * single JSON object (Cloudflare has no strict response_format — parsing is
    * tolerant).
    */
-  private async run(model: string, prompt: string, jsonOutput?: boolean): Promise<string> {
+  private async run(model: string, prompt: string, jsonOutput?: boolean, context?: LLMRequestContext): Promise<string> {
     const body: Record<string, unknown> = {
       messages: [
         {
@@ -128,6 +132,7 @@ export class CfaAiClient implements LLMProvider {
           Authorization: `Bearer ${this.envCreds.CF_API_TOKEN}`,
         },
         body: JSON.stringify(body),
+        signal: context?.signal,
       }
     );
 
@@ -142,12 +147,12 @@ export class CfaAiClient implements LLMProvider {
     try {
       data = await response.json() as typeof data;
     } catch {
-      throw new Error(`[cfai] invalid JSON response from ${model}`);
+      throw new ProviderResponseError('cfai', `cfai returned invalid JSON from ${model}`);
     }
     this.budget?.spend(1);
     const content = data.result?.response ?? '';
     if (!content) {
-      throw new Error(`[cfai] empty completion from ${model}`);
+      throw new ProviderResponseError('cfai', `cfai returned an empty completion from ${model}`, 'missing');
     }
     return content;
   }
@@ -157,7 +162,8 @@ export class CfaAiClient implements LLMProvider {
   async reviewDiff(
     fileName: string,
     diff: string,
-    activeRules: Rule[]
+    activeRules: Rule[],
+    context?: LLMRequestContext
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
@@ -180,13 +186,15 @@ export class CfaAiClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    priorFindings: Finding[]
+    priorFindings: Finding[],
+    context?: LLMRequestContext
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
       buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
-      true
+      true,
+      context
     );
     const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
     return {
@@ -197,46 +205,50 @@ export class CfaAiClient implements LLMProvider {
     };
   }
 
-  async classifyIntent(comment: string, parentBotComment: string): Promise<Intent> {
+  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
       buildIntentPrompt(comment, parentBotComment),
-      true
+      true,
+      context
     );
     return parseJson<{ intent?: Intent }>(raw).intent ?? 'GENERAL';
   }
 
   async classifyRelationship(
     newRule: { body: string },
-    existingRule: { body: string }
+    existingRule: { body: string },
+    context?: LLMRequestContext
   ): Promise<Relationship> {
     const { buildRelationshipPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
       buildRelationshipPrompt(newRule, existingRule),
-      true
+      true,
+      context
     );
     return parseJson<{ relationship?: Relationship }>(raw).relationship ?? 'UNRELATED';
   }
 
-  async classifyPriority(ruleBody: string): Promise<RulePriority> {
+  async classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority> {
     const { buildPriorityPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
       buildPriorityPrompt(ruleBody),
-      true
+      true,
+      context
     );
     return parseJson<{ priority?: RulePriority }>(raw).priority ?? 'normal';
   }
 
-  async draftReply(context: string, question: string): Promise<string> {
+  async draftReply(context: string, question: string, requestContext?: LLMRequestContext): Promise<string> {
     const { buildReplyPrompt } = await import('../gemini/prompts.js');
-    return this.run(this.generationModel, buildReplyPrompt(context, question));
+    return this.run(this.generationModel, buildReplyPrompt(context, question), false, requestContext);
   }
 
   /** Generate a 768-dim embedding via bge-base-en-v1.5. */
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbedding(text: string, context?: LLMRequestContext): Promise<number[]> {
     const response = await fetch(
       `${CFAI_API_BASE}/${this.envCreds.CF_ACCOUNT_ID}/ai/run/${CFAI_EMBEDDING_MODEL}`,
       {
@@ -246,6 +258,7 @@ export class CfaAiClient implements LLMProvider {
           Authorization: `Bearer ${this.envCreds.CF_API_TOKEN}`,
         },
         body: JSON.stringify({ text }),
+        signal: context?.signal,
       }
     );
 

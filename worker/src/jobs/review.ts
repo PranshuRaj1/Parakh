@@ -61,12 +61,14 @@ import {
   recordReviewFileEvent,
   recordIncrementalShadowRun,
   saveReviewReconciliation,
+  markReviewIncomplete,
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasonings } from '../db/reviews.js';
 import { type ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTER_MS } from '../gemini/keyPool.js';
 import type { LLMClient } from '../llm/provider.js';
+import { AllProvidersFailedError, ProviderResponseError } from '../llm/errors.js';
 import { createLLMClients } from '../llm/factory.js';
 import {
   SubrequestBudget,
@@ -85,10 +87,12 @@ import {
   withTimeout,
   StageTimeoutError,
   STAGE_TIMEOUTS_MS,
-  getReviewingFilesTimeout
+  getReviewingFilesTimeout,
+  getStageDeadline
 } from './stage-tracker.js';
 import type { Env } from '../index.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
+import { ReviewRetryScheduledError, getReviewRetryDelaySeconds } from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
@@ -271,11 +275,41 @@ export function parseDiffByFile(diff: string): Map<string, string> {
   const fileDiffs = diff.split(/^diff --git /m).slice(1);
   for (const fileDiff of fileDiffs) {
     const lines = fileDiff.split('\n');
-    const firstLine = lines[0] || '';
-    const match = firstLine.match(/b\/(.+)/);
-    if (match) files.set(match[1], fileDiff);
+    const metadataPath = lines.find((line) => line.startsWith('rename to '))?.slice('rename to '.length)
+      ?? lines.find((line) => line.startsWith('copy to '))?.slice('copy to '.length)
+      ?? lines.find((line) => line.startsWith('+++ b/'))?.slice('+++ b/'.length);
+    const path = metadataPath ? decodeGitPath(metadataPath) : parseDiffHeaderPath(lines[0] ?? '');
+    if (!path) throw new Error(`Unable to parse diff path from header: ${lines[0] ?? '<empty>'}`);
+    files.set(path, fileDiff);
   }
   return files;
+}
+
+function decodeGitPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith('"')) return trimmed;
+  try {
+    return JSON.parse(trimmed) as string;
+  } catch {
+    throw new Error(`Unable to decode quoted Git path: ${trimmed}`);
+  }
+}
+
+function parseDiffHeaderPath(header: string): string | null {
+  const quoted = header.match(/^"a\/(?:[^"\\]|\\.)*" "b\/(?:[^"\\]|\\.)*"$/);
+  if (quoted) {
+    const tokens = quoted[0].match(/"(?:[^"\\]|\\.)*"/g);
+    if (tokens?.length === 2) return (JSON.parse(tokens[1]) as string).slice(2);
+  }
+  if (!header.startsWith('a/')) return null;
+  const candidates: Array<{ oldPath: string; newPath: string }> = [];
+  let offset = header.indexOf(' b/', 2);
+  while (offset >= 0) {
+    candidates.push({ oldPath: header.slice(2, offset), newPath: header.slice(offset + 3) });
+    offset = header.indexOf(' b/', offset + 1);
+  }
+  const equal = candidates.find((candidate) => candidate.oldPath === candidate.newPath);
+  return equal?.newPath ?? candidates.at(-1)?.newPath ?? null;
 }
 
 /**
@@ -431,6 +465,8 @@ interface ReviewState {
   attemptCounter: number;
   reconciliationOutcomes: FindingReconciliationOutcome[];
   reconciliationSummary: ReconciliationSummary;
+  fileFailures: Record<string, { attempts: number; lastError: string }>;
+  terminalFailedFiles: string[];
 }
 
 async function loadReviewState(repo: string, prNumber: number, reviewId: string, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -518,10 +554,10 @@ async function reviewSingleFile(
     // which spends from the budget per actual attempt — so no spend here.
     metrics.recordReviewCall();
     result = priorFindings === null
-      ? await llm.reviewDiff(fileName, fileDiff, applicableRules)
-      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings);
+      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal)
+      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal);
   } catch (err) {
-    if (err instanceof AllKeysExhaustedError) throw err;
+    if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;
     // Non-rate-limit per-file failure: persist it so the dashboard can show
     // exactly which file broke and why (failure-mode tie-in).
@@ -551,20 +587,7 @@ async function reviewSingleFile(
         retentionDays,
       });
     }
-    if (priorFindings !== null) return retainPriorFindings(priorFindings, 'PROVIDER_FAILURE');
-    return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
-  }
-
-  const hasValidFindingArrays = Array.isArray(result.genericFindings)
-    && Array.isArray(result.ruleFindings);
-  const hasValidResolutionShape = priorFindings === null
-    || (result as IncrementalReviewResult).priorFindingResolutions === null
-    || Array.isArray((result as IncrementalReviewResult).priorFindingResolutions);
-  if (!hasValidFindingArrays || !hasValidResolutionShape) {
-    if (priorFindings !== null) {
-      return retainPriorFindings(priorFindings, 'MODEL_RESULT_MALFORMED');
-    }
-    throw new Error(`Provider returned a malformed review result for ${fileName}`);
+    throw err;
   }
 
   if (captureReasoning && result.thinking) {
@@ -968,6 +991,7 @@ async function executeReviewJobInternal(
     const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
        return getActiveRules(fullRepo, env);
     });
+
     const activeRulesHash = await hashActiveRules(activeRules);
     await updateReviewCompatibilityMetadata(
       reviewId,
@@ -1091,6 +1115,8 @@ async function executeReviewJobInternal(
     if (state) {
       state.reconciliationOutcomes ??= [];
       state.reconciliationSummary ??= emptyReconciliationSummary();
+      state.fileFailures ??= {};
+      state.terminalFailedFiles ??= [];
     }
 
     if (!state) {
@@ -1115,6 +1141,8 @@ async function executeReviewJobInternal(
         reconciliationSummary: effectiveMode === 'incremental'
           ? preparedLedger.summary
           : emptyReconciliationSummary(),
+        fileFailures: {},
+        terminalFailedFiles: [],
       };
     }
 
@@ -1159,11 +1187,11 @@ async function executeReviewJobInternal(
     let filesProcessedInThisAttempt = 0;
 
     currentStage = 'REVIEWING_FILES';
+    const filesTimeout = getReviewingFilesTimeout(filesToProcess.length);
     await startStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
       batchIndex: state.batchIndex,
       fileNames: filesToProcess.slice(0, MAX_FILES_PER_BATCH),
-    });
-    const filesTimeout = getReviewingFilesTimeout(filesToProcess.length);
+    }, getStageDeadline(filesTimeout));
 
     const stageStartedAt = Date.now();
 
@@ -1221,6 +1249,7 @@ async function executeReviewJobInternal(
                 reviewed.summary
               );
               state!.completedFiles.push(fileName);
+              delete state!.fileFailures[fileName];
               filesProcessedInThisAttempt++;
               lastReasonCode = 'PROCESSING';
               lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
@@ -1243,6 +1272,45 @@ async function executeReviewJobInternal(
                 exhaustedIndices.push(i);
                 return;
               }
+              if (err instanceof AllProvidersFailedError) {
+                const previous = state!.fileFailures[fileName]?.attempts ?? 0;
+                const attemptsForFile = previous + 1;
+                const lastError = sanitizeErrorText(err.lastError?.message ?? err.message);
+                state!.fileFailures[fileName] = { attempts: attemptsForFile, lastError };
+                if (attemptsForFile >= 3) {
+                  if (!state!.terminalFailedFiles.includes(fileName)) state!.terminalFailedFiles.push(fileName);
+                  if (effectiveMode === 'incremental') {
+                    const responseFailure = err.lastError instanceof ProviderResponseError
+                      ? err.lastError.reason === 'missing' ? 'MODEL_RESULT_MISSING' : 'MODEL_RESULT_MALFORMED'
+                      : 'PROVIDER_FAILURE';
+                    const prior = priorFindingsByFile.get(fileName) ?? [];
+                    let terminalOutcome: ReviewedFileResult;
+                    if (
+                      responseFailure === 'MODEL_RESULT_MISSING'
+                      && err.lastError instanceof ProviderResponseError
+                      && err.lastError.response
+                    ) {
+                      const partial = err.lastError.response as IncrementalReviewResult;
+                      const applicableRules = activeRules.filter((rule) => matchesScope(fileName, rule.scope));
+                      const resolved = resolveReviewResult(partial, fileName, applicableRules, suppressPatterns);
+                      metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
+                      for (const ruleId of resolved.matchedRuleIds) {
+                        activeBudget.spend(1);
+                        await incrementEvidenceCount(ruleId, env);
+                      }
+                      terminalOutcome = await reconcileFileFindings(prior, resolved.findings, null, headSha ?? 'unknown');
+                    } else {
+                      terminalOutcome = retainPriorFindings(prior, responseFailure);
+                    }
+                    allFindings.push(...terminalOutcome.findings);
+                    state!.reconciliationOutcomes.push(...terminalOutcome.outcomes);
+                    state!.reconciliationSummary = mergeReconciliationSummaries(state!.reconciliationSummary, terminalOutcome.summary);
+                  }
+                }
+                state!.accumulatedFindings = allFindings;
+                await saveReviewState(fullRepo, prNumber, state!, redisSet);
+                continue;
+              }
               if (err instanceof SubrequestBudgetExceededError) {
                 // Budget checkpoint — don't mark the file done; abort the batch
                 // so the queue redelivers and resumes from the last per-file
@@ -1250,16 +1318,10 @@ async function executeReviewJobInternal(
                 // trip it too; only one needs to propagate.
                 throw err;
               }
-              // Non-rate-limit failure: keep existing resume semantics (mark
-              // done, no findings); reviewSingleFile already persisted the error.
+              // Unexpected failures fail the stage. They must never be counted
+              // as reviewed files with zero findings.
               console.error(`[review] Error reviewing ${fileName}:`, err);
-              state!.completedFiles.push(fileName);
-              filesProcessedInThisAttempt++;
-              lastReasonCode = 'RETRYING_AFTER_FAILURE';
-              lastReasonDetail = `file ${fileName} failed: ${err instanceof Error ? sanitizeErrorText(err.message) : String(err)}`;
-              activeBudget.spend(1); // saveReviewState
-              state!.accumulatedFindings = allFindings;
-              await saveReviewState(fullRepo, prNumber, state!, redisSet);
+              throw err;
             }
           }
         };
@@ -1299,6 +1361,40 @@ async function executeReviewJobInternal(
         }
       }
     });
+
+    const retryableFailures = Object.entries(state.fileFailures)
+      .filter(([file, failure]) => failure.attempts < 3 && !state.terminalFailedFiles.includes(file));
+    if (retryableFailures.length > 0) {
+      state.accumulatedFindings = allFindings;
+      await saveReviewState(fullRepo, prNumber, state, redisSet);
+      await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+        checkpoint: true,
+        reason: 'provider_retry',
+        failedFiles: retryableFailures.map(([file]) => file),
+        completedCount: state.completedFiles.length,
+        totalCount: state.allFiles.length,
+      });
+      await updateReviewStatus(reviewId, 'QUEUED', env);
+      const highestAttempt = Math.max(...retryableFailures.map(([, failure]) => failure.attempts));
+      metricsOutcome = 'checkpoint';
+      checkpointReason = 'provider_retry';
+      throw new ReviewRetryScheduledError(getReviewRetryDelaySeconds(highestAttempt));
+    }
+
+    if (state.terminalFailedFiles.length > 0) {
+      await completeStage(reviewId, 'REVIEWING_FILES', stageAttempt, env, {
+        incomplete: true,
+        failedFiles: state.terminalFailedFiles,
+        completedCount: state.completedFiles.length,
+        totalCount: state.allFiles.length,
+      });
+      await finalizeIncompleteReview(
+        reviewId, allFindings, state, owner, repo, prNumber, token, env,
+        effectiveMode, headSha ?? 'unknown'
+      );
+      metricsOutcome = 'failed';
+      return;
+    }
     
     // Guard the finalize step: it needs ~15 subrequests (SCORING, REACTING,
     // POSTING_COMMENT, reactions). If this delivery already burned most of the
@@ -1365,6 +1461,9 @@ async function executeReviewJobInternal(
       checkpointReason = 'subrequest_budget';
       throw err;
     }
+    if (err instanceof ReviewRetryScheduledError) {
+      throw err;
+    }
     if (err instanceof DailyQuotaExhaustedError) {
       // Every provider key has hit its DAILY quota — it won't recover in the
       // queue's retry window, so a redelivery would just fail again. Instead
@@ -1424,6 +1523,71 @@ interface FinalizeReviewOutput {
   fallbackReason: string | null;
   noChangesSinceParent: boolean;
   previousScore: number | null;
+}
+
+async function finalizeIncompleteReview(
+  reviewId: string,
+  findings: Finding[],
+  state: ReviewState,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string,
+  env: Env,
+  effectiveMode: ReviewMode,
+  headSha: string
+): Promise<void> {
+  const ledgerFindings = ensureLedgerFindings(findings, headSha);
+  const provisionalScore = effectiveMode === 'incremental'
+    ? displayScore(computeScore(ledgerFindings))
+    : null;
+  const comment = formatIncompleteReviewComment(
+    ledgerFindings,
+    state.completedFiles.length,
+    state.allFiles.length,
+    state.terminalFailedFiles,
+    provisionalScore
+  );
+  await postCommentOnce(owner, repo, prNumber, comment, `<!-- parakh-incomplete:${reviewId} -->`, token);
+  const current = await getReview(reviewId, env);
+  if (current?.trigger_comment_id) await swapCommentReaction(current, 'confused', owner, repo, token, env);
+  await markReviewIncomplete(
+    reviewId,
+    ledgerFindings,
+    provisionalScore,
+    `Incomplete review: ${state.completedFiles.length}/${state.allFiles.length} files completed`,
+    env
+  );
+}
+
+export function formatIncompleteReviewComment(
+  findings: Finding[],
+  completedCount: number,
+  totalCount: number,
+  failedFiles: string[],
+  provisionalScore: number | null
+): string {
+  const priorityFindings = findings.filter((finding) => finding.severity === 'CRITICAL' || finding.severity === 'HIGH');
+  let comment = `## Parakh Code Review Incomplete - No Score\n\n`;
+  comment += `Reviewed **${completedCount} of ${totalCount}** files. `;
+  comment += `The remaining ${failedFiles.length} file(s) could not be reviewed after three provider attempts.\n\n`;
+  if (provisionalScore !== null) {
+    comment += `**Provisional ledger score:** ${provisionalScore}/5\n\n`;
+    comment += `This score conservatively retains prior findings for files that could not be revalidated. It is not a completed review score.\n\n`;
+  }
+  if (priorityFindings.length > 0) {
+    comment += `### Critical and high findings already confirmed\n\n`;
+    for (const finding of priorityFindings) {
+      comment += `- **${finding.severity}** \`${finding.file}:${finding.line}\`: ${finding.body}\n`;
+      if (finding.suggestion) comment += `  > ${finding.suggestion}\n`;
+    }
+    comment += `\nFix these issues, then reply \`@parakh review\` to review the complete PR.\n`;
+  } else {
+    comment += `No critical or high findings were confirmed in the reviewed subset. Unreviewed files may still contain issues.\n\n`;
+    comment += `Reply \`@parakh review\` to retry the complete review.\n`;
+  }
+  comment += `\n**Unreviewed files:** ${failedFiles.map((file) => `\`${file}\``).join(', ')}\n`;
+  return comment;
 }
 
 async function finalizeReview(

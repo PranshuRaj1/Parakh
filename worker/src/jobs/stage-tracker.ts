@@ -10,9 +10,10 @@ export async function startStage(
   stage: ReviewStage,
   attempt: number = 1,
   env: Env,
-  detail?: Record<string, unknown>
+  detail?: Record<string, unknown>,
+  deadlineAt?: string
 ): Promise<void> {
-  await dbStartStage(reviewId, stage, attempt, detail || null, env);
+  await dbStartStage(reviewId, stage, attempt, detail || null, deadlineAt ?? null, env);
 }
 
 /**
@@ -138,8 +139,10 @@ export const STAGE_TIMEOUTS_MS = {
   REACTING: 10_000,
 };
 
-const BASE_REVIEW_MS = 5_000;
-const PER_FILE_REVIEW_MS = 30_000;
+const BASE_REVIEW_MS = 30_000;
+const OPERATION_REVIEW_MS = 90_000;
+const FILE_CONCURRENCY = 2;
+export const WATCHDOG_GRACE_MS = 120_000;
 
 /**
  * REVIEWING timeout grows linearly with file count and is NOT capped:
@@ -149,5 +152,9 @@ const PER_FILE_REVIEW_MS = 30_000;
  * subrequest budget and Cloudflare's CPU/queue limits instead.
  */
 export function getReviewingFilesTimeout(filesTotal: number): number {
-  return BASE_REVIEW_MS + PER_FILE_REVIEW_MS * filesTotal;
+  return BASE_REVIEW_MS + Math.ceil(filesTotal / FILE_CONCURRENCY) * OPERATION_REVIEW_MS;
+}
+
+export function getStageDeadline(timeoutMs: number, now = Date.now()): string {
+  return new Date(now + timeoutMs + WATCHDOG_GRACE_MS).toISOString();
 }

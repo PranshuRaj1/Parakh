@@ -42,6 +42,7 @@ import { getKeyPool, isRateLimitError, isModelUnavailableError, isDailyQuotaErro
 import { MemoryCooldownStore, type CooldownStore } from './cooldown-store.js';
 import { sanitizeErrorText } from '../jobs/sanitize.js';
 import type { LLMProvider } from '../llm/provider.js';
+import type { LLMRequestContext } from '../llm/errors.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -309,7 +310,8 @@ export class GeminiClient implements LLMProvider {
   async reviewDiff(
     fileName: string,
     diff: string,
-    activeRules: Rule[]
+    activeRules: Rule[],
+    context?: LLMRequestContext
   ): Promise<ReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -330,7 +332,7 @@ export class GeminiClient implements LLMProvider {
         generationConfig: generationConfig as never,
       });
 
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent(prompt, { signal: context?.signal, timeout: context?.timeoutMs });
       const { jsonText, thinking } = extractResponseWithThinking(result.response as unknown as Parameters<typeof extractResponseWithThinking>[0]);
       const text = jsonText || result.response.text();
       const parsed = JSON.parse(text) as ReviewResult;
@@ -348,7 +350,8 @@ export class GeminiClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    priorFindings: Finding[]
+    priorFindings: Finding[],
+    context?: LLMRequestContext
   ): Promise<IncrementalReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -365,7 +368,8 @@ export class GeminiClient implements LLMProvider {
         generationConfig: generationConfig as never,
       });
       const result = await model.generateContent(
-        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings)
+        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+        { signal: context?.signal, timeout: context?.timeoutMs }
       );
       const { jsonText, thinking } = extractResponseWithThinking(
         result.response as unknown as Parameters<typeof extractResponseWithThinking>[0]
@@ -388,7 +392,8 @@ export class GeminiClient implements LLMProvider {
    */
   async classifyIntent(
     comment: string,
-    parentBotComment: string
+    parentBotComment: string,
+    context?: LLMRequestContext
   ): Promise<Intent> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -403,7 +408,7 @@ export class GeminiClient implements LLMProvider {
         },
       });
 
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent(prompt, { signal: context?.signal, timeout: context?.timeoutMs });
       const text = result.response.text();
       const parsed = JSON.parse(text) as { intent: Intent };
       return parsed.intent;
@@ -418,7 +423,8 @@ export class GeminiClient implements LLMProvider {
    */
   async classifyRelationship(
     newRule: { body: string },
-    existingRule: { body: string }
+    existingRule: { body: string },
+    context?: LLMRequestContext
   ): Promise<Relationship> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -433,7 +439,7 @@ export class GeminiClient implements LLMProvider {
         },
       });
 
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent(prompt, { signal: context?.signal, timeout: context?.timeoutMs });
       const text = result.response.text();
       const parsed = JSON.parse(text) as { relationship: Relationship };
       return parsed.relationship;
@@ -446,7 +452,7 @@ export class GeminiClient implements LLMProvider {
    * Classify the priority of a rule body.
    * Returns "high" (security/architecture) or "normal" (style/convention).
    */
-  async classifyPriority(ruleBody: string): Promise<RulePriority> {
+  async classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
       const prompt = buildPriorityPrompt(ruleBody);
@@ -460,7 +466,7 @@ export class GeminiClient implements LLMProvider {
         },
       });
 
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent(prompt, { signal: context?.signal, timeout: context?.timeoutMs });
       const text = result.response.text();
       const parsed = JSON.parse(text) as { priority: RulePriority };
       return parsed.priority;
@@ -473,11 +479,11 @@ export class GeminiClient implements LLMProvider {
    * Generate a 768-dimensional embedding vector using text-embedding-004.
    * Used for rule similarity search in the contradiction engine.
    */
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbedding(text: string, context?: LLMRequestContext): Promise<number[]> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
-      const result = await model.embedContent(text);
+      const result = await model.embedContent(text, { signal: context?.signal, timeout: context?.timeoutMs });
       return result.embedding.values;
     });
   }
@@ -488,7 +494,7 @@ export class GeminiClient implements LLMProvider {
    * Draft a free-text reply for the QUESTION intent branch.
    * Not structured output — just a natural language response.
    */
-  async draftReply(context: string, question: string): Promise<string> {
+  async draftReply(context: string, question: string, requestContext?: LLMRequestContext): Promise<string> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
       const prompt = buildReplyPrompt(context, question);
@@ -500,7 +506,7 @@ export class GeminiClient implements LLMProvider {
         },
       });
 
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent(prompt, { signal: requestContext?.signal, timeout: requestContext?.timeoutMs });
       return result.response.text();
     });
   }

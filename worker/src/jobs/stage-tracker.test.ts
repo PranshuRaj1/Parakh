@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withTimeout, StageTimeoutError, getReviewingFilesTimeout } from './stage-tracker.js';
+import { withTimeout, StageTimeoutError, getReviewingFilesTimeout, getStageDeadline, WATCHDOG_GRACE_MS } from './stage-tracker.js';
 
 describe('withTimeout', () => {
   it('resolves with the work result when it finishes in time', async () => {
@@ -38,13 +38,18 @@ describe('withTimeout', () => {
 
 describe('getReviewingFilesTimeout', () => {
   it('scales with the number of files from a base', () => {
-    expect(getReviewingFilesTimeout(0)).toBe(5_000);
-    expect(getReviewingFilesTimeout(1)).toBe(35_000);
-    expect(getReviewingFilesTimeout(2)).toBe(65_000);
+    expect(getReviewingFilesTimeout(0)).toBe(30_000);
+    expect(getReviewingFilesTimeout(1)).toBe(120_000);
+    expect(getReviewingFilesTimeout(2)).toBe(120_000);
   });
 
   it('scales without an absolute ceiling — long reviews are bounded by budget', () => {
-    expect(getReviewingFilesTimeout(100)).toBe(5_000 + 30_000 * 100);
-    expect(getReviewingFilesTimeout(1000)).toBe(5_000 + 30_000 * 1000);
+    expect(getReviewingFilesTimeout(100)).toBe(30_000 + 90_000 * 50);
+    expect(getReviewingFilesTimeout(1000)).toBe(30_000 + 90_000 * 500);
+  });
+
+  it('places the watchdog deadline after the stage timeout and grace', () => {
+    const timeout = getReviewingFilesTimeout(26);
+    expect(Date.parse(getStageDeadline(timeout, 1_000))).toBe(1_000 + timeout + WATCHDOG_GRACE_MS);
   });
 });

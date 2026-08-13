@@ -65,6 +65,7 @@ export interface Review {
   pr_number: number;
   installation_id: number | null;  // stored for watchdog resume
   score: number | null;
+  provisional_score: number | null;
   findings: Finding[] | null;
   seen_reaction_id: number | null;
   verdict_reaction_id: number | null;
@@ -77,6 +78,7 @@ export interface Review {
   stage_reason_code: StageReasonCode | null;
   stage_reason_detail: string | null;
   worker_heartbeat_at: string | null;
+  stage_deadline_at: string | null;
   started_at: string | null;
   failed_at: string | null;
   error_step: string | null;

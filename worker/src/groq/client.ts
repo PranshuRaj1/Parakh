@@ -28,6 +28,7 @@ import {
 import { MemoryCooldownStore, type CooldownStore } from '../gemini/cooldown-store.js';
 import { parseJson } from '../llm/parse-json.js';
 import type { LLMProvider } from '../llm/provider.js';
+import { classifyHttpFailure, type LLMRequestContext } from '../llm/errors.js';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -177,7 +178,8 @@ export class GroqClient implements LLMProvider {
   private async chat(
     apiKey: string,
     prompt: string,
-    opts: { json?: boolean } = {}
+    opts: { json?: boolean } = {},
+    context?: LLMRequestContext
   ): Promise<string> {
     const payload: Record<string, unknown> = {
       model: this.generationModel,
@@ -202,11 +204,12 @@ export class GroqClient implements LLMProvider {
         Authorization: `Bearer ${apiKey}`,
       },
       body: jsonStringify(payload),
+      signal: context?.signal,
     });
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`[Groq] ${response.status} ${text.slice(0, 300)}`);
+      await response.body?.cancel().catch(() => undefined);
+      throw classifyHttpFailure('groq', response.status);
     }
 
     const data = (await response.json()) as {
@@ -229,7 +232,8 @@ export class GroqClient implements LLMProvider {
   async reviewDiff(
     fileName: string,
     diff: string,
-    activeRules: Rule[]
+    activeRules: Rule[],
+    context?: LLMRequestContext
   ): Promise<ReviewResult> {
     // Build the same prompt the Gemini path uses so review semantics match.
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
@@ -254,12 +258,13 @@ export class GroqClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    priorFindings: Finding[]
+    priorFindings: Finding[],
+    context?: LLMRequestContext
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const prompt = buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings);
     return this.withKeyRotation(async (apiKey) => {
-      const raw = await this.chat(apiKey, prompt, { json: true });
+      const raw = await this.chat(apiKey, prompt, { json: true }, context);
       const parsed = this.parseJson<Partial<IncrementalReviewResult>>(raw);
       return {
         genericFindings: parsed.genericFindings || [],
@@ -270,12 +275,12 @@ export class GroqClient implements LLMProvider {
     });
   }
 
-  async classifyIntent(comment: string, parentBotComment: string): Promise<Intent> {
+  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
     const prompt = buildIntentPrompt(comment, parentBotComment);
 
     return this.withKeyRotation(async (apiKey) => {
-      const raw = await this.chat(apiKey, prompt, { json: true });
+      const raw = await this.chat(apiKey, prompt, { json: true }, context);
       const parsed = this.parseJson<{ intent?: Intent }>(raw);
       return parsed.intent ?? 'GENERAL';
     });
@@ -283,35 +288,36 @@ export class GroqClient implements LLMProvider {
 
   async classifyRelationship(
     newRule: { body: string },
-    existingRule: { body: string }
+    existingRule: { body: string },
+    context?: LLMRequestContext
   ): Promise<Relationship> {
     const { buildRelationshipPrompt } = await import('../gemini/prompts.js');
     const prompt = buildRelationshipPrompt(newRule, existingRule);
 
     return this.withKeyRotation(async (apiKey) => {
-      const raw = await this.chat(apiKey, prompt, { json: true });
+      const raw = await this.chat(apiKey, prompt, { json: true }, context);
       const parsed = this.parseJson<{ relationship?: Relationship }>(raw);
       return parsed.relationship ?? 'UNRELATED';
     });
   }
 
-  async classifyPriority(ruleBody: string): Promise<RulePriority> {
+  async classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority> {
     const { buildPriorityPrompt } = await import('../gemini/prompts.js');
     const prompt = buildPriorityPrompt(ruleBody);
 
     return this.withKeyRotation(async (apiKey) => {
-      const raw = await this.chat(apiKey, prompt, { json: true });
+      const raw = await this.chat(apiKey, prompt, { json: true }, context);
       const parsed = this.parseJson<{ priority?: RulePriority }>(raw);
       return parsed.priority ?? 'normal';
     });
   }
 
-  async draftReply(context: string, question: string): Promise<string> {
+  async draftReply(context: string, question: string, requestContext?: LLMRequestContext): Promise<string> {
     const { buildReplyPrompt } = await import('../gemini/prompts.js');
     const prompt = buildReplyPrompt(context, question);
 
     return this.withKeyRotation(async (apiKey) => {
-      return this.chat(apiKey, prompt);
+      return this.chat(apiKey, prompt, {}, requestContext);
     });
   }
 }

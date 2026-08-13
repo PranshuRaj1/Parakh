@@ -52,6 +52,8 @@ export interface Env {
   // fixed priority order.
   LLM_PRIMARY?: string;
   LLM_FALLBACK?: string;
+  LLM_PROVIDER_TIMEOUT_MS?: string;
+  LLM_OPERATION_TIMEOUT_MS?: string;
 
   // Staged review-pipeline features. These are strings because Wrangler
   // environment bindings arrive as strings. The central parser in

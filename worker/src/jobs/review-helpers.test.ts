@@ -6,6 +6,7 @@ import {
   appendDashboardLink,
   parseRetentionDays,
   selectDisplayedReviewScore,
+  formatIncompleteReviewComment,
   isIgnoredLockfile,
   suppressFindings,
   extractSuppressionPatterns,
@@ -193,6 +194,37 @@ describe('formatReviewComment', () => {
     expect(selectDisplayedReviewScore(2.2, true, null)).toBe(2.2);
   });
 
+  it('does not match a b slash sequence inside the old path', () => {
+    const diff = [
+      'diff --git a/worker/src/github/api.ts b/worker/src/github/api.ts',
+      '--- a/worker/src/github/api.ts',
+      '+++ b/worker/src/github/api.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    expect(Array.from(parseDiffByFile(diff).keys())).toEqual(['worker/src/github/api.ts']);
+  });
+
+  it('parses spaces, unicode, renames, and literal b slash path segments', () => {
+    const diff = [
+      'diff --git a/src/old name.ts b/src/new name.ts',
+      'similarity index 90%',
+      'rename from src/old name.ts',
+      'rename to src/new name.ts',
+      'diff --git a/src/नमस्ते.ts b/src/नमस्ते.ts',
+      '--- a/src/नमस्ते.ts',
+      '+++ b/src/नमस्ते.ts',
+      'diff --git a/a b/odd.ts b/a b/odd.ts',
+      'Binary files a/a b/odd.ts and b/a b/odd.ts differ',
+    ].join('\n');
+    expect(Array.from(parseDiffByFile(diff).keys())).toEqual([
+      'src/new name.ts',
+      'src/नमस्ते.ts',
+      'a b/odd.ts',
+    ]);
+  });
+
   it('reports clean code when there are no findings', () => {
     const comment = formatReviewComment(5, 5, [], 'acme/app', 7);
     expect(comment).toContain('Parakh Code Review — 5/5');
@@ -268,6 +300,30 @@ describe('formatReviewComment', () => {
     expect(unchanged).toContain('No commits were added');
     expect(unchanged).toContain('No model calls were made');
     expect(unchanged).toContain('previous score was retained');
+  });
+});
+
+describe('formatIncompleteReviewComment', () => {
+  it('never claims a clean score and only publishes critical and high findings', () => {
+    const comment = formatIncompleteReviewComment([
+      finding('CRITICAL', { body: 'critical issue' }),
+      finding('HIGH', { body: 'high issue' }),
+      finding('MEDIUM', { body: 'medium issue' }),
+      finding('LOW', { body: 'low issue' }),
+    ], 5, 7, ['src/b.ts', 'src/c.ts'], null);
+    expect(comment).toContain('Incomplete - No Score');
+    expect(comment).toContain('5 of 7');
+    expect(comment).toContain('critical issue');
+    expect(comment).toContain('high issue');
+    expect(comment).not.toContain('medium issue');
+    expect(comment).not.toContain('low issue');
+    expect(comment).not.toContain('Clean code');
+  });
+
+  it('labels an incremental score as provisional', () => {
+    const comment = formatIncompleteReviewComment([], 3, 4, ['src/a.ts'], 3.5);
+    expect(comment).toContain('Provisional ledger score:** 3.5/5');
+    expect(comment).toContain('not a completed review score');
   });
 });
 

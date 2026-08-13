@@ -10,6 +10,7 @@ import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
 import type { Env } from '../index.js';
+import { ReviewRetryScheduledError } from './review-retry.js';
 
 /**
  * Process a batch of queued messages.
@@ -48,7 +49,8 @@ export async function handleQueueBatch(
       }
     } catch (err) {
       console.error(`[queue] Job failed (type ${payload?.type}, attempt ${message.attempts}):`, err);
-      message.retry();
+      if (err instanceof ReviewRetryScheduledError) message.retry({ delaySeconds: err.delaySeconds });
+      else message.retry();
     }
   }
 }

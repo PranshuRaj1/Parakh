@@ -377,6 +377,29 @@ export async function getActiveReviewByPR(
   return (rows[0] as unknown as Review) || null;
 }
 
+export async function markReviewIncomplete(
+  id: string,
+  findings: Finding[],
+  provisionalScore: number | null,
+  errorMessage: string,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET status = 'FAILED',
+        score = null,
+        provisional_score = ${provisionalScore},
+        findings = ${JSON.stringify(findings)}::jsonb,
+        failed_at = now(),
+        error_step = 'REVIEWING_FILES',
+        error_message = ${errorMessage},
+        worker_heartbeat_at = null,
+        stage_deadline_at = null
+    WHERE id = ${id}
+  `;
+}
+
 export async function saveReviewReconciliation(
   reviewId: string,
   outcomes: FindingReconciliationOutcome[],
@@ -490,6 +513,7 @@ export async function dbStartStage(
   stage: string,
   attempt: number,
   detail: Record<string, unknown> | null,
+  deadlineAt: string | null,
   env: EnvWithDB
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
@@ -515,7 +539,8 @@ export async function dbStartStage(
           stage_attempt = ${attempt},
           stage_reason_code = 'PROCESSING',
           stage_reason_detail = null,
-          worker_heartbeat_at = now()
+          worker_heartbeat_at = now(),
+          stage_deadline_at = ${deadlineAt}
       WHERE id = ${reviewId}
     `
   ]);
@@ -546,7 +571,8 @@ export async function dbCompleteStage(
     // 2. Clear heartbeat on reviews table
     sql`
       UPDATE reviews
-      SET worker_heartbeat_at = null
+      SET worker_heartbeat_at = null,
+          stage_deadline_at = null
       WHERE id = ${reviewId}
     `
   ]);
@@ -584,7 +610,8 @@ export async function dbFailStage(
           error_step = ${stage},
           error_message = ${errorMessage},
           error_stack = ${errorStack},
-          worker_heartbeat_at = null
+          worker_heartbeat_at = null,
+          stage_deadline_at = null
       WHERE id = ${reviewId}
     `);
   }
@@ -626,7 +653,8 @@ export async function dbMarkDailyQuotaPaused(
           error_step = ${stage},
           error_message = ${errorMessage},
           daily_quota_resume_at = ${resumeAt},
-          worker_heartbeat_at = null
+          worker_heartbeat_at = null,
+          stage_deadline_at = null
       WHERE id = ${reviewId}
     `,
   ]);
@@ -702,7 +730,8 @@ export async function dbTimeoutStage(
           failed_at = now(),
           error_step = ${stage},
           error_message = 'Stage timed out',
-          worker_heartbeat_at = null
+          worker_heartbeat_at = null,
+          stage_deadline_at = null
       WHERE id = ${reviewId}
     `
   ]);
@@ -795,7 +824,13 @@ export async function dbSweepStalledReviews(
     SELECT id, current_stage, stage_attempt
     FROM reviews
     WHERE status = 'RUNNING'
-      AND COALESCE(worker_heartbeat_at, stage_started_at) < now() - (${timeoutSeconds} || ' seconds')::interval
+      AND (
+        (stage_deadline_at IS NOT NULL AND stage_deadline_at < now())
+        OR (
+          stage_deadline_at IS NULL
+          AND COALESCE(worker_heartbeat_at, stage_started_at) < now() - (${timeoutSeconds} || ' seconds')::interval
+        )
+      )
   `;
   
   return rows.map(r => ({
