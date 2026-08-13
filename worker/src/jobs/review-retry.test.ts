@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getReviewRetryDelaySeconds } from './review-retry.js';
+import { getReviewRetryDelaySeconds, getUnexpectedRetryDelaySeconds } from './review-retry.js';
 
 describe('getReviewRetryDelaySeconds', () => {
   it('uses 3 to 5 seconds after the first attempt', () => {
@@ -10,5 +10,11 @@ describe('getReviewRetryDelaySeconds', () => {
   it('uses 8 to 12 seconds after the second attempt', () => {
     expect(getReviewRetryDelaySeconds(2, () => 0)).toBe(8);
     expect(getReviewRetryDelaySeconds(2, () => 0.999)).toBe(12);
+  });
+});
+
+describe('getUnexpectedRetryDelaySeconds', () => {
+  it('uses the bounded retry schedule and stops after five retries', () => {
+    expect([1, 2, 3, 4, 5, 6].map(getUnexpectedRetryDelaySeconds)).toEqual([5, 15, 30, 60, 60, null]);
   });
 });

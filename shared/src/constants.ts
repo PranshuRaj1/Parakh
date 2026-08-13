@@ -73,7 +73,7 @@ export const REVIEW_STATE_TTL_SECONDS = 48 * 60 * 60; // 48 hours
 export const REVIEW_LOCK_TTL_SECONDS = 300; // 5 minutes
 
 /** Max files per Gemini batch within one worker invocation. */
-export const MAX_FILES_PER_BATCH = 5;
+export const MAX_FILES_PER_BATCH = 2;
 
 // ─── Memory / Rule Embeddings ────────────────────────────────────────────────
 

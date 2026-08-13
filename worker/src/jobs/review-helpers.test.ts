@@ -11,7 +11,7 @@ import {
   suppressFindings,
   extractSuppressionPatterns,
 } from './review.js';
-import type { Finding, Rule } from '@parakh/shared';
+import { MAX_FILES_PER_BATCH, type Finding, type Rule } from '@parakh/shared';
 
 function finding(severity: Finding['severity'], overrides: Partial<Finding> = {}): Finding {
   return {
@@ -355,5 +355,16 @@ describe('parseRetentionDays', () => {
     expect(parseRetentionDays('abc')).toBe(14);
     expect(parseRetentionDays('0')).toBe(14);
     expect(parseRetentionDays('-5')).toBe(14);
+  });
+});
+
+describe('review delivery batching', () => {
+  it('splits six files into three two-file deliveries without duplication', () => {
+    const remaining = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const deliveries: string[][] = [];
+    while (remaining.length > 0) deliveries.push(remaining.splice(0, MAX_FILES_PER_BATCH));
+
+    expect(deliveries).toEqual([['a', 'b'], ['c', 'd'], ['e', 'f']]);
+    expect(new Set(deliveries.flat()).size).toBe(6);
   });
 });

@@ -50,6 +50,7 @@ export function resolveProviderChain(env: Env): ProviderName[] {
 
 export class LLMClient {
   private served: LLMProvider | null = null;
+  private dailyQuotaUnavailable = new Map<ProviderName, DailyQuotaExhaustedError>();
 
   constructor(
     private providers: LLMProvider[],
@@ -84,6 +85,12 @@ export class LLMClient {
     invoke: (provider: LLMProvider, context: LLMRequestContext) => Promise<T>,
     parentSignal?: AbortSignal
   ): Promise<T> {
+    const configuredEligible = eligible;
+    eligible = eligible.filter((provider) => !this.dailyQuotaUnavailable.has(provider.providerName));
+    if (eligible.length === 0) {
+      const lastDailyQuotaError = [...this.dailyQuotaUnavailable.values()].at(-1);
+      if (lastDailyQuotaError) throw lastDailyQuotaError;
+    }
     const deadline = Date.now() + this.timeouts.operationMs;
     const operationAbort = composeAbortSignals(parentSignal, this.timeouts.operationMs);
     let lastError: Error | null = null;
@@ -120,6 +127,9 @@ export class LLMClient {
           const normalized = operationAbort.timedOut()
             ? new ProviderTimeoutError(provider.providerName, sliceMs, { cause: error })
             : normalizeProviderError(provider.providerName, error, sliceMs, abort.timedOut());
+          if (normalized instanceof DailyQuotaExhaustedError) {
+            this.dailyQuotaUnavailable.set(provider.providerName, normalized);
+          }
           const retryable = normalized instanceof AllKeysExhaustedError || isRetryableProviderError(normalized);
           const status = normalized && typeof normalized === 'object' && 'status' in normalized && typeof normalized.status === 'number'
             ? normalized.status
@@ -133,7 +143,10 @@ export class LLMClient {
         }
       }
 
-      if (lastError instanceof DailyQuotaExhaustedError) throw lastError;
+      if (configuredEligible.every((provider) => this.dailyQuotaUnavailable.has(provider.providerName))) {
+        const lastDailyQuotaError = [...this.dailyQuotaUnavailable.values()].at(-1);
+        if (lastDailyQuotaError) throw lastDailyQuotaError;
+      }
       throw new AllProvidersFailedError(responseError ?? lastError, attempted);
     } finally {
       operationAbort.cleanup();

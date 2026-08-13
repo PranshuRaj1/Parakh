@@ -92,7 +92,12 @@ import {
 } from './stage-tracker.js';
 import type { Env } from '../index.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
-import { ReviewRetryScheduledError, getReviewRetryDelaySeconds } from './review-retry.js';
+import {
+  ReviewExecutionActiveError,
+  ReviewFailurePersistenceError,
+  ReviewRetryScheduledError,
+  getReviewRetryDelaySeconds,
+} from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
@@ -443,8 +448,6 @@ const REVIEW_STATE_KEY = (repo: string, pr: number, reviewId: string) =>
   `pr_review_state:${repo}:${pr}:${reviewId}`;
 const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:${pr}`;
 const REVIEW_ENQUEUE_LOCK_KEY = (repo: string, pr: number) => `pr_review_enqueue_lock:${repo}:${pr}`;
-
-class ReviewExecutionActiveError extends Error {}
 
 interface ReviewState {
   reviewId: string;
@@ -1239,11 +1242,22 @@ async function executeReviewJobInternal(
         // which looped in backoff until the stage timed out with 0 files done.
         const concurrency = Math.min(DEFAULT_FILE_CONCURRENCY, batch.length);
         let cursor = 0;
+        let pendingOutcomeCommits = batch.length;
+        let releaseOutcomeCommits!: () => void;
+        let batchCommitFailed = false;
+        const outcomeCommitsFinished = new Promise<void>((resolve) => {
+          releaseOutcomeCommits = resolve;
+        });
+        const markOutcomeCommitted = () => {
+          pendingOutcomeCommits--;
+          if (pendingOutcomeCommits === 0) releaseOutcomeCommits();
+        };
         const reviewWorker = async () => {
           while (!signal.aborted) {
             const i = cursor++;
             if (i >= batch.length) return;
             const fileName = batch[i];
+            let outcomeCommitted = false;
             try {
               const reviewed = await reviewSingleFile(
                 llm, fileName, fileChunks, activeRules, suppressPatterns, env, signal,
@@ -1266,6 +1280,10 @@ async function executeReviewJobInternal(
                 lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
                 state!.accumulatedFindings = allFindings;
               });
+              outcomeCommitted = true;
+              markOutcomeCommitted();
+              await outcomeCommitsFinished;
+              if (batchCommitFailed) continue;
               if (reviewed.telemetry) {
                 for (const ruleId of reviewed.telemetry.matchedRuleIds) {
                   if (!canWriteOptionalTelemetry()) break;
@@ -1344,6 +1362,8 @@ async function executeReviewJobInternal(
                   }
                   state!.accumulatedFindings = allFindings;
                 });
+                outcomeCommitted = true;
+                markOutcomeCommitted();
                 continue;
               }
               if (err instanceof SubrequestBudgetExceededError) {
@@ -1357,6 +1377,11 @@ async function executeReviewJobInternal(
               // as reviewed files with zero findings.
               console.error(`[review] Error reviewing ${fileName}:`, err);
               throw err;
+            } finally {
+              if (!outcomeCommitted) {
+                batchCommitFailed = true;
+                markOutcomeCommitted();
+              }
             }
           }
         };
@@ -1498,8 +1523,12 @@ async function executeReviewJobInternal(
       lastReasonCode === 'RATE_LIMITED_BACKOFF'
         ? `Every Gemini API key is rate-limited. Last state: ${lastReasonDetail ?? 'n/a'}`
         : (err instanceof Error ? err.message : String(err));
-    await failStage(reviewId, currentStage, stageAttempt, errorCode, new Error(failureMessage), false, env);
-    throw err; // allow Cloudflare Queue to retry
+    try {
+      await failStage(reviewId, currentStage, stageAttempt, errorCode, new Error(failureMessage), false, env);
+    } catch (persistenceError) {
+      throw new ReviewFailurePersistenceError(err, persistenceError);
+    }
+    throw err;
   } finally {
     if (lockHeld) {
       await releaseReviewLock(fullRepo, prNumber, env).catch(err =>

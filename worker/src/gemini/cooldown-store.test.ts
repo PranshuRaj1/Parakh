@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryCooldownStore, RedisCooldownStore, COOLDOWN_HASH_TTL_SECONDS } from './cooldown-store.js';
 
 const FIXED_NOW = 1_700_000_000_000;
@@ -167,6 +167,25 @@ describe('RedisCooldownStore', () => {
     // A second flush must persist the NEWER value, not the failed snapshot.
     await store.flush();
     expect(backend.peek('test-key', '0')).toBe(JSON.stringify({ until: FIXED_NOW + 9999, dailyQuota: true }));
+  });
+
+  it('logs repeated flush failures only once per store', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const backend = makeHashBackend();
+    backend.hset = async () => { throw new Error('redis unavailable'); };
+    const store = new RedisCooldownStore({
+      redisKey: 'test-key',
+      redisHGetAll: backend.hgetall,
+      redisHSet: backend.hset,
+      redisHDel: backend.hdel,
+      redisExpire: backend.expire,
+    });
+    store.park(0, { until: FIXED_NOW + 1000, dailyQuota: true });
+
+    await store.flush();
+    await store.flush();
+
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('writes per-key fields atomically, so concurrent writers do not clobber each other', async () => {

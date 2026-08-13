@@ -10,7 +10,19 @@ import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
 import type { Env } from '../index.js';
-import { ReviewRetryScheduledError } from './review-retry.js';
+import {
+  ReviewExecutionActiveError,
+  ReviewRetryScheduledError,
+  getUnexpectedRetryDelaySeconds,
+} from './review-retry.js';
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = error.cause instanceof Error ? `; cause=${error.cause.name}: ${error.cause.message}` : '';
+    return `${error.name}: ${error.message || '(no message)'}${cause}\n${error.stack ?? '(no stack)'}`;
+  }
+  return `NonError rejection: ${String(error)}`;
+}
 
 /**
  * Process a batch of queued messages.
@@ -48,9 +60,30 @@ export async function handleQueueBatch(
           message.ack(); // Don't retry unknown types
       }
     } catch (err) {
-      console.error(`[queue] Job failed (type ${payload?.type}, attempt ${message.attempts}):`, err);
-      if (err instanceof ReviewRetryScheduledError) message.retry({ delaySeconds: err.delaySeconds });
-      else message.retry();
+      if (err instanceof ReviewRetryScheduledError) {
+        console.info(
+          `[queue] Review checkpointed (attempt ${message.attempts}); retrying in ${err.delaySeconds}s`
+        );
+        message.retry({ delaySeconds: err.delaySeconds });
+        continue;
+      }
+
+      if (err instanceof ReviewExecutionActiveError) {
+        console.warn(`[queue] Review execution still active (attempt ${message.attempts}); retrying in 15s`);
+        message.retry({ delaySeconds: 15 });
+        continue;
+      }
+
+      console.error(
+        `[queue] Job failed (type ${payload?.type}, attempt ${message.attempts}): ${describeError(err)}`
+      );
+      const delaySeconds = getUnexpectedRetryDelaySeconds(message.attempts);
+      if (delaySeconds === null) {
+        console.error(`[queue] Retry limit reached for ${payload?.type}; acknowledging delivery`);
+        message.ack();
+      } else {
+        message.retry({ delaySeconds });
+      }
     }
   }
 }

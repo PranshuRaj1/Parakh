@@ -91,6 +91,54 @@ describe('LLMClient chain routing', () => {
     expect(client.modelName).toBe('c');
   });
 
+  it('opens a delivery-local circuit after daily quota exhaustion', async () => {
+    let geminiCalls = 0;
+    let groqCalls = 0;
+    const exhausted = makeProvider('gemini', 'g', 'daily');
+    exhausted.reviewDiff = async () => {
+      geminiCalls++;
+      throw new DailyQuotaExhaustedError(new Error('gemini daily quota'));
+    };
+    const healthy = makeProvider('groq', 'q', 'ok');
+    const healthyReview = healthy.reviewDiff;
+    healthy.reviewDiff = async (...args) => {
+      groqCalls++;
+      return healthyReview(...args);
+    };
+    const client = new LLMClient([exhausted, healthy]);
+
+    await client.reviewDiff('a.ts', 'd', []);
+    await client.reviewDiff('b.ts', 'd', []);
+    await client.reviewDiff('c.ts', 'd', []);
+
+    expect(geminiCalls).toBe(1);
+    expect(groqCalls).toBe(3);
+  });
+
+  it('throws daily quota when every configured provider circuit is open', async () => {
+    let geminiCalls = 0;
+    let groqCalls = 0;
+    const gemini = makeProvider('gemini', 'g', 'daily');
+    const groq = makeProvider('groq', 'q', 'daily');
+    const geminiReview = gemini.reviewDiff;
+    const groqReview = groq.reviewDiff;
+    gemini.reviewDiff = async (...args) => {
+      geminiCalls++;
+      return geminiReview(...args);
+    };
+    groq.reviewDiff = async (...args) => {
+      groqCalls++;
+      return groqReview(...args);
+    };
+    const client = new LLMClient([gemini, groq]);
+
+    await expect(client.reviewDiff('a.ts', 'd', [])).rejects.toBeInstanceOf(DailyQuotaExhaustedError);
+    await expect(client.reviewDiff('b.ts', 'd', [])).rejects.toBeInstanceOf(DailyQuotaExhaustedError);
+
+    expect(geminiCalls).toBe(1);
+    expect(groqCalls).toBe(1);
+  });
+
   it('propagates non-exhaustion errors without trying further providers', async () => {
     const broken = makeProvider('gemini', 'g', 'boom');
     const fine = makeProvider('groq', 'q', 'ok');
@@ -106,11 +154,11 @@ describe('LLMClient chain routing', () => {
     await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllProvidersFailedError);
   });
 
-  it('lets DailyQuotaExhaustedError escape when ONLY the last provider is daily-quota-bound', async () => {
+  it('does not report total daily quota exhaustion when only the last provider is quota-bound', async () => {
     const a = makeProvider('gemini', 'g', 'exhausted');
     const b = makeProvider('groq', 'q', 'daily');
     const client = new LLMClient([a, b]);
-    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(DailyQuotaExhaustedError);
+    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllProvidersFailedError);
   });
 
   it('falls through retryable provider-health errors', async () => {

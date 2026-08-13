@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parakh Security Audit Report</title>
+  <style>
+    :root {
+      --ink: #17211b;
+      --muted: #5c695f;
+      --paper: #f7f4ec;
+      --panel: #fffdf7;
+      --line: #d8d4c8;
+      --deep: #183c2d;
+      --deep-2: #245843;
+      --accent: #d78a24;
+      --critical: #7a1820;
+      --high: #a5382f;
+      --medium: #a76512;
+      --low: #436278;
+      --ok: #236847;
+      --shadow: 0 10px 28px rgba(23, 33, 27, 0.08);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(24, 60, 45, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(24, 60, 45, 0.035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.6;
+    }
+
+    a { color: var(--deep-2); }
+    a:hover { color: var(--high); }
+
+    code, pre, .mono, .tag, .score {
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      max-width: 1440px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      color: #ecf3ed;
+      background: var(--deep);
+      overflow-y: auto;
+    }
+
+    aside .eyebrow {
+      color: #b9d2c3;
+      font: 700 11px/1.4 "Cascadia Mono", Consolas, monospace;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    aside h2 {
+      margin: 8px 0 22px;
+      color: white;
+      font-size: 23px;
+      line-height: 1.15;
+    }
+
+    nav a {
+      display: block;
+      margin: 2px 0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: #d6e6dc;
+      font: 600 13px/1.35 system-ui, sans-serif;
+      text-decoration: none;
+    }
+
+    nav a:hover, nav a:focus-visible {
+      color: white;
+      background: rgba(255,255,255,0.09);
+      outline: none;
+    }
+
+    .legend {
+      margin-top: 24px;
+      padding-top: 18px;
+      border-top: 1px solid rgba(255,255,255,0.16);
+      font: 12px/1.7 system-ui, sans-serif;
+    }
+
+    .legend span { display: block; }
+    .legend b { color: #ffd6a1; }
+
+    main {
+      width: min(1120px, 100%);
+      padding: 44px 52px 80px;
+    }
+
+    header.hero {
+      padding: 42px;
+      color: white;
+      background: var(--deep);
+      border: 1px solid #0e2c20;
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero .kicker {
+      margin: 0 0 14px;
+      color: #bad3c5;
+      font: 700 12px/1.4 "Cascadia Mono", Consolas, monospace;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      max-width: 820px;
+      margin: 0;
+      font-size: clamp(38px, 6vw, 68px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .hero .lede {
+      max-width: 820px;
+      margin: 22px 0 0;
+      color: #e3eee7;
+      font-size: 20px;
+      line-height: 1.5;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 28px;
+    }
+
+    .tag {
+      padding: 5px 9px;
+      color: #eaf4ed;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 999px;
+      font-size: 11px;
+    }
+
+    section { scroll-margin-top: 24px; }
+
+    h2.section-title {
+      margin: 58px 0 8px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+    }
+
+    .section-intro {
+      max-width: 820px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font: 16px/1.6 system-ui, sans-serif;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .metric {
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--deep-2);
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(23, 33, 27, 0.05);
+    }
+
+    .metric .number {
+      display: block;
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .metric .label {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font: 700 11px/1.4 system-ui, sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .verdict {
+      margin-top: 18px;
+      padding: 22px 24px;
+      background: #fff4e0;
+      border: 1px solid #e8c081;
+      border-left: 6px solid var(--accent);
+      border-radius: 10px;
+      font: 16px/1.6 system-ui, sans-serif;
+    }
+
+    .verdict strong { color: #723e08; }
+
+    .finding {
+      margin: 20px 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .finding-head {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      padding: 22px 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .severity {
+      display: inline-flex;
+      justify-content: center;
+      padding: 5px 8px;
+      color: white;
+      border-radius: 999px;
+      font: 800 11px/1.2 system-ui, sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .severity.high { background: var(--high); }
+    .severity.medium { background: var(--medium); }
+
+    .finding h3 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.25;
+    }
+
+    .score {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .finding-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.75fr);
+      gap: 26px;
+      padding: 24px;
+      font: 15px/1.65 system-ui, sans-serif;
+    }
+
+    .finding-body p:first-child { margin-top: 0; }
+    .finding-body p:last-child { margin-bottom: 0; }
+
+    .evidence {
+      padding: 16px;
+      background: #f0eee6;
+      border: 1px solid #ddd8ca;
+      border-radius: 9px;
+      font-size: 13px;
+    }
+
+    .evidence h4, .remedy h4 {
+      margin: 0 0 9px;
+      color: var(--deep);
+      font: 800 11px/1.3 system-ui, sans-serif;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .evidence ul, .remedy ol, .compact-list {
+      margin: 0;
+      padding-left: 19px;
+    }
+
+    .evidence li, .remedy li, .compact-list li { margin: 5px 0; }
+
+    .remedy {
+      margin-top: 18px;
+      padding: 16px;
+      background: #edf7f0;
+      border: 1px solid #b8d5c2;
+      border-radius: 9px;
+    }
+
+    .chain {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin: 22px 0;
+    }
+
+    .chain article {
+      position: relative;
+      min-height: 150px;
+      padding: 17px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--deep-2);
+      border-radius: 10px;
+      font: 13px/1.5 system-ui, sans-serif;
+    }
+
+    .chain article:not(:last-child)::after {
+      content: "\2192";
+      position: absolute;
+      z-index: 2;
+      top: 48%;
+      right: -18px;
+      width: 26px;
+      color: var(--high);
+      background: var(--paper);
+      text-align: center;
+      font: 700 20px/1 system-ui, sans-serif;
+    }
+
+    .chain b { display: block; margin-bottom: 7px; color: var(--deep); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      font: 14px/1.45 system-ui, sans-serif;
+    }
+
+    th, td {
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: white;
+      background: var(--deep);
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .status-pass { color: var(--ok); font-weight: 800; }
+    .status-warn { color: var(--medium); font-weight: 800; }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+
+    .timeline article {
+      display: grid;
+      grid-template-columns: 90px 115px minmax(0, 1fr);
+      gap: 12px;
+      padding: 15px 17px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--deep-2);
+      border-radius: 8px;
+      font: 14px/1.5 system-ui, sans-serif;
+    }
+
+    .timeline time, .timeline .commit { font-family: "Cascadia Mono", Consolas, monospace; }
+    .timeline .commit { color: var(--deep-2); }
+
+    .callout {
+      margin: 20px 0;
+      padding: 20px 22px;
+      background: #fcecec;
+      border: 1px solid #e0a5a5;
+      border-left: 6px solid var(--high);
+      border-radius: 10px;
+      font: 15px/1.6 system-ui, sans-serif;
+    }
+
+    .strengths {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .strengths article {
+      padding: 18px;
+      background: #edf7f0;
+      border: 1px solid #bfd8c7;
+      border-radius: 10px;
+      font: 14px/1.55 system-ui, sans-serif;
+    }
+
+    .strengths h3 { margin: 0 0 6px; font-size: 17px; color: var(--deep); }
+
+    .sources {
+      padding: 24px;
+      background: #ece9df;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font: 13px/1.55 system-ui, sans-serif;
+    }
+
+    .sources h3 { margin-top: 20px; }
+    .sources h3:first-child { margin-top: 0; }
+
+    footer {
+      margin-top: 46px;
+      padding-top: 22px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font: 12px/1.5 system-ui, sans-serif;
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      nav { display: grid; grid-template-columns: repeat(3, 1fr); }
+      .legend { display: none; }
+      main { padding: 28px 24px 60px; }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .chain { grid-template-columns: repeat(2, 1fr); }
+      .chain article::after { display: none; }
+    }
+
+    @media (max-width: 700px) {
+      nav { grid-template-columns: repeat(2, 1fr); }
+      header.hero { padding: 28px 22px; }
+      .hero .lede { font-size: 17px; }
+      .summary-grid, .strengths, .chain { grid-template-columns: 1fr; }
+      .finding-head { grid-template-columns: 1fr; gap: 9px; }
+      .finding-body { grid-template-columns: 1fr; }
+      .timeline article { grid-template-columns: 1fr; gap: 3px; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media print {
+      body { background: white; font-size: 11pt; }
+      .layout { display: block; }
+      aside { display: none; }
+      main { width: 100%; padding: 0; }
+      header.hero { color: black; background: white; border: 2px solid black; box-shadow: none; }
+      .hero .kicker, .hero .lede { color: #333; }
+      .finding, .metric { box-shadow: none; break-inside: avoid; }
+      .finding-body { display: block; }
+      .evidence { margin-top: 12px; }
+      a { color: black; text-decoration: none; }
+      a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 9pt; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="eyebrow">Security review</div>
+      <h2>Parakh codebase audit</h2>
+      <nav aria-label="Report sections">
+        <a href="#executive">Executive summary</a>
+        <a href="#findings">Findings</a>
+        <a href="#failure-chain">What went wrong</a>
+        <a href="#history">Git history</a>
+        <a href="#actions">Action plan</a>
+        <a href="#validation">Validation</a>
+        <a href="#strengths">Existing controls</a>
+        <a href="#scope">Scope and limits</a>
+        <a href="#sources">Sources</a>
+      </nav>
+      <div class="legend">
+        <span><b>3 High</b> findings</span>
+        <span><b>6 Medium</b> findings</span>
+        <span>Current working tree audited</span>
+        <span>Credential values excluded</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <p class="kicker">Implementation-focused security audit</p>
+        <h1>Authentication exists. Authorization does not.</h1>
+        <p class="lede">Parakh correctly verifies GitHub webhooks and uses parameterized database queries, but its trust model collapses at the dashboard and comment boundaries. Any GitHub account can reach repository-scoped data and actions, while untrusted PR commenters can persist review rules that change future bot behavior.</p>
+        <div class="meta-row">
+          <span class="tag">Audit date: 2026-08-13</span>
+          <span class="tag">Target: current working tree</span>
+          <span class="tag">Worker + dashboard + DB + history</span>
+          <span class="tag">Static review + tests + build + npm advisories</span>
+        </div>
+      </header>
+
+      <section id="executive">
+        <h2 class="section-title">Executive summary</h2>
+        <p class="section-intro">The application is not ready for a public multi-user dashboard or for unrestricted use on public repositories. The top three issues allow cross-repository access, persistent review-policy poisoning, and potential reuse of credentials captured in local git checkpoint history.</p>
+
+        <div class="summary-grid" aria-label="Audit metrics">
+          <div class="metric"><span class="number">9</span><span class="label">Confirmed findings</span></div>
+          <div class="metric"><span class="number">3</span><span class="label">High severity</span></div>
+          <div class="metric"><span class="number">0</span><span class="label">Production dependency advisories</span></div>
+          <div class="metric"><span class="number">325</span><span class="label">Unique tests passing</span></div>
+        </div>
+
+        <div class="verdict">
+          <strong>Release decision:</strong> block public dashboard exposure until repository authorization is enforced. If the GitHub App is installed on a public repository, disable comment-driven rule creation or restrict it to trusted roles immediately. Rotate the credentials represented in the historical environment file before treating any other remediation as complete.
+        </div>
+
+        <table aria-label="Finding summary">
+          <thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Primary impact</th></tr></thead>
+          <tbody>
+            <tr><td>PAR-001</td><td>High</td><td>Dashboard has authentication but no repository authorization</td><td>Cross-repository disclosure and unauthorized writes</td></tr>
+            <tr><td>PAR-002</td><td>High</td><td>Untrusted PR commenters can persist active or suppressive rules</td><td>Review-policy poisoning and cost abuse</td></tr>
+            <tr><td>PAR-003</td><td>High</td><td>Credential-bearing environment file exists in local git checkpoint history</td><td>Potential full service compromise</td></tr>
+            <tr><td>PAR-004</td><td>Medium</td><td>Redis locks have no ownership token</td><td>Concurrent reviews and duplicate side effects</td></tr>
+            <tr><td>PAR-005</td><td>Medium</td><td>Webhook deliveries are not idempotent</td><td>Duplicate reviews, comments, and model spend</td></tr>
+            <tr><td>PAR-006</td><td>Medium</td><td>API input and costly actions are unbounded</td><td>Resource exhaustion and spend amplification</td></tr>
+            <tr><td>PAR-007</td><td>Medium</td><td>Error redaction is fragmented and incomplete</td><td>Secrets and internals may reach the database or UI</td></tr>
+            <tr><td>PAR-008</td><td>Medium</td><td>LLM prompts mix instructions with untrusted repository content</td><td>Review-output manipulation</td></tr>
+            <tr><td>PAR-009</td><td>Medium</td><td>Wrangler 3 development chain has known advisories</td><td>Developer and CI toolchain exposure</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="findings">
+        <h2 class="section-title">Detailed findings</h2>
+        <p class="section-intro">Severity reflects realistic impact in this architecture, not only package advisory labels. Line references describe the audited working tree.</p>
+
+        <article class="finding" id="par-001">
+          <div class="finding-head">
+            <span class="severity high">High</span>
+            <h3>PAR-001: Dashboard has authentication but no repository authorization</h3>
+            <span class="score">CVSS-like: 8.8</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>GitHub sign-in proves identity, but every protected page and API treats any valid session as authority over every repository in the database. Repository names come directly from query parameters or route parameters, and review IDs come directly from URLs. No code checks GitHub membership, collaborator permission, App installation ownership, or a local access-control table.</p>
+              <p>An attacker needs only a GitHub account and a guessed repository name or review UUID. They can read rules, review findings, model reasoning, stage logs, and raw failure details. They can also create active rules for arbitrary repositories and retry arbitrary failed reviews through the dashboard's shared worker credential.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Export one shared NextAuth configuration and persist the GitHub access token or installation identity in the encrypted session.</li>
+                  <li>Add a server-only <code>requireRepoPermission</code> guard to every page, read query, and mutation route. Require at least read access for data and maintain or admin access for rule writes and retries.</li>
+                  <li>Never query by review ID alone. Resolve <code>reviewId</code> together with an authorized repository boundary.</li>
+                  <li>Add integration tests using two users and two private repositories to prove tenant isolation.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>dashboard/src/app/api/auth/[...nextauth]/route.ts:4-29</code></li>
+                <li><code>dashboard/src/app/memory/page.tsx:13-25</code></li>
+                <li><code>dashboard/src/app/pulls/page.tsx:13-23</code></li>
+                <li><code>dashboard/src/app/api/rules/route.ts:4-29</code></li>
+                <li><code>dashboard/src/app/api/reviews/[id]/reasoning/route.ts:5-19</code></li>
+                <li><code>dashboard/src/lib/db.ts:16-57, 147-188</code></li>
+                <li>Introduced as one session-only design in commit <code>24ae3b2</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-002">
+          <div class="finding-head">
+            <span class="severity high">High</span>
+            <h3>PAR-002: Untrusted PR commenters can persist active or suppressive rules</h3>
+            <span class="score">Integrity + cost</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>The webhook validates that GitHub sent the event, but it does not validate that the comment author is trusted to change repository policy. The only identity check excludes the bot itself. In the default mention-only mode, any commenter who can write <code>@parakh</code> can trigger an LLM call. If the classifier labels the text as a correction, the text becomes an immediately active rule. Suppression phrases become instruction rules that deterministically remove matching future findings.</p>
+              <p>On a public repository this can let an external user weaken security reviews, create contradictory rules, trigger repeated model work, or exhaust provider quotas. The rule is committed before contradiction processing, and contradiction enqueueing fails open.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Capture <code>author_association</code> and verify current GitHub repository permission before any review trigger or rule mutation.</li>
+                  <li>Require maintain or admin permission for rule creation and suppression. Consider a two-step approval for suppressive rules.</li>
+                  <li>Use explicit commands for state changes. Do not let free-form intent classification authorize a write.</li>
+                  <li>Add per-user and per-repository rate limits and audit every rule change with actor ID, source comment, and approval state.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>worker/src/webhook/handler.ts:185-229, 238-277</code></li>
+                <li><code>worker/src/jobs/comment-response.ts:38-87, 105-124</code></li>
+                <li><code>worker/src/jobs/correction.ts:65-108, 124-132</code></li>
+                <li>Comment routing added in <code>6d170f6</code>; self-loop guard added in <code>c902f1d</code>.</li>
+                <li>Immediate active-rule insertion added in <code>ff5c1dd</code>; suppressive rules added in <code>49e06aa</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-003">
+          <div class="finding-head">
+            <span class="severity high">High</span>
+            <h3>PAR-003: Credential-bearing environment file exists in local git checkpoint history</h3>
+            <span class="score">Potential full compromise</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>A high-confidence secret scan found <code>worker/.env.moved</code> in five local checkpoint commits dated 2026-08-09 and 2026-08-10. The historical file contains credential-bearing configuration for the GitHub App, database, Redis, worker API, webhook verification, and LLM providers. Values are intentionally omitted from this report.</p>
+              <p>The affected commits are reachable only through local <code>refs/t3/checkpoints/...</code> refs in this clone. They are not reachable through the current local remote-tracking branches. That reduces proven exposure, but does not establish that the objects were never synchronized, backed up, copied, or shared. The current <code>.dev.vars</code>, <code>.env.moved</code>, and dashboard environment file are ignored by git.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Rotate every credential represented in the historical file, starting with the GitHub App private key, database credential, Redis token, worker API secret, webhook secret, and provider keys.</li>
+                  <li>After rotation, remove the checkpoint refs that retain the file and expire unreachable git objects. Confirm the exact targets before deleting refs.</li>
+                  <li>Run a server-side scan against the actual GitHub remote and any CI artifact store. A local remote-tracking check cannot prove the remote never received the objects.</li>
+                  <li>Add a secret scanner to pre-commit and CI, and block environment-style files even on checkpoint or backup refs.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence, values excluded</h4>
+              <ul>
+                <li>Checkpoint commits: <code>c136984</code>, <code>6489880</code>, <code>e242b07</code>, <code>3ce84b6</code>, <code>61e9b25</code>.</li>
+                <li>Reachability check found checkpoint refs only.</li>
+                <li><code>.gitignore:9-15, 34-39</code> now ignores the relevant file classes.</li>
+                <li>No credential value is reproduced in this report.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-004">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-004: Redis locks have no ownership token</h3>
+            <span class="score">Race condition</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>Every execution lock uses the same value, <code>1</code>. Refresh overwrites the key without comparing ownership, and release performs an unconditional delete. If worker A pauses long enough for its lock to expire, worker B can acquire the same lock. When A reaches <code>finally</code>, it can delete B's lock. Worker C can then acquire the key and run concurrently with B.</p>
+              <p>This recreates the duplicate review behavior the lock was intended to prevent: parallel LLM spend, competing checkpoints, duplicate comments, and inconsistent stage state. The short enqueue lock uses the same unconditional delete pattern after a 30-second TTL.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Create a cryptographically random owner token for each acquisition.</li>
+                  <li>Use atomic compare-and-expire for refresh and compare-and-delete for release, implemented with Redis Lua or an equivalent transaction.</li>
+                  <li>Add a monotonic fencing token checked by database writes if stale workers must be prevented from committing after lock loss.</li>
+                  <li>Test expiry, reacquisition, stale release, and watchdog cleanup races.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>worker/src/jobs/review.ts:477-490</code></li>
+                <li><code>worker/src/jobs/review.ts:680-696, 794-797</code></li>
+                <li><code>worker/src/jobs/review.ts:933-944, 1510-1514</code></li>
+                <li><code>worker/src/redis.ts:121-147</code></li>
+                <li>Sentinel lock introduced in <code>8852352</code>; blind refresh added in <code>34ac30f</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-005">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-005: Webhook deliveries are not idempotent</h3>
+            <span class="score">Replay + retry</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>The delivery ID is recorded but never used as a deduplication key. An opened or reopened event performs visible GitHub side effects, inserts a new review, and queues work each time it is handled. There is no uniqueness constraint on the delivery ID and no atomic claim before side effects.</p>
+              <p>Normal GitHub retries after a timeout or partial failure can therefore duplicate comments and reviews. A captured signed request could also be replayed while the webhook secret remains valid.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Create a webhook-deliveries table with a unique delivery ID and event type.</li>
+                  <li>Atomically claim the delivery before any GitHub side effect or queue send.</li>
+                  <li>Persist completion and failure state so retries can safely resume instead of repeat.</li>
+                  <li>Make reaction and acknowledgment creation independently idempotent.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>worker/src/index.ts:152-170</code></li>
+                <li><code>worker/src/webhook/handler.ts:121-176</code></li>
+                <li><code>worker/src/db/reviews.ts:24-78</code></li>
+                <li><code>db/migrations/004_eta_and_debugging.sql:4</code> adds storage but no uniqueness.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-006">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-006: API input and costly actions are unbounded</h3>
+            <span class="score">Resource exhaustion</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>The dashboard proxies arbitrary JSON to the worker. The worker checks only that <code>repo</code> and <code>body</code> are truthy, then sends the body to embedding and classification providers and stores the result. There are no length, shape, depth, repository-format, content-type, or per-actor quota controls. The webhook also reads the complete body before applying any application-level size policy.</p>
+              <p>Combined with PAR-001 or PAR-002, this allows an inexpensive account or public comment to amplify model spend and database growth. Cloudflare and GitHub platform limits reduce maximum size but do not provide business-level abuse control.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Validate all inputs with one explicit schema and reject unknown fields.</li>
+                  <li>Set conservative byte and character limits before model calls and database writes.</li>
+                  <li>Rate-limit by user, repository, installation, and action type. Add daily cost budgets and 429 responses.</li>
+                  <li>Return 400 or 413 for client errors instead of reflecting provider or database failures as 500 responses.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>dashboard/src/app/api/rules/route.ts:18-29</code></li>
+                <li><code>worker/src/index.ts:181-203</code></li>
+                <li><code>worker/src/jobs/rule-api.ts:28-75</code></li>
+                <li><code>worker/src/index.ts:152-164</code></li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-007">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-007: Error redaction is fragmented and incomplete</h3>
+            <span class="score">Information disclosure</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>One sanitizer covers several credential formats, while stage failure persistence uses a separate two-pattern regular expression. Neither centralizes redaction for database URLs, cookies, generic API secrets, Redis credentials, or all provider key formats. The dashboard failure route returns stored error stacks, delivery IDs, error details, and the full timeline to the client.</p>
+              <p>Provider SDK and HTTP errors frequently include response bodies or request context. If a secret reaches an exception, the current path may persist it and expose it through the dashboard. PAR-001 makes this materially easier to exploit.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Use one redaction function for every log, database error field, queue error, and HTTP response.</li>
+                  <li>Store structured error codes and safe summaries. Keep raw stacks out of production responses.</li>
+                  <li>Add redaction coverage for credentials, cookies, connection URLs, private keys, signed URLs, and high-entropy assignments.</li>
+                  <li>Add canary-secret tests that exercise failure persistence and the dashboard response end to end.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>worker/src/jobs/sanitize.ts:8-20</code></li>
+                <li><code>worker/src/jobs/stage-tracker.ts:35-59</code></li>
+                <li><code>worker/src/db/reviews.ts:581-619</code></li>
+                <li><code>dashboard/src/app/api/reviews/[id]/failure/route.ts:25-65</code></li>
+                <li>Fragmented error pipeline dates to commits <code>7bedbe0</code> and <code>55f1252</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-008">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-008: LLM prompts mix instructions with untrusted repository content</h3>
+            <span class="score">Model integrity</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>File names, diffs, prior findings, stored rule bodies, and developer comments are directly interpolated into instruction-bearing prompts. A malicious change can include text that imitates prompt instructions or closes the Markdown fence. Stored rules are especially sensitive because they are reused across future reviews.</p>
+              <p>Prompt wording alone cannot create a reliable security boundary. The model's structured output is still trusted for finding bodies, file names, lines, and classifications before those outputs affect GitHub comments or rule state.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Separate system instructions from untrusted content using provider-native message roles and structured payloads.</li>
+                  <li>State explicitly that repository text is data, then enforce downstream allowlists regardless of model response.</li>
+                  <li>Validate file names against the actual diff, line numbers against changed hunks, severities against the enum, and rule IDs against the supplied set.</li>
+                  <li>Strip or neutralize bot-generated mentions and dangerous link schemes before posting to GitHub.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Evidence</h4>
+              <ul>
+                <li><code>worker/src/gemini/prompts.ts:19-106</code></li>
+                <li><code>worker/src/gemini/prompts.ts:140-174, 183-236</code></li>
+                <li><code>worker/src/jobs/review.ts:233-268</code></li>
+                <li><code>worker/src/jobs/correction.ts:67-108</code></li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="finding" id="par-009">
+          <div class="finding-head">
+            <span class="severity medium">Medium</span>
+            <h3>PAR-009: Wrangler 3 development chain has known advisories</h3>
+            <span class="score">Dev and CI only</span>
+          </div>
+          <div class="finding-body">
+            <div>
+              <p>The full npm advisory check reports six vulnerable package nodes through <code>wrangler@3.114.17</code>: Wrangler, esbuild, Miniflare, Sharp, Undici, and ws. The advisories include development-server cross-origin reads, HTTP desynchronization, decompression or fragmentation denial of service, and image-processing flaws.</p>
+              <p>The production-only scan reports zero advisories across 58 production dependencies. This finding therefore affects developer workstations and CI rather than the deployed Worker bundle. npm recommends upgrading to Wrangler 4.122.0, which is a major-version change and requires compatibility testing.</p>
+              <div class="remedy">
+                <h4>Required fix</h4>
+                <ol>
+                  <li>Upgrade Wrangler in a dedicated branch and run Worker build, tests, local Miniflare tests, and a preview deployment.</li>
+                  <li>Do not expose local development servers to untrusted networks before upgrading.</li>
+                  <li>Run both production-only and full dependency audits in CI, with separate policies for runtime and toolchain findings.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="evidence">
+              <h4>Verified versions</h4>
+              <ul>
+                <li><code>wrangler 3.114.17</code></li>
+                <li><code>esbuild 0.17.19</code></li>
+                <li><code>miniflare 3.20250718.3</code></li>
+                <li><code>sharp 0.33.5</code></li>
+                <li><code>undici 5.29.0</code></li>
+                <li><code>ws 8.18.0</code></li>
+                <li><a href="https://github.com/advisories/GHSA-67mh-4wv8-2f99">esbuild advisory</a></li>
+                <li><a href="https://github.com/advisories/GHSA-f88m-g3jw-g9cj">Sharp advisory</a></li>
+                <li><a href="https://github.com/advisories/GHSA-96hv-2xvq-fx4p">ws advisory</a></li>
+              </ul>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section id="failure-chain">
+        <h2 class="section-title">What went wrong</h2>
+        <p class="section-intro">The vulnerabilities are connected. The system built good reliability controls around queue execution, but its authorization model stopped at the outermost signature or login check.</p>
+        <div class="chain" aria-label="Security failure chain">
+          <article><b>1. Identity was mistaken for authority</b>GitHub OAuth proves who signed in. GitHub webhook HMAC proves who sent the event. Neither proves permission to read a specific repository or change its policy.</article>
+          <article><b>2. State-changing decisions were delegated to free text</b>A comment classifier can turn arbitrary prose into a persistent active rule. Explicit authorization is absent before this write.</article>
+          <article><b>3. Shared credentials flattened trust boundaries</b>The dashboard forwards one worker bearer secret, and both services use broad database access. Once a dashboard session passes, repository isolation no longer exists.</article>
+          <article><b>4. Reliability mechanisms lacked adversarial ownership</b>Locks, retries, error capture, and delivery IDs were designed for normal failure but not replay, stale-owner races, tenant isolation, or secret-bearing errors.</article>
+        </div>
+        <div class="callout"><strong>Core lesson:</strong> HMAC verification, OAuth login, queue locks, and structured LLM output are useful controls, but none of them authorize a user to act on a repository. Authorization must be explicit at every repository-scoped read and write boundary.</div>
+      </section>
+
+      <section id="history">
+        <h2 class="section-title">Git history reconstruction</h2>
+        <p class="section-intro">Blame and commit history show that the current problems are architectural omissions, not isolated regressions.</p>
+        <div class="timeline">
+          <article><time>2026-08-07</time><span class="commit">24ae3b2</span><span>GitHub sign-in, dashboard data access, rule proxying, and session-only checks landed together. Repository authorization was not added.</span></article>
+          <article><time>2026-08-07</time><span class="commit">6d170f6</span><span>Comment webhooks began queueing user-controlled bodies. Later self-loop protection excluded only the bot, not untrusted authors.</span></article>
+          <article><time>2026-08-07</time><span class="commit">8852352</span><span>Execution locking used the constant value <code>1</code> and unconditional deletion, creating stale-owner release risk.</span></article>
+          <article><time>2026-08-07</time><span class="commit">7bedbe0</span><span>Stage error persistence added a narrow local redactor instead of one shared secret-sanitization boundary.</span></article>
+          <article><time>2026-08-08</time><span class="commit">34ac30f</span><span>Lock refresh extended the TTL using an unconditional write, preserving the lack of ownership.</span></article>
+          <article><time>2026-08-09</time><span class="commit">c136984</span><span>The credential-bearing environment file first appears in a local checkpoint ref.</span></article>
+          <article><time>2026-08-10</time><span class="commit">ff5c1dd</span><span>Comment corrections became immediately active rules rather than pending suggestions.</span></article>
+          <article><time>2026-08-11</time><span class="commit">49e06aa</span><span>Suppression instructions gained deterministic power to remove future findings, increasing the impact of missing commenter authorization.</span></article>
+        </div>
+      </section>
+
+      <section id="actions">
+        <h2 class="section-title">Prioritized action plan</h2>
+        <p class="section-intro">Contain exposure first, then repair authorization and state integrity. The order matters because code fixes do not invalidate previously exposed credentials.</p>
+        <table aria-label="Remediation plan">
+          <thead><tr><th>When</th><th>Action</th><th>Exit condition</th></tr></thead>
+          <tbody>
+            <tr><td>Today</td><td>Rotate all credentials represented in the historical worker environment file.</td><td>Old credentials are revoked and production uses new values.</td></tr>
+            <tr><td>Today</td><td>Keep the dashboard private or add an emergency user allowlist. Disable comment-driven rule writes on public repositories.</td><td>Untrusted accounts cannot reach data or change rules.</td></tr>
+            <tr><td>24 hours</td><td>Implement repository permission guards for pages, API routes, and database access. Add cross-tenant tests.</td><td>User A cannot read or mutate repository B.</td></tr>
+            <tr><td>24 hours</td><td>Gate comment actions by GitHub permission and replace classifier-authorized writes with explicit commands.</td><td>External commenters cannot trigger costly or persistent state changes.</td></tr>
+            <tr><td>48 hours</td><td>Replace Redis lock operations with owner-token compare operations and add fencing where database writes need it.</td><td>Stale workers cannot refresh or release another worker's lock.</td></tr>
+            <tr><td>48 hours</td><td>Add webhook delivery claims, input schemas, size limits, rate limits, and cost budgets.</td><td>Retries are idempotent and abusive calls receive 400, 413, or 429.</td></tr>
+            <tr><td>1 week</td><td>Centralize error redaction, remove raw stacks from the UI, and harden model-output validation.</td><td>Canary secrets never survive persistence or appear in API responses.</td></tr>
+            <tr><td>1 week</td><td>Upgrade Wrangler and purge rotated secrets from local checkpoint refs after verifying exact ref targets.</td><td>Full dependency audit passes or has documented accepted exceptions.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="validation">
+        <h2 class="section-title">Validation performed</h2>
+        <table aria-label="Validation results">
+          <thead><tr><th>Check</th><th>Result</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Production build</td><td class="status-pass">Passed</td><td>Shared TypeScript, Worker TypeScript, and Next.js production build completed.</td></tr>
+            <tr><td>Automated tests</td><td class="status-pass">Passed</td><td>41 test files and 325 unique tests passed. Workspace scripts execute the same root Vitest suite twice.</td></tr>
+            <tr><td>Production dependency audit</td><td class="status-pass">Passed</td><td>Zero advisories across 58 production dependencies.</td></tr>
+            <tr><td>Full dependency audit</td><td class="status-warn">6 nodes</td><td>Two moderate and four high advisory nodes, all routed through the development toolchain.</td></tr>
+            <tr><td>Current secret-file ignore check</td><td class="status-pass">Passed</td><td>Local environment files are ignored and are not tracked in the current index.</td></tr>
+            <tr><td>Git history secret scan</td><td class="status-warn">Failed</td><td>A credential-bearing environment file remains reachable from local checkpoint refs.</td></tr>
+            <tr><td>Dashboard lint</td><td class="status-warn">Inconclusive</td><td>ESLint produced no result before the 60-second audit timeout.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="strengths">
+        <h2 class="section-title">Controls already working</h2>
+        <p class="section-intro">The codebase has useful security foundations. They should be preserved while the trust model is repaired.</p>
+        <div class="strengths">
+          <article><h3>Webhook authenticity</h3>GitHub webhook bodies are verified with HMAC-SHA256 over the raw payload, followed by a constant-time comparison.</article>
+          <article><h3>SQL injection resistance</h3>Neon tagged-template queries bind user-controlled values instead of concatenating SQL strings.</article>
+          <article><h3>Production dependency posture</h3>The production-only npm advisory scan is clean at the time of audit.</article>
+          <article><h3>Secret-file ignore rules</h3>Current local environment files are ignored. The remaining problem is historical checkpoint reachability, not the current index.</article>
+          <article><h3>Resumable queue design</h3>SHA pinning, per-file checkpoints, subrequest budgets, and completion guards reduce accidental duplicate work.</article>
+          <article><h3>Automated regression coverage</h3>The test suite covers webhook verification, retries, queue behavior, provider failover, diff parsing, rule handling, and redaction helpers.</article>
+        </div>
+      </section>
+
+      <section id="scope">
+        <h2 class="section-title">Scope and limitations</h2>
+        <div class="sources">
+          <ul class="compact-list">
+            <li>Audited the current working tree, including uncommitted user changes. Application files were not modified.</li>
+            <li>Reviewed the Worker, Next.js dashboard, database migrations, shared types, package graph, tests, documentation, and local git history.</li>
+            <li>Did not perform active exploitation against deployed Cloudflare, Vercel, GitHub, Neon, Upstash, or LLM-provider accounts.</li>
+            <li>Did not verify production environment variables, GitHub App permissions, Cloudflare firewall rules, Vercel access controls, database roles, backups, or remote git server object reachability.</li>
+            <li>The secret finding is based on high-confidence local pattern detection and configuration context. Credential validity was not tested.</li>
+            <li>Line numbers may move after the uncommitted working-tree changes are committed or edited.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2 class="section-title">Sources</h2>
+        <div class="sources">
+          <h3>Application code</h3>
+          <ul class="compact-list">
+            <li><code>worker/src/index.ts</code>, <code>worker/src/webhook/verify.ts</code>, <code>worker/src/webhook/handler.ts</code></li>
+            <li><code>worker/src/jobs/review.ts</code>, <code>worker/src/jobs/comment-response.ts</code>, <code>worker/src/jobs/correction.ts</code>, <code>worker/src/jobs/rule-api.ts</code>, <code>worker/src/jobs/retry-api.ts</code>, <code>worker/src/jobs/stage-tracker.ts</code>, <code>worker/src/jobs/sanitize.ts</code></li>
+            <li><code>worker/src/redis.ts</code>, <code>worker/src/github/auth.ts</code>, <code>worker/src/github/api.ts</code>, <code>worker/src/db/reviews.ts</code>, <code>worker/src/db/rules.ts</code></li>
+            <li><code>worker/src/gemini/prompts.ts</code> and the Gemini, Groq, Cloudflare AI, and OpenRouter clients</li>
+            <li><code>dashboard/src/app</code> pages and API routes, <code>dashboard/src/lib/db.ts</code>, and <code>dashboard/next.config.ts</code></li>
+            <li><code>db/migrations/001_initial.sql</code> through <code>015_provider_failover.sql</code></li>
+          </ul>
+          <h3>Configuration and history</h3>
+          <ul class="compact-list">
+            <li><code>package.json</code>, workspace package manifests, <code>package-lock.json</code>, <code>worker/wrangler.toml</code>, and <code>.gitignore</code></li>
+            <li>Git blame and log for commits cited in the report, plus local ref reachability checks for the historical environment file</li>
+            <li><code>README.md</code> and <code>architecture.md</code> for intended trust and deployment behavior</li>
+          </ul>
+          <h3>Advisory data</h3>
+          <ul class="compact-list">
+            <li>npm registry audit response retrieved 2026-08-13</li>
+            <li><a href="https://github.com/advisories/GHSA-67mh-4wv8-2f99">GHSA-67mh-4wv8-2f99</a>, <a href="https://github.com/advisories/GHSA-f88m-g3jw-g9cj">GHSA-f88m-g3jw-g9cj</a>, <a href="https://github.com/advisories/GHSA-96hv-2xvq-fx4p">GHSA-96hv-2xvq-fx4p</a>, plus the Undici and ws advisories returned by npm</li>
+          </ul>
+        </div>
+      </section>
+
+      <footer>
+        <div>Parakh security audit report. Last updated 2026-08-13 18:16:14 +05:30.</div>
+        <div>Credential values and credential-bearing excerpts were intentionally excluded. This report is safe to share only within the organization because it describes internal architecture and vulnerability locations.</div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

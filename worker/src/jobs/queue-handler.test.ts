@@ -10,7 +10,7 @@ import { handleQueueBatch } from './queue-handler.js';
 import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
-import { ReviewRetryScheduledError } from './review-retry.js';
+import { ReviewExecutionActiveError, ReviewRetryScheduledError } from './review-retry.js';
 
 const reviewJob = vi.mocked(executeReviewJob);
 const commentJob = vi.mocked(executeCommentResponseJob);
@@ -100,12 +100,60 @@ describe('handleQueueBatch', () => {
   });
 
   it('uses the requested delay for review-level provider retries', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     reviewJob.mockRejectedValue(new ReviewRetryScheduledError(9));
     const batch = makeBatch([
       { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
     ]);
     await handleQueueBatch(batch, env);
     expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 9 });
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('checkpointed'));
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('delays a redelivery that overlaps an active review execution', async () => {
+    reviewJob.mockRejectedValue(new ReviewExecutionActiveError('still active'));
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+
+    await handleQueueBatch(batch, env);
+
+    expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 15 });
+  });
+
+  it.each([
+    [1, 5],
+    [2, 15],
+    [3, 30],
+    [4, 60],
+    [5, 60],
+  ])('backs off unexpected attempt %i by %i seconds', async (attempt, delaySeconds) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    reviewJob.mockRejectedValue(new Error('database unavailable'));
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+    batch.messages[0].attempts = attempt;
+
+    await handleQueueBatch(batch, env);
+
+    expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds });
+  });
+
+  it('stops unexpected retries after the fifth retry', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    reviewJob.mockRejectedValue(new Error('database unavailable'));
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+    batch.messages[0].attempts = 6;
+
+    await handleQueueBatch(batch, env);
+
+    expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+    expect(batch.messages[0].retry).not.toHaveBeenCalled();
   });
 
   it('resumes the same review on a second delivery after a batch checkpoint', async () => {

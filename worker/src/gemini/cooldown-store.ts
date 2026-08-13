@@ -72,6 +72,8 @@ export class MemoryCooldownStore implements CooldownStore {
 export class RedisCooldownStore extends MemoryCooldownStore {
   private loaded = false;
   private dirty = new Map<number, CooldownEntry | null>();
+  private loadWarningEmitted = false;
+  private flushWarningEmitted = false;
 
   constructor(private readonly options: {
     redisKey: string;
@@ -102,7 +104,10 @@ export class RedisCooldownStore extends MemoryCooldownStore {
         }
       }
     } catch (err) {
-      console.warn(`[cooldown] Failed to load ${this.options.redisKey}:`, err);
+      if (!this.loadWarningEmitted) {
+        this.loadWarningEmitted = true;
+        console.warn(`[cooldown] Failed to load ${this.options.redisKey}:`, err);
+      }
     }
   }
 
@@ -138,7 +143,10 @@ export class RedisCooldownStore extends MemoryCooldownStore {
       }
       await this.options.redisExpire(this.options.redisKey, this.options.ttlSeconds ?? COOLDOWN_HASH_TTL_SECONDS);
     } catch (err) {
-      console.warn(`[cooldown] Failed to flush ${this.options.redisKey}:`, err);
+      if (!this.flushWarningEmitted) {
+        this.flushWarningEmitted = true;
+        console.warn(`[cooldown] Failed to flush ${this.options.redisKey}:`, err);
+      }
       // Restore only keys that have NOT been updated (park/clear) while the
       // async flush was in flight — a newer dirty entry must win over the
       // snapshot we just failed to persist.

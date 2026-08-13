@@ -37,7 +37,7 @@ vi.mock('../redis.js', () => ({
 import { executeReviewJob } from './review.js';
 import { getCachedToken } from '../github/auth.js';
 import { fetchDiff, fetchDiffPinned } from '../github/api.js';
-import { getReview } from '../db/reviews.js';
+import { dbFailStage, getReview } from '../db/reviews.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
 
 const mocked = {
@@ -45,6 +45,7 @@ const mocked = {
   fetchDiff: vi.mocked(fetchDiff),
   fetchDiffPinned: vi.mocked(fetchDiffPinned),
   getReview: vi.mocked(getReview),
+  dbFailStage: vi.mocked(dbFailStage),
   createRedisGet: vi.mocked(createRedisGet),
   createRedisSet: vi.mocked(createRedisSet),
   createRedisSetNX: vi.mocked(createRedisSetNX),
@@ -66,6 +67,7 @@ beforeEach(() => {
   for (const fn of Object.values(mocked)) fn.mockReset();
 
   mocked.getCachedToken.mockResolvedValue('token');
+  mocked.dbFailStage.mockResolvedValue(undefined);
   mocked.getReview.mockResolvedValue({
     id: 'review-1',
     status: 'RUNNING',
@@ -120,5 +122,31 @@ describe('review queue redelivery', () => {
     }, env, 2)).rejects.toThrow('duplicate execution reached the pipeline');
 
     expect(mocked.fetchDiffPinned).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the processing error when failure persistence also fails', async () => {
+    mocked.getReview.mockResolvedValue({
+      id: 'review-1',
+      status: 'RUNNING',
+      stage_attempt: 1,
+      worker_heartbeat_at: new Date(0).toISOString(),
+      head_sha: 'head',
+      base_sha: 'base',
+    } as never);
+    mocked.fetchDiffPinned.mockRejectedValue(new Error('provider request failed'));
+    mocked.dbFailStage.mockRejectedValue(new Error('database persistence failed'));
+
+    await expect(executeReviewJob({
+      type: 'REVIEW',
+      installationId: 1,
+      owner: 'acme',
+      repo: 'app',
+      prNumber: 7,
+      reviewId: 'review-1',
+      requestedMode: 'full',
+      effectiveMode: 'full',
+    }, env, 2)).rejects.toThrow(
+      'Review failed with "provider request failed" and failure persistence also failed with "database persistence failed"'
+    );
   });
 });
