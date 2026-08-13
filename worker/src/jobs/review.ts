@@ -24,6 +24,7 @@ import {
   fetchDiffPinned,
   getPRDetails,
   postComment,
+  postCommentOnce,
   addReaction,
   removeReaction,
   replyToReviewComment,
@@ -339,6 +340,8 @@ export function formatReviewComment(
 const REVIEW_STATE_KEY = (repo: string, pr: number) => `pr_review_state:${repo}:${pr}`;
 const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:${pr}`;
 
+class ReviewExecutionActiveError extends Error {}
+
 interface ReviewState {
   reviewId: string;
   allFiles: string[];
@@ -637,7 +640,8 @@ export async function swapCommentReaction(
   if (review.trigger_comment_reaction_id) {
     try {
       await removeCommentReaction(
-        owner, repo, review.trigger_comment_reaction_id, token
+        owner, repo, review.trigger_comment_id, review.trigger_comment_type,
+        review.trigger_comment_reaction_id, token
       );
     } catch (err) {
       console.warn(`[review] Failed to remove previous trigger-comment reaction:`, err);
@@ -746,27 +750,14 @@ async function executeReviewJobInternal(
     // (fresh heartbeat) instead of running the pipeline twice.
     const lockAcquired = await acquireReviewLock(fullRepo, prNumber, env);
     if (!lockAcquired) {
-      if (attempts > 1) {
-        // Redelivery: Queues only delivers a message to one consumer at a time,
-        // so a redelivery means the previous execution has ended (retry/timeout).
-        // Its heartbeat may still look fresh (it wrote one right before dying in
-        // a subrequest-limit crash), so trust the delivery count, not the
-        // heartbeat, and steal the lock to resume instead of silently dropping.
-        await refreshReviewLock(fullRepo, prNumber, env);
-        console.warn(`[review] Redelivery #${attempts} — stole lock for ${fullRepo}#${prNumber}`);
-      } else {
-        const heartbeatAge = dbReview.worker_heartbeat_at
-          ? Date.now() - new Date(dbReview.worker_heartbeat_at).getTime()
-          : Number.POSITIVE_INFINITY;
-        if (heartbeatAge < REVIEW_LOCK_TTL_SECONDS * 1000) {
-          console.log(`[review] Skipping ${reviewId} — lock held, heartbeat ${Math.round(heartbeatAge / 1000)}s fresh`);
-          return;
-        }
-        // Lock survived its TTL with no fresh heartbeat → previous execution is
-        // dead. Steal the lock so this run proceeds.
-        await refreshReviewLock(fullRepo, prNumber, env);
-        console.warn(`[review] Stole stale lock for ${fullRepo}#${prNumber}`);
+      const heartbeatAge = dbReview.worker_heartbeat_at
+        ? Date.now() - new Date(dbReview.worker_heartbeat_at).getTime()
+        : Number.POSITIVE_INFINITY;
+      if (heartbeatAge < REVIEW_LOCK_TTL_SECONDS * 1000) {
+        throw new ReviewExecutionActiveError(`review execution is still active for ${fullRepo}#${prNumber}`);
       }
+      await refreshReviewLock(fullRepo, prNumber, env);
+      console.warn(`[review] Stole stale lock for ${fullRepo}#${prNumber}`);
     }
     lockHeld = true;
 
@@ -1056,6 +1047,10 @@ async function executeReviewJobInternal(
     metricsOutcome = 'completed';
 
   } catch (err) {
+    if (err instanceof ReviewExecutionActiveError) {
+      metricsOutcome = 'skipped';
+      throw err;
+    }
     if (err instanceof SubrequestBudgetExceededError) {
       // Budget checkpoint: the stage event stays open on purpose — the next
       // delivery reuses it (attempt number bumps, unique index scopes to
@@ -1172,7 +1167,14 @@ async function finalizeReview(
       prNumber,
       env.DASHBOARD_BASE_URL
     );
-    await postComment(owner, repo, prNumber, comment, token);
+    await postCommentOnce(
+      owner,
+      repo,
+      prNumber,
+      comment,
+      `<!-- parakh-review:${reviewId} -->`,
+      token
+    );
   });
   await completeStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
 
