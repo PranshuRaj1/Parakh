@@ -27,6 +27,7 @@ vi.mock('../github/api.js', () => ({
   fetchDiffPinned: vi.fn(),
   getPRDetails: vi.fn(),
   postComment: vi.fn(),
+  postCommentOnce: vi.fn(),
   replyToReviewComment: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),

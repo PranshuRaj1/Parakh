@@ -1,0 +1,779 @@
+{
+  "schemaVersion": 1,
+  "description": "Mechanically generated current file-review behavior. Review diffs before accepting.",
+  "fixtures": [
+    {
+      "fixtureId": "behavior-auth-flow",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:behavior-auth-flow",
+        "attempt": 1,
+        "diffHash": "b2689b251d48639ad62d19495f1c3029bc7503be92c0ea43bda7cb66e1b0ea76",
+        "inputCharacters": 919,
+        "inputBytes": 919,
+        "estimatedInputTokens": 230,
+        "parsedFiles": 4,
+        "reviewableFiles": 4,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 4,
+        "rawFindings": 2,
+        "acceptedFindings": 2,
+        "rawScore": 2.5,
+        "displayedScore": 2.5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/routes/login.ts",
+        "src/auth/provider.ts",
+        "src/config/auth.ts",
+        "tests/login.test.ts"
+      ],
+      "findings": [
+        {
+          "severity": "HIGH",
+          "file": "src/auth/provider.ts",
+          "line": 1,
+          "body": "Authentication flow lacks state validation.",
+          "suggestion": "Validate state before completing sign-in.",
+          "rule_id": null
+        },
+        {
+          "severity": "HIGH",
+          "file": "src/config/auth.ts",
+          "line": 1,
+          "body": "Authentication callback configuration violates the repository rule.",
+          "suggestion": "Use the approved callback configuration.",
+          "rule_id": "baseline-rule"
+        }
+      ],
+      "rawScore": 2.5,
+      "displayedScore": 2.5,
+      "comment": "## Parakh Code Review — 2.5/5\n\n**Summary:** 🟠 2 HIGH\n\n### 🟠 HIGH\n\n- **`src/auth/provider.ts:1`**: Authentication flow lacks state validation.\n  > 💡 Validate state before completing sign-in.\n- **`src/config/auth.ts:1`** *(rule violation)*: Authentication callback configuration violates the repository rule.\n  > 💡 Use the approved callback configuration.\n\n"
+    },
+    {
+      "fixtureId": "binary-file",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:binary-file",
+        "attempt": 1,
+        "diffHash": "5f29764188d1c31d3c7d795001911a986a3dc5bcfff7fb44b45c74a9f627755c",
+        "inputCharacters": 137,
+        "inputBytes": 137,
+        "estimatedInputTokens": 35,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "assets/logo.png"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "cross-file-move",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:cross-file-move",
+        "attempt": 1,
+        "diffHash": "c84aa83639e0a9f4d009a44817f396479f0c3620ea519e0154f735aeaafc60f6",
+        "inputCharacters": 534,
+        "inputBytes": 534,
+        "estimatedInputTokens": 134,
+        "parsedFiles": 2,
+        "reviewableFiles": 2,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 2,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/old-location.ts",
+        "src/new-location.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "empty-diff",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:empty-diff",
+        "attempt": 1,
+        "diffHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "inputCharacters": 0,
+        "inputBytes": 0,
+        "estimatedInputTokens": 0,
+        "parsedFiles": 0,
+        "reviewableFiles": 0,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 0,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "large-generated",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:large-generated",
+        "attempt": 1,
+        "diffHash": "ef44b3b52a4dad6213b0ba347d86082467977cc4cb39c3fdf837a9f738792e1e",
+        "inputCharacters": 34932,
+        "inputBytes": 34932,
+        "estimatedInputTokens": 8733,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "dist/generated.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "lockfile-only",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:lockfile-only",
+        "attempt": 1,
+        "diffHash": "b84671a040bb9026b730daac8f8feee2188ff1f48fbb90b528810b5da7bb4cea",
+        "inputCharacters": 187,
+        "inputBytes": 187,
+        "estimatedInputTokens": 47,
+        "parsedFiles": 1,
+        "reviewableFiles": 0,
+        "ignoredFiles": 1,
+        "logicalReviewCalls": 0,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "lockfile-with-source",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:lockfile-with-source",
+        "attempt": 1,
+        "diffHash": "e0326fd2bb55efe284a89810e146abfceef533aaf96511bee7fb21e206338362",
+        "inputCharacters": 362,
+        "inputBytes": 362,
+        "estimatedInputTokens": 91,
+        "parsedFiles": 2,
+        "reviewableFiles": 1,
+        "ignoredFiles": 1,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/index.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "malformed-hunk",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:malformed-hunk",
+        "attempt": 1,
+        "diffHash": "e48ae968932a20c39d8e77818644300fc6320edda4984c52625987c17ea73799",
+        "inputCharacters": 188,
+        "inputBytes": 188,
+        "estimatedInputTokens": 47,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/broken.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "mode-only-change",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:mode-only-change",
+        "attempt": 1,
+        "diffHash": "ee103676c9037f95477de18472f04773b850bb952902e3729d771f8880bafeef",
+        "inputCharacters": 83,
+        "inputBytes": 83,
+        "estimatedInputTokens": 21,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "scripts/deploy.sh"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "more-than-one-batch",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:more-than-one-batch",
+        "attempt": 1,
+        "diffHash": "4321cc1d895a76f283d65ff1c31d15410e0e9b02319612613b78c44daa3f5e09",
+        "inputCharacters": 994,
+        "inputBytes": 994,
+        "estimatedInputTokens": 249,
+        "parsedFiles": 6,
+        "reviewableFiles": 6,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 6,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/one.ts",
+        "src/two.ts",
+        "src/three.ts",
+        "src/four.ts",
+        "src/five.ts",
+        "src/six.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "multiple-hunks",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:multiple-hunks",
+        "attempt": 1,
+        "diffHash": "4596a3d36bf8e827d656dab3fc469fcfbd61451f232be8e151f3513a10acdcf0",
+        "inputCharacters": 305,
+        "inputBytes": 305,
+        "estimatedInputTokens": 77,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/service.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "new-and-deleted-files",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:new-and-deleted-files",
+        "attempt": 1,
+        "diffHash": "de6890192dd6f76d3e1f4ec70870eeb23728493608b09d2cae1585151d31e630",
+        "inputCharacters": 317,
+        "inputBytes": 317,
+        "estimatedInputTokens": 80,
+        "parsedFiles": 2,
+        "reviewableFiles": 2,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 2,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/new.ts",
+        "src/old.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "no-newline-marker",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:no-newline-marker",
+        "attempt": 1,
+        "diffHash": "05c771dcdfd94dfbd41f666c8db6f985dc7bc98a0993fa70b12effaaa3a1c380",
+        "inputCharacters": 222,
+        "inputBytes": 222,
+        "estimatedInputTokens": 56,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 1,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/eof.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "normal-edit",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:normal-edit",
+        "attempt": 1,
+        "diffHash": "2ee9e1e5031d5ad35543e53142aa816ce82996ce30dcc22a6aa3b795bb1b9646",
+        "inputCharacters": 223,
+        "inputBytes": 223,
+        "estimatedInputTokens": 56,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 1,
+        "acceptedFindings": 1,
+        "rawScore": 4.668201174607107,
+        "displayedScore": 4.7,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/example.ts"
+      ],
+      "findings": [
+        {
+          "severity": "MEDIUM",
+          "file": "src/example.ts",
+          "line": 1,
+          "body": "Baseline fixture issue.",
+          "suggestion": "Keep this deterministic response stable.",
+          "rule_id": null
+        }
+      ],
+      "rawScore": 4.668201174607107,
+      "displayedScore": 4.7,
+      "comment": "## Parakh Code Review — 4.7/5\n\n**Summary:** 🟡 1 MEDIUM\n\n### 🟡 MEDIUM\n\n- **`src/example.ts:1`**: Baseline fixture issue.\n  > 💡 Keep this deterministic response stable.\n\n"
+    },
+    {
+      "fixtureId": "path-with-spaces",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:path-with-spaces",
+        "attempt": 1,
+        "diffHash": "52143e9a22f7002b28e345f963e0dc871d428b9397ef0a4b988829558236ed21",
+        "inputCharacters": 192,
+        "inputBytes": 192,
+        "estimatedInputTokens": 48,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/my file.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "renamed-file",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:renamed-file",
+        "attempt": 1,
+        "diffHash": "c7e4c75ec267d028534d2807106264ebf3249189c0db448c884cf3e2c73540dd",
+        "inputCharacters": 264,
+        "inputBytes": 264,
+        "estimatedInputTokens": 66,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/new-name.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "repeated-blocks",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:repeated-blocks",
+        "attempt": 1,
+        "diffHash": "f07a2273a019ac7317bcdcd15d7598eb54f7e0a84e161f3743668ebddb4851a8",
+        "inputCharacters": 257,
+        "inputBytes": 257,
+        "estimatedInputTokens": 65,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/repeated.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "submodule-pointer",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:submodule-pointer",
+        "attempt": 1,
+        "diffHash": "b413c65c386ff366fc91fb99c75ef3e5371f495f5091d0742c1e981374b0e871",
+        "inputCharacters": 249,
+        "inputBytes": 249,
+        "estimatedInputTokens": 63,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "vendor/library"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    },
+    {
+      "fixtureId": "unicode-path",
+      "metrics": {
+        "schemaVersion": 1,
+        "reviewId": "fixture:unicode-path",
+        "attempt": 1,
+        "diffHash": "ed375c58acb857f32736c63f80075716841b5ac1ac5b48aeb18eb20e4e9ee0e5",
+        "inputCharacters": 196,
+        "inputBytes": 259,
+        "estimatedInputTokens": 49,
+        "parsedFiles": 1,
+        "reviewableFiles": 1,
+        "ignoredFiles": 0,
+        "logicalReviewCalls": 1,
+        "rawFindings": 0,
+        "acceptedFindings": 0,
+        "rawScore": 5,
+        "displayedScore": 5,
+        "elapsedMs": 0,
+        "accountedSubrequests": 0,
+        "outcome": "completed",
+        "checkpointReason": null,
+        "flags": {
+          "semanticDiff": false,
+          "behaviorGrouping": false,
+          "behaviorGroupingShadow": true,
+          "groupedReviewOutput": false,
+          "stalenessCheck": false,
+          "deterministicAnalysis": false
+        }
+      },
+      "callFiles": [
+        "src/नमस्ते.ts"
+      ],
+      "findings": [],
+      "rawScore": 5,
+      "displayedScore": 5,
+      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+    }
+  ]
+}

@@ -11,14 +11,6 @@ const USER_AGENT = 'Parakh-Bot';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface GitHubHeaders {
-  Authorization: string;
-  Accept: string;
-  'X-GitHub-Api-Version': string;
-  'User-Agent': string;
-  [key: string]: string;
-}
-
 export interface PRFile {
   sha: string;
   filename: string;
@@ -31,22 +23,21 @@ export interface PRFile {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function headers(token: string, accept?: string): GitHubHeaders {
-  return {
+function headers(token: string, accept?: string): Headers {
+  return new Headers({
     Authorization: `token ${token}`,
     Accept: accept || 'application/vnd.github+json',
     'X-GitHub-Api-Version': API_VERSION,
     'User-Agent': USER_AGENT,
-  };
+  });
 }
 
 async function githubFetch<T>(url: string, token: string, options: RequestInit = {}): Promise<T> {
+  const requestHeaders = headers(token);
+  new Headers(options.headers).forEach((value, key) => requestHeaders.set(key, value));
   const response = await fetch(url, {
     ...options,
-    headers: {
-      ...headers(token, (options.headers as Record<string, string>)?.Accept),
-      ...(options.headers || {}),
-    },
+    headers: requestHeaders,
   });
 
   if (!response.ok) {
@@ -155,9 +146,24 @@ export async function postComment(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments`;
   return githubFetch<{ id: number }>(url, token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body }),
   });
+}
+
+export async function postCommentOnce(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+  marker: string,
+  token: string
+): Promise<{ id: number }> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100&sort=created&direction=desc`;
+  const comments = await githubFetch<Array<{ id: number; body: string | null }>>(url, token);
+  const existing = comments.find((comment) => comment.body?.includes(marker));
+  if (existing) return { id: existing.id };
+  return postComment(owner, repo, prNumber, `${body}\n\n${marker}`, token);
 }
 
 /**
@@ -176,7 +182,7 @@ export async function postReviewComment(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/comments`;
   return githubFetch<{ id: number }>(url, token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body, commit_id: commitId, path, line, side: 'RIGHT' }),
   });
 }
@@ -195,7 +201,7 @@ export async function replyToReviewComment(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/comments/${commentId}/replies`;
   return githubFetch<{ id: number }>(url, token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body }),
   });
 }
@@ -218,7 +224,7 @@ export async function addReaction(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${issueNumber}/reactions`;
   const data = await githubFetch<{ id: number }>(url, token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
   });
   return data.id;
@@ -273,7 +279,7 @@ export async function addCommentReaction(
       token,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' } as unknown as HeadersInit,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: reactionContent }),
       }
     );
@@ -290,12 +296,16 @@ export async function addCommentReaction(
 export async function removeCommentReaction(
   owner: string,
   repo: string,
+  commentId: number,
+  commentType: 'issue_comment' | 'pull_request_review_comment',
   reactionId: number,
   token: string
 ): Promise<void> {
-
+  const path = commentType === 'pull_request_review_comment'
+    ? `pulls/comments/${commentId}/reactions/${reactionId}`
+    : `issues/comments/${commentId}/reactions/${reactionId}`;
   const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/reactions/${reactionId}`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/${path}`,
     {
       method: 'DELETE',
       headers: headers(token),

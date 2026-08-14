@@ -56,7 +56,7 @@ describe('swapCommentReaction', () => {
   it('removes the live reaction then adds the new verdict reaction and tracks it', async () => {
     await swapCommentReaction(review(), '+1', owner, repo, token, env);
 
-    expect(mocked.removeCommentReaction).toHaveBeenCalledWith(owner, repo, 55, token);
+    expect(mocked.removeCommentReaction).toHaveBeenCalledWith(owner, repo, 100, 'issue_comment', 55, token);
     expect(mocked.addCommentReaction).toHaveBeenCalledWith(owner, repo, 100, 'issue_comment', '+1', token);
     expect(mocked.updateTriggerCommentReactionId).toHaveBeenCalledWith('r1', 88, env);
   });

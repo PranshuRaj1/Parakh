@@ -10,13 +10,17 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
+    "test:baseline": "vitest run worker/src/review/baseline/replay.test.ts",
+    "baseline:generate": "vite-node --script worker/src/review/baseline/generate-baseline.ts",
+    "baseline:accept": "vite-node --script worker/src/review/baseline/generate-baseline.ts --accept",
     "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
     "test:memory": "vitest run worker/src/smoke/memory-smoke.test.ts",
     "setup:hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "vite-node": "^3.2.4"
   },
   "optionalDependencies": {
     "@tailwindcss/oxide-linux-x64-gnu": "^4.3.3"
