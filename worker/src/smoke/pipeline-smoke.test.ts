@@ -430,6 +430,12 @@ describe('intent prompt hardening (regression guard)', () => {
     expect(prompt).toContain('@parakh');
   });
 
+  it('treats direct questions to the bot as QUESTION (not silent GENERAL)', () => {
+    const prompt = buildIntentPrompt('@parakh who is your owner?', '');
+    expect(prompt).toContain('QUESTION');
+    expect(prompt).toContain('who is your owner');
+  });
+
   it('sends the request through handleWebhookEvent for a standalone @parakh review comment', async () => {
     const { env, sent } = makeEnv();
     const result = await handleWebhookEvent(commentEvent('@parakh review'), 'issue_comment', 'del-x', env);

@@ -166,7 +166,7 @@ Classify the reply into exactly one of these six categories:
 - **Forward-looking standards always win.** If the comment tells the bot how to behave in FUTURE reviews — e.g. it contains phrases like "in any future review", "stop flagging X", "never raise X", "don't flag X", "always do Y", "from now on" — classify it as **CORRECTION**, even if the tone is dismissive ("useless", "stop", "annoying", "don't"). The corrective standard is the forward-looking instruction.
 - A dismissal is only **DISMISSAL** if it contains NO such standard. "This is useless" alone is DISMISSAL; "This is useless, stop flagging EOF newlines in future reviews" is CORRECTION.
 
-- **QUESTION**: The developer is asking a follow-up question about the bot's suggestion. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "Would using X fix this?".
+- **QUESTION**: The developer is directly addressing the bot with a question — either a follow-up about its suggestion, or a standalone question directed at the bot. Examples: "What would you suggest instead?", "Can you explain why this is a problem?", "@parakh who is your owner?", "why did you flag this?", "how does the review scoring work?".
 
 - **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. A comment that calls the bot's name (e.g. "@parakh") together with the word "review" is ALWAYS a REVIEW_REQUEST. Examples: "@parakh review", "@parakh review this again", "please re-review", "can you check this PR now?".
 
