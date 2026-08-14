@@ -90,6 +90,8 @@ describe('review queue redelivery', () => {
       repo: 'app',
       prNumber: 7,
       reviewId: 'review-1',
+      requestedMode: 'full',
+      effectiveMode: 'full',
     }, env, 2)).rejects.toThrow('review execution is still active');
 
     expect(mocked.fetchDiff).not.toHaveBeenCalled();
@@ -113,6 +115,8 @@ describe('review queue redelivery', () => {
       repo: 'app',
       prNumber: 7,
       reviewId: 'review-1',
+      requestedMode: 'full',
+      effectiveMode: 'full',
     }, env, 2)).rejects.toThrow('duplicate execution reached the pipeline');
 
     expect(mocked.fetchDiffPinned).toHaveBeenCalledTimes(1);

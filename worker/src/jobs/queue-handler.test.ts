@@ -41,7 +41,7 @@ describe('handleQueueBatch', () => {
     contradictionJob.mockResolvedValue(undefined);
 
     const batch = makeBatch([
-      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' },
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
       { type: 'COMMENT_RESPONSE', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentId: 9, commentBody: 'x', commentType: 'issue_comment', githubDeliveryId: 'd' },
       { type: 'CONTRADICTION', installationId: 0, owner: 'acme', repo: 'app', prNumber: 0, ruleId: 'rule-1', ruleBody: 'b', embedding: [1, 2] },
     ]);
@@ -62,7 +62,7 @@ describe('handleQueueBatch', () => {
     commentJob.mockResolvedValue(undefined);
     contradictionJob.mockResolvedValue(undefined);
     const batch = makeBatch([
-      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' },
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
       { type: 'COMMENT_RESPONSE', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentId: 9, commentBody: 'x', commentType: 'issue_comment', githubDeliveryId: 'd' },
       { type: 'CONTRADICTION', installationId: 0, owner: 'acme', repo: 'app', prNumber: 0, ruleId: 'rule-1', ruleBody: 'b', embedding: [1, 2] },
     ]);
@@ -91,7 +91,7 @@ describe('handleQueueBatch', () => {
   it('retries a message when its handler throws', async () => {
     reviewJob.mockRejectedValue(new Error('boom'));
     const batch = makeBatch([
-      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1' },
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
     ]);
     await handleQueueBatch(batch, env);
     expect(batch.messages[0].retry).toHaveBeenCalledTimes(1);

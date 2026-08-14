@@ -23,20 +23,17 @@ vi.mock('../db/reviews.js', () => ({
 vi.mock('../redis.js', () => ({
   createRedisGet: vi.fn(),
   createRedisSet: vi.fn(),
-  createRedisDel: vi.fn(),
 }));
 
 import { addReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview } from '../db/reviews.js';
-import { createRedisDel } from '../redis.js';
 
 const mocked = {
   addReaction: vi.mocked(addReaction),
   postComment: vi.mocked(postComment),
   getCachedToken: vi.mocked(getCachedToken),
   insertReview: vi.mocked(insertReview),
-  createRedisDel: vi.mocked(createRedisDel),
 };
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -73,7 +70,6 @@ beforeEach(() => {
   mocked.addReaction.mockReset().mockResolvedValue(42);
   mocked.postComment.mockReset().mockResolvedValue({ id: 1 });
   mocked.insertReview.mockReset().mockResolvedValue({ id: 'review-1' });
-  mocked.createRedisDel.mockReset().mockReturnValue(vi.fn().mockResolvedValue(undefined));
 });
 
 // ─── Routing ─────────────────────────────────────────────────────────────────
@@ -127,6 +123,8 @@ describe('pull_request events', () => {
           status: 'QUEUED',
           trigger_reason: 'opened',
           github_delivery_id: 'del-1',
+          requested_review_mode: 'full',
+          effective_review_mode: 'full',
         }),
         env
       );
@@ -138,12 +136,14 @@ describe('pull_request events', () => {
           repo: 'app',
           prNumber: 7,
           reviewId: 'review-1',
+          requestedMode: 'full',
+          effectiveMode: 'full',
         })
       );
     }
   });
 
-  it('clears stale review state on synchronize without enqueueing', async () => {
+  it('requires a manual review on synchronize without deleting scoped checkpoints', async () => {
     const env = { ...BASE_ENV };
     const result = await handleWebhookEvent(
       { action: 'synchronize', ...PR_EVENT },
@@ -153,10 +153,7 @@ describe('pull_request events', () => {
     );
 
     expect(result.status).toBe(200);
-    expect(result.body).toBe('cleared stale review state');
-    expect(mocked.createRedisDel).toHaveBeenCalledWith(env);
-    const del = mocked.createRedisDel.mock.results[0].value;
-    expect(del).toHaveBeenCalledWith('pr_review_state:acme/app:7');
+    expect(result.body).toBe('manual review required');
     expect(queueSend(env)).not.toHaveBeenCalled();
   });
 

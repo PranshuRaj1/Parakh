@@ -40,17 +40,17 @@ export async function handleCronTrigger(env: Env): Promise<void> {
         continue;
       }
       try {
-        await triggerReview(
-          review.installation_id,
+        const result = await triggerReview({
+          installationId: review.installation_id,
           owner,
           repo,
-          review.pr_number,
-          'auto_retry',
-          env,
-          review.id,
-          review.github_delivery_id ?? undefined
-        );
-        console.log(`[cron] Re-enqueued daily-quota-paused review ${review.repo}#${review.pr_number}`);
+          prNumber: review.pr_number,
+          reason: 'auto_retry',
+          requestedMode: review.requested_review_mode ?? 'full',
+          resumeReviewId: review.id,
+          githubDeliveryId: review.github_delivery_id ?? undefined,
+        }, env);
+        console.log(`[cron] Daily-quota resume for ${review.repo}#${review.pr_number}: ${result}`);
       } catch (err) {
         console.error(`[cron] Failed to resume daily-quota review ${review.id}:`, err);
       }

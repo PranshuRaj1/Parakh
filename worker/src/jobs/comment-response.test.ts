@@ -42,11 +42,9 @@ vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));
 vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   replyToReviewComment: vi.fn(),
-  addCommentReaction: vi.fn(),
 }));
 vi.mock('../db/reviews.js', () => ({
   getRepoSettings: vi.fn(),
-  getResumableReview: vi.fn(),
 }));
 vi.mock('../redis.js', () => ({
   createRedisGet: vi.fn(),
@@ -56,19 +54,17 @@ vi.mock('./review.js', () => ({ triggerReview: vi.fn() }));
 vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
 
 import { executeCommentResponseJob } from './comment-response.js';
-import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment, replyToReviewComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
-import { getRepoSettings, getResumableReview } from '../db/reviews.js';
+import { getRepoSettings } from '../db/reviews.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   getRepoSettings: vi.mocked(getRepoSettings),
-  getResumableReview: vi.mocked(getResumableReview),
   postComment: vi.mocked(postComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
-  addCommentReaction: vi.mocked(addCommentReaction),
   triggerReview: vi.mocked(triggerReview),
   saveCorrectionAsRule: vi.mocked(saveCorrectionAsRule),
 };
@@ -101,7 +97,7 @@ beforeEach(() => {
   draftReplyMock.mockReset();
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
-  mocked.triggerReview.mockResolvedValue(true);
+  mocked.triggerReview.mockResolvedValue('ENQUEUED');
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null });
 });
 
@@ -127,58 +123,59 @@ describe('executeCommentResponseJob', () => {
     expect(classifyIntentMock).toHaveBeenCalledWith('no mention here', '');
   });
 
-  it('resumes the previous review when a resumable review exists on REVIEW_REQUEST', async () => {
+  it('starts an incremental review for an LLM-classified request', async () => {
     classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
-    mocked.getResumableReview.mockResolvedValue({ id: 'existing-review' } as never);
-
-    await executeCommentResponseJob(payload(), env);
-
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token');
-    expect(mocked.triggerReview).toHaveBeenCalledWith(
-      1, 'acme', 'app', 7, 'manual_mention', env,
-      'existing-review', 'del'
-    );
-  });
-
-  it('starts a fresh review when no resumable review exists on REVIEW_REQUEST', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
-    mocked.getResumableReview.mockResolvedValue(null);
-    mocked.addCommentReaction.mockResolvedValue(777);
-
-    await executeCommentResponseJob(payload(), env);
-
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
-    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
-    expect(mocked.triggerReview).toHaveBeenCalledWith(
-      1, 'acme', 'app', 7, 'manual_mention', env,
-      undefined, 'del', 100, 'issue_comment', 777
-    );
-  });
-
-  it('still starts a fresh review when adding the trigger reaction fails (best-effort)', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
-    mocked.getResumableReview.mockResolvedValue(null);
-    mocked.addCommentReaction.mockRejectedValue(new Error('reaction failed'));
 
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.triggerReview).toHaveBeenCalledWith(
-      1, 'acme', 'app', 7, 'manual_mention', env,
-      undefined, 'del', 100, 'issue_comment', undefined
+      {
+        installationId: 1,
+        owner: 'acme',
+        repo: 'app',
+        prNumber: 7,
+        reason: 'manual_mention',
+        requestedMode: 'incremental',
+        githubDeliveryId: 'del',
+        commentId: 100,
+        commentType: 'issue_comment',
+      },
+      env
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, 'On it — starting an incremental review 👀', 'token'
     );
   });
 
-  it('posts a waiting warning when the lock is held and no review is enqueued', async () => {
+  it('parses a canonical full review command without an LLM classification call', async () => {
+    await executeCommentResponseJob(payload({ commentBody: '@PARAKH  FULL   REVIEW!' }), env);
+
+    expect(classifyIntentMock).not.toHaveBeenCalled();
+    expect(mocked.triggerReview).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedMode: 'full' }), env
+    );
+  });
+
+  it('reports that an identical review is already active', async () => {
     classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
-    mocked.getResumableReview.mockResolvedValue(null);
-    mocked.triggerReview.mockResolvedValue(false);
+    mocked.triggerReview.mockResolvedValue('ALREADY_ACTIVE');
 
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
+      'acme', 'app', 7, 'A review for this commit and mode is already in progress.', 'token'
     );
-    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
+  });
+
+  it('explains how to retry when another commit or mode is active', async () => {
+    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    mocked.triggerReview.mockResolvedValue('BUSY');
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('@parakh full review'), 'token'
+    );
   });
 
   it('saves CORRECTION intents as active rules and confirms', async () => {
