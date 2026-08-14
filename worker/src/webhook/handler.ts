@@ -12,8 +12,7 @@ import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import type { Env } from '../index.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
-import { REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
+import { createRedisGet, createRedisSet, createRedisDel } from '../redis.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -94,14 +93,16 @@ export async function handleWebhookEvent(
 async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: Env, _ctx?: ExecutionContext): Promise<HandlerResult> {
   const { action, installation, repository, pull_request } = event;
 
-  // Review checkpoints are scoped by review ID, so a push cannot contaminate
-  // an in-flight pinned review and does not require broad Redis deletion.
+  // Handle synchronize separately — clear stale state but don't auto-review
   if (action === 'synchronize') {
     if (!installation?.id || !repository || !pull_request) {
       return { status: 400, body: 'missing required fields' };
     }
-    console.log(`[webhook] synchronize: manual review required for ${repository.full_name}#${pull_request.number}`);
-    return { status: 200, body: 'manual review required' };
+    const fullRepo = repository.full_name;
+    const redisDel = createRedisDel(env);
+    await redisDel(`pr_review_state:${fullRepo}:${pull_request.number}`);
+    console.log(`[webhook] synchronize: cleared stale review state for ${fullRepo}#${pull_request.number}`);
+    return { status: 200, body: 'cleared stale review state' };
   }
 
   if (!['opened', 'reopened'].includes(action)) {
@@ -150,9 +151,6 @@ async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: E
       github_delivery_id: deliveryId,
       head_sha: pull_request.head?.sha ?? null,
       base_sha: pull_request.base?.sha ?? null,
-      requested_review_mode: 'full',
-      effective_review_mode: 'full',
-      pipeline_version: REVIEW_PIPELINE_VERSION,
     },
     env
   );
@@ -165,8 +163,6 @@ async function handlePullRequest(event: WebhookEvent, deliveryId: string, env: E
     repo,
     prNumber,
     reviewId: review.id,
-    requestedMode: 'full',
-    effectiveMode: 'full',
   };
 
   // Run asynchronously via Queue (removes strict edge timeout limit)
