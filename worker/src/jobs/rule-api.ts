@@ -34,6 +34,9 @@ export async function handleCreateRule(
   if (!request.repo || !request.body) {
     throw new Error('Missing required fields: repo, body');
   }
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(request.repo)) {
+    throw new Error(`Malformed repo: ${request.repo}`);
+  }
 
   // Embeddings and priority classification both route through the LLM client
   // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini

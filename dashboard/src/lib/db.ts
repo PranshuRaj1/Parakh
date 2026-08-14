@@ -49,6 +49,20 @@ export async function getDashboardReviews(repo: string, limit = 50): Promise<Rev
   return rows as unknown as Review[];
 }
 
+export async function getRecentReviews(repos: string[], limit = 5): Promise<Review[]> {
+  if (repos.length === 0) return [];
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, repo, pr_number, score, findings, seen_reaction_id,
+           verdict_reaction_id, status, created_at
+    FROM reviews
+    WHERE repo = ANY(${repos})
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows as unknown as Review[];
+}
+
 export async function getReview(id: string): Promise<Review | null> {
   const sql = getSql();
   const rows = await sql`

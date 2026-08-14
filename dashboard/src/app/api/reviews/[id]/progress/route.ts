@@ -2,9 +2,11 @@ import { NextResponse } from 'next/server';
 import { getReview, getActiveStepEvent, getLatestReviewingFilesDetail } from '@/lib/db';
 import { computeEta } from '@/lib/eta';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { requireRepoPermission } from '@/lib/repo-auth';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -12,6 +14,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   const review = await getReview(id);
   if (!review) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!(await requireRepoPermission(review.repo, 'read', session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const eta = review.status === 'RUNNING' ? await computeEta(id, review.repo) : null;
 

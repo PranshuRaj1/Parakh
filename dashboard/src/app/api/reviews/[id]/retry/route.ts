@@ -1,13 +1,25 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { requireRepoPermission } from '@/lib/repo-auth';
+import { getReview } from '@/lib/db';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { id } = await params;
+
+  const review = await getReview(id);
+  if (!review) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
+  if (!(await requireRepoPermission(review.repo, 'write', session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const workerUrl = process.env.WORKER_API_URL;
   const workerSecret = process.env.WORKER_API_SECRET;
 

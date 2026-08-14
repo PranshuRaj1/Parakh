@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getReview, getStepEventsForReview } from '@/lib/db';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { requireRepoPermission } from '@/lib/repo-auth';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -15,6 +17,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     review = await getReview(id);
     if (!review || review.status !== 'FAILED') {
       return NextResponse.json({ error: 'not failed' }, { status: 404 });
+    }
+    if (!(await requireRepoPermission(review.repo, 'read', session))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     stepRows = await getStepEventsForReview(id);
   } catch (err) {

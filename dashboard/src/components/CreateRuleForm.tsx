@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
-export default function CreateRuleForm({ repo }: { repo: string }) {
+export default function CreateRuleForm({ repo, canManage = true }: { repo: string; canManage?: boolean }) {
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<'high' | 'normal' | ''>('');
   const [loading, setLoading] = useState(false);
@@ -37,11 +37,19 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
       // In a real app we'd mutate SWR or call a router.refresh() here.
       // For now we'll just reload the page to see the new rule.
       window.location.reload();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create rule');
     } finally {
       setLoading(false);
     }
+  }
+
+  if (!canManage) {
+    return (
+      <p className="font-dm-sans text-sm text-[#c0c9c0]">
+        You need write access to this repository to create rules.
+      </p>
+    );
   }
 
   return (
@@ -69,7 +77,7 @@ export default function CreateRuleForm({ repo }: { repo: string }) {
           <select
             id="priority"
             value={priority}
-            onChange={(e) => setPriority(e.target.value as any)}
+            onChange={(e) => setPriority(e.target.value as 'high' | 'normal' | '')}
             className="w-full bg-[#000000] border border-white/20 rounded-md px-3 py-2 text-white focus:outline-none focus:border-[#00FF8C] focus:ring-1 focus:ring-[#00FF8C] transition-all font-dm-sans"
           >
             <option value="">Auto-detect via AI</option>

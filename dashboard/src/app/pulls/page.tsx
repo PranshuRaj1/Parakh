@@ -1,29 +1,36 @@
 import { getDashboardReviews } from '@/lib/db';
 import { getServerSession } from 'next-auth';
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import { CheckCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
 import type { Review } from '@parakh/shared';
+import { authOptions } from '@/lib/auth';
+import { getUserRepos } from '@/lib/repo-auth';
 
 export default async function PullsPage({
   searchParams,
 }: {
   searchParams: Promise<{ repo?: string }>
 }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect('/');
 
+  const repos = session.accessToken ? await getUserRepos(session.accessToken) : [];
   const params = await searchParams;
-  const repo = params.repo || 'PranshuRaj1/Parakh'; // Default for demo
+  const requested = params.repo;
+  const selected = repos.find((r) => r.toLowerCase() === requested?.toLowerCase()) ?? repos[0] ?? null;
+  if (requested && !selected) notFound();
 
   let reviews: Review[] = [];
   let dbError = false;
 
-  try {
-    reviews = await getDashboardReviews(repo, 50); // Get latest 50 reviews
-  } catch (e) {
-    console.error(e);
-    dbError = true;
+  if (selected) {
+    try {
+      reviews = await getDashboardReviews(selected, 50); // Get latest 50 reviews
+    } catch (e) {
+      console.error(e);
+      dbError = true;
+    }
   }
 
   return (
@@ -32,24 +39,30 @@ export default async function PullsPage({
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-white font-anybody">Pull Requests</h1>
           <p className="mt-2 text-sm text-[#c0c9c0] font-dm-sans">
-            Recent reviews for <strong className="font-semibold text-white">{repo}</strong>
+            Recent reviews for {selected ? <strong className="font-semibold text-white">{selected}</strong> : 'your repositories'}
           </p>
         </div>
         <form className="flex gap-2" method="GET">
-          <input
-            type="text"
+          <select
             name="repo"
-            defaultValue={repo}
-            placeholder="owner/repo"
+            defaultValue={selected ?? ''}
+            disabled={repos.length === 0}
+            aria-label="Repository"
             className="rounded-md border border-[#2a2a2a] bg-[#131313] text-white shadow-sm focus:border-[#00FF8C] focus:ring-[#00FF8C] focus:outline-none sm:text-sm p-2 transition-all font-space-mono"
-          />
+          >
+            {repos.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
           <button type="submit" className="px-4 py-2 bg-[#3D3B4F] text-white rounded-md text-sm font-bold font-space-mono hover:brightness-110 transition-colors">
             Switch
           </button>
         </form>
       </div>
 
-      {dbError ? (
+      {!selected ? (
+        <div className="glass-card rounded-xl p-6 text-center border-white/10">
+          <p className="font-dm-sans text-[#c0c9c0]">No accessible repositories found. Grant the dashboard read access to your repositories and try again.</p>
+        </div>
+      ) : dbError ? (
         <div className="bg-[#93000a]/20 text-[#ffb4ab] p-4 rounded-xl border border-[#93000a] font-dm-sans">
           Failed to connect to the database. Make sure DATABASE_URL is set in .env.local.
         </div>
@@ -81,7 +94,7 @@ export default async function PullsPage({
                         </div>
                         <div>
                           <a 
-                            href={`/pulls/${repo}/${review.pr_number}`} 
+                            href={`/pulls/${review.repo}/${review.pr_number}`} 
                             className="text-lg font-medium text-white hover:text-[#00FF8C] transition-colors font-anybody"
                           >
                             PR #{review.pr_number}

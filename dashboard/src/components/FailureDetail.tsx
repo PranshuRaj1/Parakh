@@ -31,7 +31,7 @@ interface FailureData {
   timeline: ReviewStepEvent[];
 }
 
-export function FailureDetail({ reviewId }: { reviewId: string }) {
+export function FailureDetail({ reviewId, canManage = true }: { reviewId: string; canManage?: boolean }) {
   const [data, setData] = useState<FailureData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -60,7 +60,7 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
       } else {
         alert('Failed to retry review.');
       }
-    } catch (e) {
+    } catch {
       alert('Error triggering retry.');
     } finally {
       setIsRetrying(false);
@@ -74,7 +74,7 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
   if (!data) return null;
 
   return (
-    <div className="glass-card rounded-xl overflow-hidden max-w-4xl mx-auto mt-8">
+    <div className="glass-card rounded-xl overflow-hidden max-w-4xl mx-auto mt-4">
       <div className="p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-start">
@@ -86,14 +86,16 @@ export function FailureDetail({ reviewId }: { reviewId: string }) {
               </p>
             </div>
           </div>
-          <button
-            onClick={handleRetry}
-            disabled={isRetrying}
-            className="flex items-center px-4 py-2 bg-[#93000a] hover:bg-[#93000a]/80 text-white text-sm font-medium rounded-md shadow-sm disabled:opacity-50 transition-colors"
-          >
-            <RefreshCcw className={`h-4 w-4 mr-2 ${isRetrying ? 'animate-spin' : ''}`} />
-            {isRetrying ? 'Retrying...' : 'Retry Pipeline'}
-          </button>
+          {canManage && (
+            <button
+              onClick={handleRetry}
+              disabled={isRetrying}
+              className="flex items-center px-4 py-2 bg-[#93000a] hover:bg-[#93000a]/80 text-white text-sm font-medium rounded-md shadow-sm disabled:opacity-50 transition-colors"
+            >
+              <RefreshCcw className={`h-4 w-4 mr-2 ${isRetrying ? 'animate-spin' : ''}`} />
+              {isRetrying ? 'Retrying...' : 'Retry Pipeline'}
+            </button>
+          )}
         </div>
 
         <div className="mt-6 bg-[#131313] rounded-md border border-white/10 p-4 shadow-sm">
