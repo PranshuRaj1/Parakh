@@ -1,8 +1,11 @@
 /**
  * Threaded reply to a plain PR/issue conversation comment.
  *
- * Uses GraphQL addCommentReply — the REST Create-issue-comment in_reply_to_id
- * parameter was removed by GitHub, so REST replies always land flat.
+ * Preferred: GraphQL addCommentReply (threads the reply under the parent
+ * comment). REST Create-issue-comment in_reply_to_id was removed by GitHub,
+ * so REST replies land flat. addCommentReply itself was briefly available and
+ * then rolled back (Aug 2026); when the mutation is absent this module falls
+ * back to a flat issue comment so the bot never loses a reply.
  *
  * This module is self-contained (duplicate fetch/signal logic from api.ts)
  * so it stays independent of the REST client module.
@@ -46,9 +49,10 @@ export async function replyToIssueComment(
   if (!parentRes.ok) {
     throw new Error(`GitHub API error (${parentRes.status}) GET comment ${commentId}: ${await parentRes.text()}`);
   }
-  const parent = (await parentRes.json()) as { node_id?: string };
-  if (!parent.node_id) {
-    throw new Error(`GitHub API error: comment ${commentId} has no node_id`);
+  const parent = (await parentRes.json()) as { node_id?: string; issue_url?: string };
+  const parentIssueNumber = Number(parent.issue_url?.split('/').pop() ?? '');
+  if (!parent.node_id || Number.isNaN(parentIssueNumber)) {
+    throw new Error(`GitHub API error: comment ${commentId} is missing node_id or issue_url`);
   }
 
   // 2. Create the threaded reply via GraphQL addCommentReply.
@@ -67,10 +71,26 @@ export async function replyToIssueComment(
     data?: { addCommentReply?: { reply?: { databaseId?: number } } };
     errors?: Array<{ message?: string }>;
   };
-  if (!replyRes.ok || !payload.data?.addCommentReply?.reply?.databaseId) {
-    const message = payload.errors?.map((e) => e.message).join('; ') ?? `HTTP ${replyRes.status}`;
-    throw new Error(`GitHub GraphQL addCommentReply failed: ${message}`);
+  const replyId = payload.data?.addCommentReply?.reply?.databaseId;
+  if (replyRes.ok && replyId) {
+    return { id: replyId };
   }
 
-  return { id: payload.data.addCommentReply.reply.databaseId };
+  // Fallback: GitHub occasionally removes/rolls back the addCommentReply
+  // mutation (it did in Aug 2026, taking IssueComment.isReply/replyTo with it).
+  // Rather than losing the reply entirely, post a flat issue comment. When the
+  // mutation is available again the reply automatically nests under the parent.
+  const flatRes = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${parentIssueNumber}/comments`,
+    {
+      method: 'POST',
+      headers: headers(token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ body }),
+      signal: createRequestSignal(),
+    }
+  );
+  if (!flatRes.ok) {
+    throw new Error(`GitHub API error (${flatRes.status}) POST flat reply: ${await flatRes.text()}`);
+  }
+  return (await flatRes.json()) as { id: number };
 }
