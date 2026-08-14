@@ -46,10 +46,9 @@ vi.mock('../github/api.js', () => ({
 
 vi.mock('../db/reviews.js', () => ({
   getRepoSettings: vi.fn(),
-  getActiveReviewByPR: vi.fn(),
+  getResumableReview: vi.fn(),
   insertReview: vi.fn(),
   updateReviewShaPin: vi.fn(),
-  updateReviewCompatibilityMetadata: vi.fn(),
   updateReviewReactions: vi.fn(),
   setTriggerCommentContext: vi.fn(),
   updateTriggerCommentReactionId: vi.fn(),
