@@ -30,6 +30,7 @@ interface WebhookEvent {
     id: number;
     body: string;
     user: { login: string; id: number };
+    author_association: string;
     in_reply_to_id?: number;
   };
   issue?: {
@@ -218,6 +219,8 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'issue_comment',
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
     githubDeliveryId: deliveryId,
   };
 
@@ -266,6 +269,8 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'pull_request_review_comment',
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
     githubDeliveryId: deliveryId,
   };
 

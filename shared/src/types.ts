@@ -3,7 +3,7 @@
 export type ReviewMode = 'full' | 'incremental';
 
 /** Rule lifecycle status. SUGGESTED is cut from v1 — named future extension for auto-suggestion. */
-export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
+export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE' | 'PENDING';
 
 /** Rule priority — determines severity weight for violations. */
 export type RulePriority = 'high' | 'normal';
@@ -48,6 +48,8 @@ export interface Rule {
   supersedes: string | null;
   superseded_by: string | null;
   source_pr: number | null;
+  /** Login of the user who created this rule (null for dashboard-created rules). */
+  created_by: string | null;
   /** Number of individual violation instances across reviews. Incremented per-finding, not per-review. */
   evidence_count: number;
   /** Number of duplicate correction attempts (DUPLICATE branch in contradiction engine). */
@@ -207,6 +209,8 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
+  authorAssociation: string;
+  authorLogin: string;
   githubDeliveryId: string;
 }
 

@@ -100,3 +100,43 @@ export async function handleCreateRule(
     contradictionCheckEnqueued: true,
   };
 }
+
+/**
+ * Approve a PENDING rule (change status to ACTIVE).
+ */
+export async function handleApproveRule(ruleId: string, env: Env): Promise<void> {
+  const { getDb } = await import('../db/client.js');
+  const sql = getDb(env.DATABASE_URL);
+  
+  const rows = await sql`
+    UPDATE rules SET status = 'ACTIVE'
+    WHERE id = ${ruleId} AND status = 'PENDING'
+    RETURNING id
+  `;
+  
+  if (rows.length === 0) {
+    throw new Error(`Rule ${ruleId} not found or not in PENDING status`);
+  }
+  
+  console.log(`[rule-api] Approved rule ${ruleId}`);
+}
+
+/**
+ * Reject a PENDING rule (change status to INACTIVE).
+ */
+export async function handleRejectRule(ruleId: string, env: Env): Promise<void> {
+  const { getDb } = await import('../db/client.js');
+  const sql = getDb(env.DATABASE_URL);
+  
+  const rows = await sql`
+    UPDATE rules SET status = 'INACTIVE'
+    WHERE id = ${ruleId} AND status = 'PENDING'
+    RETURNING id
+  `;
+  
+  if (rows.length === 0) {
+    throw new Error(`Rule ${ruleId} not found or not in PENDING status`);
+  }
+  
+  console.log(`[rule-api] Rejected rule ${ruleId}`);
+}

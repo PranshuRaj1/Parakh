@@ -6,8 +6,52 @@ import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
-import { saveCorrectionAsRule } from './correction.js';
+import { saveCorrectionAsRule, isInstructionRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
+
+// ─── Authorization Helpers ─────────────────────────────────────────────────────
+
+type TrustLevel = 'admin' | 'write' | 'read' | 'none';
+
+function resolveTrustLevel(association: string): TrustLevel {
+  switch (association) {
+    case 'OWNER':
+    case 'MEMBER':
+      return 'admin';
+    case 'COLLABORATOR':
+      return 'write';
+    case 'CONTRIBUTOR':
+      return 'read';
+    default:
+      return 'none';
+  }
+}
+
+const RATE_LIMITS: Record<string, { max: number; windowSeconds: number }> = {
+  REVIEW_REQUEST: { max: 10, windowSeconds: 3600 },
+  CORRECTION: { max: 5, windowSeconds: 3600 },
+};
+
+async function checkRateLimit(
+  intent: string,
+  authorLogin: string,
+  fullRepo: string,
+  env: Env
+): Promise<{ allowed: boolean; remaining: number }> {
+  const limit = RATE_LIMITS[intent];
+  if (!limit) return { allowed: true, remaining: Infinity };
+
+  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+  const key = `ratelimit:${intent}:${fullRepo}:${authorLogin}`;
+  const current = parseInt((await redis.get(key)) ?? '0', 10);
+
+  if (current >= limit.max) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  await redis.set(key, String(current + 1), { ex: limit.windowSeconds });
+  return { allowed: true, remaining: limit.max - current - 1 };
+}
 
 /**
  * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
@@ -29,6 +73,8 @@ export async function executeCommentResponseJob(
     commentId,
     commentBody,
     commentType,
+    authorAssociation,
+    authorLogin,
     githubDeliveryId,
   } = payload;
 
@@ -70,6 +116,43 @@ export async function executeCommentResponseJob(
   const intent = await llm.classifyIntent(commentBody, parentBotComment);
 
   console.log(`[comment-response] Classified intent: ${intent}`);
+
+  // ── Rate limit check ──
+  const { allowed } = await checkRateLimit(intent, authorLogin, fullRepo, env);
+  if (!allowed) {
+    console.log(`[comment-response] Rate limited: ${authorLogin} on ${fullRepo}`);
+    await postReply(`⚠️ Rate limit reached for ${intent.replace('_', ' ').toLowerCase()} commands. Try again later.`);
+    return;
+  }
+
+  // ── Authorization gate ──
+  const trust = resolveTrustLevel(authorAssociation);
+
+  if (intent === 'REVIEW_REQUEST' && trust === 'none') {
+    await postReply(
+      "⚠️ You need repository write access to trigger a review. " +
+      "Only repository owners, members, and collaborators can request reviews."
+    );
+    return;
+  }
+
+  if (intent === 'CORRECTION') {
+    if (trust === 'none' || trust === 'read') {
+      await postReply(
+        "⚠️ You need repository write access to create rules. " +
+        "Only repository owners, members, and collaborators can persist corrections."
+      );
+      return;
+    }
+
+    if (trust === 'write' && isInstructionRule(commentBody)) {
+      await postReply(
+        "⚠️ Only repository **owners** and **members** can create suppression rules. " +
+        "Your correction has been noted but not persisted as a rule."
+      );
+      return;
+    }
+  }
 
   switch (intent) {
     case 'REVIEW_REQUEST': {
@@ -118,13 +201,18 @@ export async function executeCommentResponseJob(
 
     case 'CORRECTION': {
       try {
+        const initialStatus = trust === 'write' ? 'PENDING' : 'ACTIVE';
         const rule = await saveCorrectionAsRule(
-          { installationId, owner, repo, prNumber, commentBody },
+          { installationId, owner, repo, prNumber, commentBody, createdBy: authorLogin, initialStatus },
           env
         );
         if (rule.kind === 'instruction') {
           await postReply(
             `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`
+          );
+        } else if (rule.status === 'PENDING') {
+          await postReply(
+            `⏳ **Saved as pending** — your rule *${rule.body}* needs approval from a repository owner/member before it takes effect.`
           );
         } else {
           const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
