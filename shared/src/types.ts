@@ -1,5 +1,7 @@
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
+export type ReviewMode = 'full' | 'incremental';
+
 /** Rule lifecycle status. SUGGESTED is cut from v1 — named future extension for auto-suggestion. */
 export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
 
