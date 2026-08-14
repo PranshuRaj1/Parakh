@@ -21,11 +21,6 @@ export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 /** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with stage tracking. */
 export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_DAILY_QUOTA';
 
-/** Requested and effective review scope. Incremental requests fall back to full until rollout. */
-export type ReviewMode = 'incremental' | 'full';
-
-export type ReviewTriggerResult = 'ENQUEUED' | 'RESUMED' | 'ALREADY_ACTIVE' | 'BUSY';
-
 export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADING_RULES' | 'REVIEWING_FILES' | 'SCORING' | 'POSTING_COMMENT' | 'REACTING';
 
 export type StageReasonCode = 'PROCESSING' | 'RATE_LIMITED_BACKOFF' | 'RETRYING_AFTER_FAILURE' | 'WAITING_ON_GEMINI' | 'WAITING_ON_GITHUB_API' | 'RETRY_QUEUED';
@@ -199,8 +194,6 @@ export interface ReviewJobPayload {
   repo: string;
   prNumber: number;
   reviewId: string;
-  requestedMode: ReviewMode;
-  effectiveMode: ReviewMode;
 }
 
 export interface CommentJobPayload {

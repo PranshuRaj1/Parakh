@@ -99,7 +99,6 @@ import {
   getReviewRetryDelaySeconds,
 } from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
-import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
@@ -444,15 +443,11 @@ export function formatReviewComment(
 
 // ─── Redis State Types & Helpers ─────────────────────────────────────────────
 
-const REVIEW_STATE_KEY = (repo: string, pr: number, reviewId: string) =>
-  `pr_review_state:${repo}:${pr}:${reviewId}`;
+const REVIEW_STATE_KEY = (repo: string, pr: number) => `pr_review_state:${repo}:${pr}`;
 const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:${pr}`;
-const REVIEW_ENQUEUE_LOCK_KEY = (repo: string, pr: number) => `pr_review_enqueue_lock:${repo}:${pr}`;
 
 interface ReviewState {
   reviewId: string;
-  requestedMode: ReviewMode;
-  effectiveMode: ReviewMode;
   allFiles: string[];
   completedFiles: string[];
   accumulatedFindings: Finding[];
@@ -465,13 +460,13 @@ interface ReviewState {
   terminalFailedFiles: string[];
 }
 
-async function loadReviewState(repo: string, prNumber: number, reviewId: string, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
-  const raw = await redisGet(REVIEW_STATE_KEY(repo, prNumber, reviewId));
+async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
+  const raw = await redisGet(REVIEW_STATE_KEY(repo, prNumber));
   return raw ? JSON.parse(raw) as ReviewState : null;
 }
 
 async function saveReviewState(repo: string, prNumber: number, state: ReviewState, redisSet: (key: string, value: string, opts?: { ex?: number }) => Promise<unknown>): Promise<void> {
-  await redisSet(REVIEW_STATE_KEY(repo, prNumber, state.reviewId), JSON.stringify(state), { ex: REVIEW_STATE_TTL_SECONDS });
+  await redisSet(REVIEW_STATE_KEY(repo, prNumber), JSON.stringify(state), { ex: REVIEW_STATE_TTL_SECONDS });
 }
 
 async function acquireReviewLock(repo: string, prNumber: number, env: Env): Promise<boolean> {
@@ -635,93 +630,52 @@ async function reviewSingleFile(
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
 
-export interface TriggerReviewInput {
-  installationId: number;
-  owner: string;
-  repo: string;
-  prNumber: number;
-  reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry';
-  requestedMode: ReviewMode;
-  resumeReviewId?: string;
-  githubDeliveryId?: string;
-  commentId?: number;
-  commentType?: 'issue_comment' | 'pull_request_review_comment';
-}
-
-function isStaleActiveReview(review: Review): boolean {
-  if (review.status !== 'RUNNING') return false;
-  if (!review.worker_heartbeat_at) return true;
-  return Date.now() - new Date(review.worker_heartbeat_at).getTime()
-    >= REVIEW_LOCK_TTL_SECONDS * 1000;
-}
-
 export async function triggerReview(
-  input: TriggerReviewInput,
-  env: Env
-): Promise<ReviewTriggerResult> {
-  const {
-    installationId,
-    owner,
-    repo,
-    prNumber,
-    reason,
-    requestedMode,
-    resumeReviewId,
-    githubDeliveryId,
-    commentId,
-    commentType,
-  } = input;
+  installationId: number,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  reason: 'opened' | 'synchronize' | 'manual_mention' | 'auto_retry',
+  env: Env,
+  resumeReviewId?: string,
+  githubDeliveryId?: string,
+  commentId?: number,
+  commentType?: 'issue_comment' | 'pull_request_review_comment',
+  commentReactionId?: number
+): Promise<boolean> {
   const fullRepo = `${owner}/${repo}`;
-  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
-  const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
-  const details = await getPRDetails(owner, repo, prNumber, token);
-  const headSha = details.head.sha;
-  const baseSha = details.base.sha;
-  const enqueueLockKey = REVIEW_ENQUEUE_LOCK_KEY(fullRepo, prNumber);
-  const enqueueIdentity = JSON.stringify({ headSha, requestedMode });
 
-  // Enqueue serialization is separate from the long-running execution lock.
-  // Its value identifies an identical racing request so the caller can return
-  // ALREADY_ACTIVE instead of an inaccurate generic BUSY response.
-  const setNX = createRedisSetNX(env);
-  const locked = await setNX(enqueueLockKey, enqueueIdentity, 30);
+  // Pre-enqueue dedupe: never create two REVIEW jobs for the same PR at once.
+  // The authoritative guard lives in executeReviewJobInternal (execution-time
+  // acquire), so this lock is held only until the message is enqueued.
+  const locked = await acquireReviewLock(fullRepo, prNumber, env);
   if (!locked) {
-    const activeIdentity = await redis.get(enqueueLockKey);
-    return activeIdentity === enqueueIdentity ? 'ALREADY_ACTIVE' : 'BUSY';
+    console.log(`[review] Skipping — review already in-flight for ${fullRepo}#${prNumber}`);
+    return false;
   }
 
   let reviewId: string;
-  let triggerResult: ReviewTriggerResult = 'ENQUEUED';
   try {
-    if (resumeReviewId) {
-      const resumable = await getReview(resumeReviewId, env);
-      if (!resumable) throw new Error(`Cannot resume missing review ${resumeReviewId}`);
-      const resumableMode = resumable.requested_review_mode ?? 'full';
-      if (resumable.head_sha !== headSha || resumableMode !== requestedMode) return 'BUSY';
+    const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+    const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-      reviewId = resumeReviewId;
-      triggerResult = 'RESUMED';
-      await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
-    } else {
-      // The lock serializes this recheck with insertion. Two near-simultaneous
-      // comments can otherwise both observe no active review before enqueueing.
-      const active = await getActiveReviewByPR(fullRepo, prNumber, env);
-      if (active) {
-        const activeMode = active.requested_review_mode ?? 'full';
-        const sameRequest = active.head_sha === headSha && activeMode === requestedMode;
-        if (!sameRequest) return 'BUSY';
-        if (!isStaleActiveReview(active)) return 'ALREADY_ACTIVE';
-
-        reviewId = active.id;
-        triggerResult = 'RESUMED';
-        await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
-      } else {
-        reviewId = '';
+    // Capture the SHA pin (head/base) so the reviewed diff is immutable for
+    // the whole run, regardless of later pushes. Best-effort: if this fails,
+    // executeReviewJobInternal re-captures it as a fallback.
+    let headSha: string | null = null;
+    let baseSha: string | null = null;
+    if (!resumeReviewId) {
+      try {
+        const details = await getPRDetails(owner, repo, prNumber, token);
+        headSha = details.head?.sha ?? null;
+        baseSha = details.base?.sha ?? null;
+      } catch (err) {
+        console.warn(`[review] Failed to capture SHA pin for ${fullRepo}#${prNumber}:`, err);
       }
     }
 
     // Clean up previous verdict reaction ONLY on genuinely fresh triggers.
-    if (triggerResult === 'ENQUEUED') {
+    if (!resumeReviewId) {
       const previousReview = await getLatestReviewByPR(fullRepo, prNumber, env);
       if (previousReview?.verdict_reaction_id) {
         try {
@@ -732,7 +686,10 @@ export async function triggerReview(
       }
     }
 
-    if (triggerResult === 'ENQUEUED') {
+    if (resumeReviewId) {
+      reviewId = resumeReviewId;
+      await updateReviewStatus(reviewId, 'QUEUED', env, githubDeliveryId);
+    } else {
       // Best-effort: a reaction failure must NOT crash triggerReview — the
       // queue job would retry endlessly without ever enqueueing the review.
       let seenReactionId: number | null = null;
@@ -759,22 +716,15 @@ export async function triggerReview(
         github_delivery_id: githubDeliveryId,
         head_sha: headSha,
         base_sha: baseSha,
-        requested_review_mode: requestedMode,
-        effective_review_mode: 'full',
-        fallback_reason: requestedMode === 'incremental' ? 'incremental_disabled' : null,
-        pipeline_version: REVIEW_PIPELINE_VERSION,
       }, env);
       reviewId = review.id;
-    }
 
-    if (commentId !== undefined && commentType !== undefined) {
-      let commentReactionId: number | null = null;
-      try {
-        commentReactionId = await addCommentReaction(owner, repo, commentId, commentType, REACTIONS.SEEN, token);
-      } catch (err) {
-        console.warn('[review] Failed to add seen reaction to trigger comment:', err);
+      // manual_mention fresh starts carry the trigger comment (+ its 👀 reaction
+      // id when it was added). Persist so finalizeReview/swap can find them on
+      // the same row.
+      if (commentId !== undefined && commentType !== undefined) {
+        await setTriggerCommentContext(reviewId, commentId, commentType, commentReactionId ?? null, env);
       }
-      await setTriggerCommentContext(reviewId, commentId, commentType, commentReactionId, env);
     }
 
     const payload: ReviewJobPayload = {
@@ -784,16 +734,15 @@ export async function triggerReview(
       repo,
       prNumber,
       reviewId,
-      requestedMode,
-      effectiveMode: 'full',
     };
 
     // We push this to the Queue so it runs asynchronously with proper timeouts!
     await env.WATCHDOG_QUEUE.send(payload);
-    return triggerResult;
+    return true;
   } finally {
-    const del = createRedisDel(env);
-    await del(enqueueLockKey).catch(() => {});
+    // The execution acquires the lock again as its authoritative guard, so we
+    // can release immediately after enqueueing.
+    await releaseReviewLock(fullRepo, prNumber, env).catch(() => {});
   }
 }
 
@@ -961,7 +910,7 @@ async function executeReviewJobInternal(
       }
     }
 
-    let state = await loadReviewState(fullRepo, prNumber, reviewId, redisGet);
+    let state = await loadReviewState(fullRepo, prNumber, redisGet);
 
     currentStage = 'FETCHING_DIFF';
     await startStage(reviewId, 'FETCHING_DIFF', stageAttempt, env);
@@ -979,6 +928,7 @@ async function executeReviewJobInternal(
     ).length;
     metrics.captureInput(fullDiff, fullDiffHash, fullFileChunks.size, fullReviewableFileCount);
     await completeStage(reviewId, 'FETCHING_DIFF', stageAttempt, env, metrics.stageDetail());
+
 
     currentStage = 'LOADING_RULES';
     await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
@@ -1540,7 +1490,7 @@ async function executeReviewJobInternal(
       const review = await getReview(reviewId, env);
       if (review?.status === 'COMPLETED') {
         const redisDel = createRedisDel(env);
-        await redisDel(REVIEW_STATE_KEY(fullRepo, prNumber, reviewId));
+        await redisDel(REVIEW_STATE_KEY(fullRepo, prNumber));
       }
     } catch (err) {
       console.warn('[review] Failed to check/clean review state:', err);

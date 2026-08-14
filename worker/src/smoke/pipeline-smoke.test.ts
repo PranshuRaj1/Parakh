@@ -38,7 +38,6 @@ vi.mock('../github/api.js', () => ({
 vi.mock('../db/reviews.js', () => ({
   insertReview: vi.fn(),
   updateReviewShaPin: vi.fn(),
-  updateReviewCompatibilityMetadata: vi.fn(),
   getRepoSettings: vi.fn(),
   updateReviewReactions: vi.fn(),
   setTriggerCommentContext: vi.fn(),
@@ -49,7 +48,7 @@ vi.mock('../db/reviews.js', () => ({
   getRecentReviews: vi.fn(),
   getReviewsByPR: vi.fn(),
   getReview: vi.fn(),
-  getActiveReviewByPR: vi.fn(),
+  getResumableReview: vi.fn(),
   dbStartStage: vi.fn(),
   dbCompleteStage: vi.fn(),
   dbFailStage: vi.fn(),
@@ -112,7 +111,7 @@ import { handleWebhookEvent } from '../webhook/handler.js';
 import { buildIntentPrompt } from '../gemini/prompts.js';
 import { getCachedToken } from '../github/auth.js';
 import { postComment, addReaction, getPRDetails, addCommentReaction } from '../github/api.js';
-import { insertReview, getLatestReviewByPR, getActiveReviewByPR, getRepoSettings } from '../db/reviews.js';
+import { insertReview, getLatestReviewByPR, getResumableReview, getRepoSettings } from '../db/reviews.js';
 import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet } from '../redis.js';
 
 const mocked = {
@@ -123,7 +122,7 @@ const mocked = {
   addCommentReaction: vi.mocked(addCommentReaction),
   insertReview: vi.mocked(insertReview),
   getLatestReviewByPR: vi.mocked(getLatestReviewByPR),
-  getActiveReviewByPR: vi.mocked(getActiveReviewByPR),
+  getResumableReview: vi.mocked(getResumableReview),
   getRepoSettings: vi.mocked(getRepoSettings),
   createRedisSetNX: vi.mocked(createRedisSetNX),
   createRedisDel: vi.mocked(createRedisDel),
@@ -220,7 +219,6 @@ function setupReviewLeaves() {
     base: { sha: 'def456' },
   } as never);
   mocked.getLatestReviewByPR.mockResolvedValue(null as never);
-  mocked.getActiveReviewByPR.mockResolvedValue(null as never);
   mocked.insertReview.mockResolvedValue({ id: 'review-1' } as never);
 }
 
@@ -320,11 +318,11 @@ describe('queue → comment-response → triggerReview wiring', () => {
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
-    expect(classifyIntentMock).not.toHaveBeenCalled();
+    expect(classifyIntentMock).toHaveBeenCalledWith('@parakh review', '');
     // triggerReview must have actually enqueued a REVIEW job.
     expect(mocked.insertReview).toHaveBeenCalled();
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'On it — starting an incremental review 👀', 'token'
+      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token'
     );
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -349,7 +347,7 @@ describe('queue → comment-response → triggerReview wiring', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'REVIEW', prNumber: 7, reviewId: 'review-1' });
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'On it — starting an incremental review 👀', 'token'
+      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token'
     );
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
     expect(batch.messages[0].ack).toHaveBeenCalled();
@@ -369,7 +367,7 @@ describe('queue → comment-response → triggerReview wiring', () => {
     expect(mocked.insertReview).toHaveBeenCalled();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'REVIEW' });
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — starting an incremental review 👀', 'token');
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
   });
 
   it('does NOT trigger or reply for GENERAL intent (silent by design)', async () => {
@@ -406,24 +404,19 @@ describe('queue → comment-response → triggerReview wiring', () => {
 // ─── Re-requesting a review ─────────────────────────────────────────────────
 
 describe('re-request path (@parakh review on an existing review)', () => {
-  it('reports an identical active review without enqueueing another row', async () => {
-    mocked.getActiveReviewByPR.mockResolvedValue({
-      id: 'existing-review',
-      status: 'QUEUED',
-      head_sha: 'abc123',
-      requested_review_mode: 'incremental',
-    } as never);
+  it('resumes a resumable review rather than starting a new one', async () => {
+    mocked.getResumableReview.mockResolvedValue({ id: 'existing-review' } as never);
     const env = makeEnv().env;
     const batch = {
       queue: 'watchdog',
-      messages: [makeCommentMessage('@parakh review')],
+      messages: [makeCommentMessage('please review again')],
     } as never;
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
     expect(mocked.insertReview).not.toHaveBeenCalled();
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'A review for this commit and mode is already in progress.', 'token'
+      'acme', 'app', 7, 'On it — resuming the previous review 👀', 'token'
     );
   });
 });

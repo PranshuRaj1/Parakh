@@ -34,7 +34,7 @@ function failedReview(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocked.getReview.mockReset();
-  mocked.triggerReview.mockReset().mockResolvedValue('RESUMED');
+  mocked.triggerReview.mockReset().mockResolvedValue(undefined);
 });
 
 describe('handleRetryReview', () => {
@@ -73,17 +73,8 @@ describe('handleRetryReview', () => {
     expect(res.status).toBe(202);
     await expect(res.json()).resolves.toEqual({ status: 'retry_enqueued' });
     expect(mocked.triggerReview).toHaveBeenCalledWith(
-      {
-        installationId: 1,
-        owner: 'acme',
-        repo: 'app',
-        prNumber: 7,
-        reason: 'manual_mention',
-        requestedMode: 'full',
-        resumeReviewId: 'r1',
-        githubDeliveryId: 'del',
-      },
-      env
+      1, 'acme', 'app', 7, 'manual_mention', env,
+      'r1', 'del'
     );
     expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
   });

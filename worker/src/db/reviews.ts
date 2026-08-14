@@ -34,13 +34,6 @@ export async function insertReview(
     github_delivery_id?: string | null;
     head_sha?: string | null;
     base_sha?: string | null;
-    requested_review_mode?: ReviewMode;
-    effective_review_mode?: ReviewMode;
-    parent_review_id?: string | null;
-    comparison_base_sha?: string | null;
-    fallback_reason?: string | null;
-    active_rules_hash?: string | null;
-    pipeline_version?: string;
   },
   env: EnvWithDB
 ): Promise<Review> {
@@ -48,10 +41,7 @@ export async function insertReview(
   const rows = await sql`
     INSERT INTO reviews (repo, pr_number, installation_id, status, score, findings,
                          seen_reaction_id, trigger_reason, github_delivery_id,
-                         head_sha, base_sha, requested_review_mode,
-                         effective_review_mode, parent_review_id,
-                         comparison_base_sha, fallback_reason, active_rules_hash,
-                         pipeline_version)
+                         head_sha, base_sha)
     VALUES (
       ${review.repo},
       ${review.pr_number},
@@ -63,14 +53,7 @@ export async function insertReview(
       ${review.trigger_reason ?? 'opened'},
       ${review.github_delivery_id ?? null},
       ${review.head_sha ?? null},
-      ${review.base_sha ?? null},
-      ${review.requested_review_mode ?? 'full'},
-      ${review.effective_review_mode ?? 'full'},
-      ${review.parent_review_id ?? null},
-      ${review.comparison_base_sha ?? null},
-      ${review.fallback_reason ?? null},
-      ${review.active_rules_hash ?? null},
-      ${review.pipeline_version ?? '1'}
+      ${review.base_sha ?? null}
     )
     RETURNING *
   `;
@@ -128,7 +111,6 @@ export async function updateReviewIncrementalPlan(
     WHERE id = ${id}
   `;
 }
-
 export async function updateReviewEffectiveMode(
   id: string,
   effectiveMode: ReviewMode,
@@ -143,7 +125,6 @@ export async function updateReviewEffectiveMode(
     WHERE id = ${id}
   `;
 }
-
 // ─── Repo Settings Queries ───────────────────────────────────────────────────
 
 /**
@@ -357,10 +338,11 @@ export async function getReview(
 }
 
 /**
- * Find the latest active review for a PR. Callers compare its pinned head and
- * requested mode while holding the enqueue lock before deciding to resume.
+ * Find the latest non-terminal review for a PR.
+ * Used by REVIEW_REQUEST handler to check for resumable reviews.
+ * Returns reviews in RUNNING or QUEUED status.
  */
-export async function getActiveReviewByPR(
+export async function getResumableReview(
   repo: string,
   prNumber: number,
   env: EnvWithDB
@@ -370,7 +352,7 @@ export async function getActiveReviewByPR(
     SELECT * FROM reviews
     WHERE repo = ${repo}
       AND pr_number = ${prNumber}
-      AND status IN ('RUNNING', 'QUEUED', 'PAUSED_DAILY_QUOTA')
+      AND status IN ('RUNNING', 'QUEUED')
     ORDER BY created_at DESC
     LIMIT 1
   `;
