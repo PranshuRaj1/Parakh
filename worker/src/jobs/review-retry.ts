@@ -26,7 +26,7 @@ export class ReviewFailurePersistenceError extends Error {
   }
 }
 
-const UNEXPECTED_RETRY_DELAYS_SECONDS = [5, 15, 30, 60, 60] as const;
+const UNEXPECTED_RETRY_DELAYS_SECONDS = [5, 15, 30, 60, 60, 120, 120, 300] as const;
 
 export function getUnexpectedRetryDelaySeconds(attempt: number): number | null {
   return UNEXPECTED_RETRY_DELAYS_SECONDS[attempt - 1] ?? null;

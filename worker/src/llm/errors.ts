@@ -99,7 +99,7 @@ export function classifyFetchFailure(provider: string, error: unknown, timeoutMs
 }
 
 export function classifyHttpFailure(provider: string, status: number): Error {
-  if (status === 408 || status === 429 || status === 524 || status >= 500) {
+  if (status === 408 || status === 413 || status === 429 || status === 524 || status >= 500) {
     return new ProviderHealthError(provider, status, `${provider} returned retryable HTTP ${status}`);
   }
   return new Error(`${provider} returned HTTP ${status}`);

@@ -14,7 +14,7 @@ describe('getReviewRetryDelaySeconds', () => {
 });
 
 describe('getUnexpectedRetryDelaySeconds', () => {
-  it('uses the bounded retry schedule and stops after five retries', () => {
-    expect([1, 2, 3, 4, 5, 6].map(getUnexpectedRetryDelaySeconds)).toEqual([5, 15, 30, 60, 60, null]);
+  it('uses the bounded retry schedule and stops after eight retries', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9].map(getUnexpectedRetryDelaySeconds)).toEqual([5, 15, 30, 60, 60, 120, 120, 300, null]);
   });
 });

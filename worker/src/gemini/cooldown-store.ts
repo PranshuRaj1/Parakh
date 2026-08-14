@@ -8,13 +8,16 @@
  *
  * Cooldowns are global (not per-repo): if review A exhausts every Gemini key,
  * review B must also skip them rather than fire 7 doomed requests.
+ *
+ * Redis representation: a single STRING key containing a JSON object where
+ * each key is the key index (as a string) and each value is
+ * `{ until: number, dailyQuota?: boolean }`. This matches the original format
+ * created by the legacy GET/SET implementation and avoids WRONGTYPE errors
+ * against existing STRING-typed keys in production.
  */
 
-/** TTL for the persisted cooldown hash — parked keys stay until cooldowns are stale. */
+/** TTL for the persisted cooldown blob — parked keys stay until cooldowns are stale. */
 export const COOLDOWN_HASH_TTL_SECONDS = 7 * 24 * 60 * 60;
-
-/** Max in-flight Redis writes per flush round — bounds connection usage. */
-const FLUSH_CONCURRENCY = 5;
 
 export interface CooldownEntry {
   /** Epoch-ms timestamp until which the key may not be retried. */
@@ -58,30 +61,29 @@ export class MemoryCooldownStore implements CooldownStore {
 }
 
 /**
- * Redis-backed store. Cooldown state is persisted as ONE Redis hash where each
- * key index is a hash field: `HGETALL` then read once a delivery, HSET/HDEL for
- * the individual keys that actually changed.
+ * Redis-backed store using a single STRING key with JSON serialization.
  *
- * Unlike a single JSON blob, this is NOT a read-modify-write over the whole
- * map: HSET(key){KEY_N} / HDEL(key){KEY_N} are atomic per-field writes, so two
- * workers parking DIFFERENT keys concurrently cannot clobber each other's
- * update. The stale read of the OTHER worker's just-written field is harmless —
- * worst case that key is re-read as not-parked once and retried. Same best-effort
- * semantics as before, minus the whole-map overwrite race.
+ * `load()` reads the whole blob once per delivery; `flush()` writes it back
+ * only when something changed — so a full key pool parked during a storm
+ * costs ONE Redis GET + ONE Redis SET per delivery, not 7.
+ *
+ * Trade-off vs HSET: a full-map write on every flush, but the map is tiny
+ * (≤7 keys for Gemini, ≤3 for Groq) and the SET is atomic so two workers
+ * can't produce a torn write.
  */
 export class RedisCooldownStore extends MemoryCooldownStore {
   private loaded = false;
-  private dirty = new Map<number, CooldownEntry | null>();
+  private dirty = false;
   private loadWarningEmitted = false;
   private flushWarningEmitted = false;
 
   constructor(private readonly options: {
     redisKey: string;
-    redisHGetAll: (key: string) => Promise<Record<string, string> | null>;
-    redisHSet: (key: string, field: string, value: string) => Promise<unknown>;
-    redisHDel: (key: string, field: string) => Promise<unknown>;
-    redisExpire: (key: string, seconds: number) => Promise<unknown>;
+    redisGet: (key: string) => Promise<string | null>;
+    redisSet: (key: string, value: string, opts?: { ex?: number }) => Promise<unknown>;
     ttlSeconds?: number;
+    /** Optional subrequest budget — Redis calls count as subrequests on CF Workers. */
+    budget?: { spend(n?: number): void };
   }) {
     super();
   }
@@ -90,23 +92,22 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     if (this.loaded) return;
     this.loaded = true;
     try {
-      const raw = await this.options.redisHGetAll(this.options.redisKey);
+      this.options.budget?.spend(1);
+      const raw = await this.options.redisGet(this.options.redisKey);
       if (!raw) return;
-      for (const [k, v] of Object.entries(raw)) {
+      const parsed = JSON.parse(raw) as Record<string, { until?: number; dailyQuota?: boolean }>;
+      for (const [k, v] of Object.entries(parsed)) {
         const idx = Number(k);
-        if (!Number.isFinite(idx) || !v) continue;
-        try {
-          const parsed = JSON.parse(v) as { until?: number; dailyQuota?: boolean };
-          if (typeof parsed.until !== 'number') continue;
-          this.entries.set(idx, { until: parsed.until, dailyQuota: !!parsed.dailyQuota });
-        } catch {
-          // skip one corrupt field instead of failing the whole load
-        }
+        if (!Number.isFinite(idx) || !v || typeof v.until !== 'number') continue;
+        this.entries.set(idx, { until: v.until, dailyQuota: !!v.dailyQuota });
       }
     } catch (err) {
       if (!this.loadWarningEmitted) {
         this.loadWarningEmitted = true;
-        console.warn(`[cooldown] Failed to load ${this.options.redisKey}:`, err);
+        console.warn(
+          `[cooldown] Failed to load ${this.options.redisKey}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
   }
@@ -115,44 +116,37 @@ export class RedisCooldownStore extends MemoryCooldownStore {
     const prev = this.entries.get(keyIndex);
     if (prev && prev.until === entry.until && prev.dailyQuota === entry.dailyQuota) return;
     this.entries.set(keyIndex, entry);
-    this.dirty.set(keyIndex, entry);
+    this.dirty = true;
   }
 
   clear(keyIndex: number): void {
-    if (this.entries.delete(keyIndex)) this.dirty.set(keyIndex, null);
+    if (this.entries.delete(keyIndex)) this.dirty = true;
   }
 
   async flush(): Promise<void> {
-    if (this.dirty.size === 0) return;
-    const changes = new Map(this.dirty);
-    this.dirty.clear();
+    if (!this.dirty) return;
+    this.dirty = false;
     try {
-      const apply = ([keyIndex, entry]: [number, CooldownEntry | null]) =>
-        entry === null
-          ? this.options.redisHDel(this.options.redisKey, String(keyIndex))
-          : this.options.redisHSet(
-              this.options.redisKey,
-              String(keyIndex),
-              JSON.stringify({ until: entry.until, dailyQuota: entry.dailyQuota })
-            );
-      const entries = [...changes];
-      // The dirty set is bounded by the number of cooldown key indices, but cap
-      // in-flight Redis fetches so a large batch can't exhaust the connection pool.
-      for (let i = 0; i < entries.length; i += FLUSH_CONCURRENCY) {
-        await Promise.all(entries.slice(i, i + FLUSH_CONCURRENCY).map(apply));
+      this.options.budget?.spend(1);
+      const obj: Record<string, { until: number; dailyQuota: boolean }> = {};
+      for (const [k, v] of this.entries) {
+        obj[k] = { until: v.until, dailyQuota: v.dailyQuota };
       }
-      await this.options.redisExpire(this.options.redisKey, this.options.ttlSeconds ?? COOLDOWN_HASH_TTL_SECONDS);
+      await this.options.redisSet(
+        this.options.redisKey,
+        JSON.stringify(obj),
+        { ex: this.options.ttlSeconds ?? COOLDOWN_HASH_TTL_SECONDS }
+      );
     } catch (err) {
       if (!this.flushWarningEmitted) {
         this.flushWarningEmitted = true;
-        console.warn(`[cooldown] Failed to flush ${this.options.redisKey}:`, err);
+        console.warn(
+          `[cooldown] Failed to flush ${this.options.redisKey}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+        );
       }
-      // Restore only keys that have NOT been updated (park/clear) while the
-      // async flush was in flight — a newer dirty entry must win over the
-      // snapshot we just failed to persist.
-      for (const [k, v] of changes) {
-        if (!this.dirty.has(k)) this.dirty.set(k, v);
-      }
+      // Restore dirty flag so next flush retries the write.
+      this.dirty = true;
     }
   }
 }

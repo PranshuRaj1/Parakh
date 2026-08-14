@@ -1314,7 +1314,16 @@ async function executeReviewJobInternal(
                 });
                 outcomeCommitted = true;
                 markOutcomeCommitted();
-                continue;
+                // All providers exhausted — every subsequent file in this batch
+                // will fail with the same error, burning heartbeat/lock subrequests
+                // for nothing. Checkpoint immediately so the queue redelivery
+                // retries after the key-cooldown window expires (65s > 60s cooldown).
+                console.warn(
+                  `[review] All providers exhausted at ${fileName} ` +
+                  `(${state!.completedFiles.length + 1}/${state!.allFiles.length} files done) — ` +
+                  `checkpointing for retry after cooldown`
+                );
+                throw new ReviewRetryScheduledError(65);
               }
               if (err instanceof SubrequestBudgetExceededError) {
                 // Budget checkpoint — don't mark the file done; abort the batch

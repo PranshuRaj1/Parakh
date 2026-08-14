@@ -6,8 +6,17 @@
  */
 
 import { getDb } from './client.js';
+import { withDbRetry, isTransientDbError } from './db-retry.js';
 import type { Rule, RuleKind, RuleStatus, RuleRelationshipRecord, RulePriority } from '@parakh/shared';
 import { EMBEDDING_DIMENSIONS } from '@parakh/shared';
+
+const DB_RETRY_OPTS = {
+  maxAttempts: 3,
+  baseDelayMs: 200,
+  maxDelayMs: 3000,
+  isRetryable: isTransientDbError,
+  label: 'rules-db',
+};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -28,16 +37,18 @@ export async function getActiveRules(
   env: EnvWithDB,
   _filePath?: string
 ): Promise<Rule[]> {
-  const sql = getDb(env.DATABASE_URL);
-  const rows = await sql`
-    SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-           source_pr, evidence_count, reinforcement_count, created_at, superseded_at
-    FROM rules
-    WHERE status = 'ACTIVE' AND repo = ${repo}
-    ORDER BY created_at ASC
-  `;
+  return withDbRetry(async () => {
+    const sql = getDb(env.DATABASE_URL);
+    const rows = await sql`
+      SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
+             source_pr, evidence_count, reinforcement_count, created_at, superseded_at
+      FROM rules
+      WHERE status = 'ACTIVE' AND repo = ${repo}
+      ORDER BY created_at ASC
+    `;
 
-  return rows as unknown as Rule[];
+    return rows as unknown as Rule[];
+  }, DB_RETRY_OPTS);
 }
 
 /**

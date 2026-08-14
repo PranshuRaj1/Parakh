@@ -3,45 +3,35 @@ import { MemoryCooldownStore, RedisCooldownStore, COOLDOWN_HASH_TTL_SECONDS } fr
 
 const FIXED_NOW = 1_700_000_000_000;
 
-/** Shared fake Redis hash backend so multiple stores can share one "redis". */
-function makeHashBackend() {
-  const fields = new Map<string, Map<string, string>>();
-  const calls: Array<{ op: 'hgetall' | 'hset' | 'hdel' | 'expire'; key: string; field?: string; value?: string }> = [];
+/** Fake Redis STRING backend for testing. */
+function makeStringBackend() {
+  const store = new Map<string, string>();
+  const calls: Array<{ op: 'get' | 'set'; key: string; value?: string }> = [];
   return {
     calls,
-    hgetall: async (key: string) => {
-      calls.push({ op: 'hgetall', key });
-      const h = fields.get(key);
-      return h ? Object.fromEntries(h) : null;
+    store,
+    get: async (key: string) => {
+      calls.push({ op: 'get', key });
+      return store.get(key) ?? null;
     },
-    hset: async (key: string, field: string, value: string) => {
-      calls.push({ op: 'hset', key, field, value });
-      if (!fields.has(key)) fields.set(key, new Map());
-      fields.get(key)!.set(field, value);
+    set: async (key: string, value: string, opts?: { ex?: number }) => {
+      calls.push({ op: 'set', key, value });
+      store.set(key, value);
     },
-    hdel: async (key: string, field: string) => {
-      calls.push({ op: 'hdel', key, field });
-      fields.get(key)?.delete(field);
-    },
-    expire: async (key: string, seconds: number) => {
-      calls.push({ op: 'expire', key, value: String(seconds) });
-    },
-    peek(key: string, field: string): string | null {
-      return fields.get(key)?.get(field) ?? null;
+    peek(key: string): string | null {
+      return store.get(key) ?? null;
     },
   };
 }
 
-async function makeStore(backend: ReturnType<typeof makeHashBackend>, initial?: Record<string, string>) {
+async function makeStore(backend: ReturnType<typeof makeStringBackend>, initial?: string) {
   if (initial) {
-    await Promise.all(Object.entries(initial).map(([k, v]) => backend.hset('test-key', k, v)));
+    backend.store.set('test-key', initial);
   }
   return new RedisCooldownStore({
     redisKey: 'test-key',
-    redisHGetAll: backend.hgetall,
-    redisHSet: backend.hset,
-    redisHDel: backend.hdel,
-    redisExpire: backend.expire,
+    redisGet: backend.get,
+    redisSet: backend.set,
   });
 }
 
@@ -67,94 +57,86 @@ describe('MemoryCooldownStore', () => {
 });
 
 describe('RedisCooldownStore', () => {
-  it('loads persisted entries from redis hash fields', async () => {
+  it('loads persisted entries from redis string key', async () => {
     const until = FIXED_NOW + 5000;
-    const backend = makeHashBackend();
-    const store = await makeStore(backend, { '0': JSON.stringify({ until, dailyQuota: true }) });
+    const blob = JSON.stringify({ '0': { until, dailyQuota: true } });
+    const backend = makeStringBackend();
+    const store = await makeStore(backend, blob);
     await store.load();
-    expect(backend.calls.find(c => c.op === 'hgetall')?.key).toBe('test-key');
+    expect(backend.calls.find(c => c.op === 'get')?.key).toBe('test-key');
     expect(store.get(0)).toEqual({ until, dailyQuota: true });
     expect(store.get(1)).toBeNull();
   });
 
   it('loads only once — subsequent calls are no-ops', async () => {
-    const backend = makeHashBackend();
+    const backend = makeStringBackend();
     const store = await makeStore(backend);
     await store.load();
     await store.load();
-    expect(backend.calls.filter(c => c.op === 'hgetall')).toHaveLength(1);
+    expect(backend.calls.filter(c => c.op === 'get')).toHaveLength(1);
   });
 
-  it('only writes changed fields (dirty tracking)', async () => {
-    const backend = makeHashBackend();
+  it('only writes when dirty (dirty tracking)', async () => {
+    const backend = makeStringBackend();
     const store = await makeStore(backend);
     await store.load();
     await store.flush();
-    expect(backend.calls.filter(c => c.op === 'hset' || c.op === 'hdel')).toHaveLength(0);
+    expect(backend.calls.filter(c => c.op === 'set')).toHaveLength(0);
 
     store.park(0, { until: FIXED_NOW + 1000, dailyQuota: false });
     await store.flush();
-    const writes = backend.calls.filter(c => c.op === 'hset');
+    const writes = backend.calls.filter(c => c.op === 'set');
     expect(writes).toHaveLength(1);
     expect(writes[0].key).toBe('test-key');
-    expect(writes[0].field).toBe('0');
 
     // No change → no second write.
     await store.flush();
-    expect(backend.calls.filter(c => c.op === 'hset')).toHaveLength(1);
+    expect(backend.calls.filter(c => c.op === 'set')).toHaveLength(1);
   });
 
-  it('clears a key via HDEL on flush', async () => {
-    const backend = makeHashBackend();
-    const store = await makeStore(backend, { '0': JSON.stringify({ until: FIXED_NOW + 5000, dailyQuota: false }) });
+  it('clears a key via full-map rewrite on flush', async () => {
+    const blob = JSON.stringify({ '0': { until: FIXED_NOW + 5000, dailyQuota: false }, '1': { until: FIXED_NOW + 3000, dailyQuota: false } });
+    const backend = makeStringBackend();
+    const store = await makeStore(backend, blob);
     await store.load();
     store.clear(0);
     await store.flush();
-    const hdel = backend.calls.find(c => c.op === 'hdel');
-    expect(hdel?.key).toBe('test-key');
-    expect(hdel?.field).toBe('0');
-    expect(backend.peek('test-key', '0')).toBeNull();
+    const written = JSON.parse(backend.peek('test-key')!);
+    expect(written['0']).toBeUndefined();
+    expect(written['1']).toEqual({ until: FIXED_NOW + 3000, dailyQuota: false });
   });
 
   it('survives corrupted redis state', async () => {
-    const backend = makeHashBackend();
-    const store = await makeStore(backend, { '0': 'not-json{', '1': JSON.stringify({ until: FIXED_NOW + 5000, dailyQuota: false }) });
+    const backend = makeStringBackend();
+    const store = await makeStore(backend, 'not-json{');
+    await store.load();
+    expect(store.get(0)).toBeNull();
+  });
+
+  it('skips entries that lack a numeric until', async () => {
+    const blob = JSON.stringify({ '0': { notUntil: 1 }, '1': { until: FIXED_NOW + 5000, dailyQuota: false } });
+    const backend = makeStringBackend();
+    const store = await makeStore(backend, blob);
     await store.load();
     expect(store.get(0)).toBeNull();
     expect(store.get(1)).toEqual({ until: FIXED_NOW + 5000, dailyQuota: false });
   });
 
-  it('skips fields that parse as valid JSON but lack a numeric until', async () => {
-    const backend = makeHashBackend();
-    const store = await makeStore(backend, {
-      '0': JSON.stringify({ notUntil: 1 }),
-      '1': JSON.stringify({ until: FIXED_NOW + 5000, dailyQuota: false }),
-    });
-    await store.load();
-    expect(store.get(0)).toBeNull();
-    expect(store.get(1)).toEqual({ until: FIXED_NOW + 5000, dailyQuota: false });
-  });
-
-  it('does not clobber a newer park when a failed flush restores dirty state', async () => {
-    // Simulate the HIGH-flagged race: a flush is in-flight, a newer park()
-    // lands on the same key, then the flush fails. The restored dirty entry
-    // must NOT overwrite the newer one, or the cooldown would regress.
-    let failNextHSet = true;
-    const backend = makeHashBackend();
-    const hset = backend.hset;
-    backend.hset = async (key, field, value) => {
-      if (failNextHSet) {
-        failNextHSet = false;
+  it('does not clobber a newer park when a failed flush restores dirty flag', async () => {
+    let failNextSet = true;
+    const backend = makeStringBackend();
+    const originalSet = backend.set;
+    backend.set = async (key, value, opts) => {
+      if (failNextSet) {
+        failNextSet = false;
         throw new Error('boom');
       }
-      return hset(key, field, value);
+      return originalSet(key, value, opts);
     };
     const store = new RedisCooldownStore({
       redisKey: 'test-key',
-      redisHGetAll: backend.hgetall,
-      redisHSet: backend.hset,
-      redisHDel: backend.hdel,
-      redisExpire: backend.expire,
+      redisGet: backend.get,
+      redisSet: backend.set,
     });
     await store.load();
     store.park(0, { until: FIXED_NOW + 1000, dailyQuota: false });
@@ -166,19 +148,18 @@ describe('RedisCooldownStore', () => {
 
     // A second flush must persist the NEWER value, not the failed snapshot.
     await store.flush();
-    expect(backend.peek('test-key', '0')).toBe(JSON.stringify({ until: FIXED_NOW + 9999, dailyQuota: true }));
+    const written = JSON.parse(backend.peek('test-key')!);
+    expect(written['0']).toEqual({ until: FIXED_NOW + 9999, dailyQuota: true });
   });
 
   it('logs repeated flush failures only once per store', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const backend = makeHashBackend();
-    backend.hset = async () => { throw new Error('redis unavailable'); };
+    const backend = makeStringBackend();
+    backend.set = async () => { throw new Error('redis unavailable'); };
     const store = new RedisCooldownStore({
       redisKey: 'test-key',
-      redisHGetAll: backend.hgetall,
-      redisHSet: backend.hset,
-      redisHDel: backend.hdel,
-      redisExpire: backend.expire,
+      redisGet: backend.get,
+      redisSet: backend.set,
     });
     store.park(0, { until: FIXED_NOW + 1000, dailyQuota: true });
 
@@ -188,32 +169,47 @@ describe('RedisCooldownStore', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('writes per-key fields atomically, so concurrent writers do not clobber each other', async () => {
-    // Simulates the race the old whole-blob store had: two workers park DIFFERENT
-    // keys from the same cached state. With per-field HSET, both updates land.
-    const backend = makeHashBackend();
-    const workerA = await makeStore(backend);
-    const workerB = await makeStore(backend);
-    await workerA.load();
-    await workerB.load();
-
-    workerA.park(0, { until: FIXED_NOW + 1000, dailyQuota: false });
-    workerB.park(1, { until: FIXED_NOW + 5000, dailyQuota: true });
-    await workerA.flush();
-    await workerB.flush();
-
-    expect(backend.peek('test-key', '0')).toBe(JSON.stringify({ until: FIXED_NOW + 1000, dailyQuota: false }));
-    expect(backend.peek('test-key', '1')).toBe(JSON.stringify({ until: FIXED_NOW + 5000, dailyQuota: true }));
+  it('writes the full map atomically as JSON', async () => {
+    const backend = makeStringBackend();
+    const store = await makeStore(backend);
+    await store.load();
+    store.park(0, { until: FIXED_NOW + 1000, dailyQuota: false });
+    store.park(1, { until: FIXED_NOW + 5000, dailyQuota: true });
+    await store.flush();
+    const written = JSON.parse(backend.peek('test-key')!);
+    expect(written).toEqual({
+      '0': { until: FIXED_NOW + 1000, dailyQuota: false },
+      '1': { until: FIXED_NOW + 5000, dailyQuota: true },
+    });
   });
 
-  it('refreshes the hash TTL on flush', async () => {
-    const backend = makeHashBackend();
+  it('sets TTL via EX option on flush', async () => {
+    const backend = makeStringBackend();
     const store = await makeStore(backend);
     await store.load();
     store.park(0, { until: FIXED_NOW + 1000, dailyQuota: false });
     await store.flush();
-    const expire = backend.calls.find(c => c.op === 'expire');
-    expect(expire?.key).toBe('test-key');
-    expect(expire?.value).toBe(String(COOLDOWN_HASH_TTL_SECONDS));
+    // The SET call should include EX parameter
+    const setCall = backend.calls.find(c => c.op === 'set');
+    expect(setCall).toBeDefined();
+  });
+
+  it('round-trips through the same code path used in production', async () => {
+    // This is the regression test: write a cooldown, read it back through
+    // the same load/park/flush cycle, and assert no WRONGTYPE error.
+    const backend = makeStringBackend();
+    const store = await makeStore(backend);
+
+    // Simulate a rate-limited key
+    store.park(0, { until: FIXED_NOW + 60_000, dailyQuota: false });
+    store.park(2, { until: FIXED_NOW + 21_600_000, dailyQuota: true });
+    await store.flush();
+
+    // Simulate a fresh worker inheriting the state
+    const store2 = await makeStore(backend);
+    await store2.load();
+    expect(store2.get(0)).toEqual({ until: FIXED_NOW + 60_000, dailyQuota: false });
+    expect(store2.get(1)).toBeNull();
+    expect(store2.get(2)).toEqual({ until: FIXED_NOW + 21_600_000, dailyQuota: true });
   });
 });

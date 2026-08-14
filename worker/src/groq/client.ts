@@ -100,8 +100,14 @@ export class GroqClient implements LLMProvider {
       const keyIndex = (startIndex + attempt) % this.keys.length;
       const entry = this.cooldowns.get(keyIndex);
       if (entry && entry.until > Date.now()) {
+        const remainingMs = entry.until - Date.now();
         coolingDown++;
         if (entry.dailyQuota) dailyQuotaBlocked++;
+        console.warn(
+          `[groq] Key ${keyIndex + 1}/${this.keys.length} ` +
+          `${entry.dailyQuota ? 'daily-quota' : 'rate-limited'}, ` +
+          `skipped (cooldown ${Math.round(remainingMs / 1000)}s remaining)`
+        );
         continue;
       }
       const apiKey = this.keys[keyIndex];

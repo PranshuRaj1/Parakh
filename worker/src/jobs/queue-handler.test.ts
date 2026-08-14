@@ -142,13 +142,13 @@ describe('handleQueueBatch', () => {
     expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds });
   });
 
-  it('stops unexpected retries after the fifth retry', async () => {
+  it('stops unexpected retries after the eighth retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     reviewJob.mockRejectedValue(new Error('database unavailable'));
     const batch = makeBatch([
       { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
     ]);
-    batch.messages[0].attempts = 6;
+    batch.messages[0].attempts = 9;
 
     await handleQueueBatch(batch, env);
 

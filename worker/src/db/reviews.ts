@@ -6,8 +6,17 @@
  */
 
 import { getDb } from './client.js';
+import { withDbRetry, isTransientDbError } from './db-retry.js';
 import type { Review, ReviewMode, ReviewStatus, Finding, RepoSettings, ReviewStepEvent, ReviewReasoning } from '@parakh/shared';
 import type { FindingReconciliationOutcome, ReconciliationSummary } from '../review/incremental/ledger.js';
+
+const DB_RETRY_OPTS = {
+  maxAttempts: 3,
+  baseDelayMs: 200,
+  maxDelayMs: 3000,
+  isRetryable: isTransientDbError,
+  label: 'review-db',
+};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -498,34 +507,29 @@ export async function dbStartStage(
   deadlineAt: string | null,
   env: EnvWithDB
 ): Promise<void> {
-  const sql = getDb(env.DATABASE_URL);
-  await sql.transaction([
-    // 1. Insert new stage attempt (started_at defaults to now(), ended_at is null).
-    //    Idempotent against the partial unique index
-    //    one_open_stage_attempt_per_review (review_id, stage, attempt_number)
-    //    WHERE ended_at IS NULL. A redelivered/re-entrant execution (queue
-    //    at-least-once, worker eviction) reuses the still-open event instead of
-    //    crashing with a duplicate key.
-    sql`
-      INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
-      VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)
-      ON CONFLICT (review_id, stage, attempt_number) WHERE ended_at IS NULL
-      DO UPDATE SET started_at = now(), detail = EXCLUDED.detail
-    `,
-    // 2. Update reviews live pointer
-    sql`
-      UPDATE reviews
-      SET status = 'RUNNING',
-          current_stage = ${stage},
-          stage_started_at = now(),
-          stage_attempt = ${attempt},
-          stage_reason_code = 'PROCESSING',
-          stage_reason_detail = null,
-          worker_heartbeat_at = now(),
-          stage_deadline_at = ${deadlineAt}
-      WHERE id = ${reviewId}
-    `
-  ]);
+  await withDbRetry(async () => {
+    const sql = getDb(env.DATABASE_URL);
+    await sql.transaction([
+      sql`
+        INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
+        VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)
+        ON CONFLICT (review_id, stage, attempt_number) WHERE ended_at IS NULL
+        DO UPDATE SET started_at = now(), detail = EXCLUDED.detail
+      `,
+      sql`
+        UPDATE reviews
+        SET status = 'RUNNING',
+            current_stage = ${stage},
+            stage_started_at = now(),
+            stage_attempt = ${attempt},
+            stage_reason_code = 'PROCESSING',
+            stage_reason_detail = null,
+            worker_heartbeat_at = now(),
+            stage_deadline_at = ${deadlineAt}
+        WHERE id = ${reviewId}
+      `
+    ]);
+  }, DB_RETRY_OPTS);
 }
 
 export async function dbCompleteStage(
@@ -535,29 +539,29 @@ export async function dbCompleteStage(
   detail: Record<string, unknown> | null,
   env: EnvWithDB
 ): Promise<void> {
-  const sql = getDb(env.DATABASE_URL);
-  await sql.transaction([
-    // 1. Close out event
-    sql`
-      UPDATE review_step_events
-      SET ended_at = now(),
-          duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
-          outcome = 'COMPLETED',
-          detail = CASE 
-            WHEN ${detail ? JSON.stringify(detail) : null}::jsonb IS NOT NULL 
-            THEN ${detail ? JSON.stringify(detail) : null}::jsonb 
-            ELSE detail 
-          END
-      WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
-    `,
-    // 2. Clear heartbeat on reviews table
-    sql`
-      UPDATE reviews
-      SET worker_heartbeat_at = null,
-          stage_deadline_at = null
-      WHERE id = ${reviewId}
-    `
-  ]);
+  await withDbRetry(async () => {
+    const sql = getDb(env.DATABASE_URL);
+    await sql.transaction([
+      sql`
+        UPDATE review_step_events
+        SET ended_at = now(),
+            duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
+            outcome = 'COMPLETED',
+            detail = CASE 
+              WHEN ${detail ? JSON.stringify(detail) : null}::jsonb IS NOT NULL 
+              THEN ${detail ? JSON.stringify(detail) : null}::jsonb 
+              ELSE detail 
+            END
+        WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
+      `,
+      sql`
+        UPDATE reviews
+        SET worker_heartbeat_at = null,
+            stage_deadline_at = null
+        WHERE id = ${reviewId}
+      `
+    ]);
+  }, DB_RETRY_OPTS);
 }
 
 export async function dbFailStage(
@@ -570,35 +574,37 @@ export async function dbFailStage(
   terminal: boolean,
   env: EnvWithDB
 ): Promise<void> {
-  const sql = getDb(env.DATABASE_URL);
-  const queries = [
-    sql`
-      UPDATE review_step_events
-      SET ended_at = now(),
-          duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
-          outcome = 'FAILED',
-          error_code = ${errorCode},
-          error_message = ${errorMessage},
-          error_stack = ${errorStack}
-      WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
-    `
-  ];
+  await withDbRetry(async () => {
+    const sql = getDb(env.DATABASE_URL);
+    const queries = [
+      sql`
+        UPDATE review_step_events
+        SET ended_at = now(),
+            duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
+            outcome = 'FAILED',
+            error_code = ${errorCode},
+            error_message = ${errorMessage},
+            error_stack = ${errorStack}
+        WHERE review_id = ${reviewId} AND stage = ${stage} AND attempt_number = ${attempt} AND ended_at IS NULL
+      `
+    ];
 
-  if (terminal) {
-    queries.push(sql`
-      UPDATE reviews
-      SET status = 'FAILED',
-          failed_at = now(),
-          error_step = ${stage},
-          error_message = ${errorMessage},
-          error_stack = ${errorStack},
-          worker_heartbeat_at = null,
-          stage_deadline_at = null
-      WHERE id = ${reviewId}
-    `);
-  }
+    if (terminal) {
+      queries.push(sql`
+        UPDATE reviews
+        SET status = 'FAILED',
+            failed_at = now(),
+            error_step = ${stage},
+            error_message = ${errorMessage},
+            error_stack = ${errorStack},
+            worker_heartbeat_at = null,
+            stage_deadline_at = null
+        WHERE id = ${reviewId}
+      `);
+    }
 
-  await sql.transaction(queries);
+    await sql.transaction(queries);
+  }, DB_RETRY_OPTS);
 }
 
 /**
