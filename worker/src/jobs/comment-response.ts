@@ -1,13 +1,13 @@
 import type { CommentJobPayload } from '@parakh/shared';
+import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
-import { getRepoSettings } from '../db/reviews.js';
-import { postComment as postIssueComment, replyToReviewComment } from '../github/api.js';
+import { getRepoSettings, getResumableReview } from '../db/reviews.js';
+import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
-import { parseReviewCommand } from '../review/review-command.js';
 
 /**
  * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
@@ -58,46 +58,57 @@ export async function executeCommentResponseJob(
     }
   };
 
-  const commandMode = parseReviewCommand(commentBody);
   const { llm } = createLLMClients(env);
 
   // For issue comments (top-level), there is no parentBotComment context passed directly.
   // We can pass an empty string to the LLM classifier for now, or fetch the parent if needed.
   // The classifier handles empty parentBotComment properly via the prompt update.
   const parentBotComment = ''; 
-  const intent = commandMode
-    ? 'REVIEW_REQUEST'
-    : await llm.classifyIntent(commentBody, parentBotComment);
+  const intent = await llm.classifyIntent(commentBody, parentBotComment);
 
   console.log(`[comment-response] Classified intent: ${intent}`);
 
   switch (intent) {
     case 'REVIEW_REQUEST': {
-      const requestedMode = commandMode ?? 'incremental';
-      const result = await triggerReview({
-        installationId,
-        owner,
-        repo,
-        prNumber,
-        reason: 'manual_mention',
-        requestedMode,
-        githubDeliveryId,
-        commentId,
-        commentType,
-      }, env);
+      // Check for an existing resumable review before creating a new one
+      const existingReview = await getResumableReview(fullRepo, prNumber, env);
 
-      if (result === 'ENQUEUED') {
-        const article = requestedMode === 'incremental' ? 'an' : 'a';
-        await postReply(`On it — starting ${article} ${requestedMode} review 👀`);
-      } else if (result === 'RESUMED') {
-        await postReply(`On it — resuming the matching ${requestedMode} review 👀`);
-      } else if (result === 'ALREADY_ACTIVE') {
-        await postReply('A review for this commit and mode is already in progress.');
-      } else {
-        await postReply(
-          'A review is already in progress for a different commit or review mode. ' +
-          'Wait for it to finish, then run `@parakh review` or `@parakh full review` again.'
+      if (existingReview) {
+        const enqueued = await triggerReview(
+          installationId, owner, repo, prNumber,
+          'manual_mention', env,
+          existingReview.id,  // resumeReviewId — reuses existing row
+          githubDeliveryId    // githubDeliveryId
         );
+        if (enqueued) {
+          await postReply("On it — resuming the previous review 👀");
+        } else {
+          await postReply("⚠️ A review is already in progress, please wait and try again.");
+        }
+      } else {
+        // Mark the trigger comment with SEEN while the review runs, then pass the
+        // reaction through so triggerReview can persist it on the new row.
+        // Best-effort: a reaction failure must not block the review itself.
+        let reactionId: number | undefined;
+        try {
+          reactionId = await addCommentReaction(owner, repo, commentId, commentType, REACTIONS.SEEN, token);
+        } catch (err) {
+          console.warn(`[comment-response] Failed to add SEEN reaction on trigger comment:`, err);
+        }
+        const enqueued = await triggerReview(
+          installationId, owner, repo, prNumber,
+          'manual_mention', env,
+          undefined,          // resumeReviewId
+          githubDeliveryId,   // githubDeliveryId
+          commentId,          // commentId
+          commentType,        // commentType
+          reactionId          // commentReactionId
+        );
+        if (enqueued) {
+          await postReply("On it — re-reviewing 👀");
+        } else {
+          await postReply("⚠️ A review is already in progress, please wait and try again.");
+        }
       }
       break;
     }
