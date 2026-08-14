@@ -372,7 +372,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     // Confirmation reply — instruction rules get the "Noted" suppression reply.
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Noted'), 'token'
+      'acme', 'app', 7, expect.stringContaining('Noted'), 'token', 100
     );
 
     // Contradiction check enqueued with the rule payload (real installationId).
@@ -419,7 +419,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token'
+      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
     );
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].retry).not.toHaveBeenCalled();

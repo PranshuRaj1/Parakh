@@ -133,7 +133,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token');
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token', 100);
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
       'existing-review', 'del'
@@ -147,7 +147,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100);
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
@@ -176,7 +176,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
+      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token', 100
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
   });
@@ -194,7 +194,7 @@ describe('executeCommentResponseJob', () => {
       env
     );
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+      'acme', 'app', 7, expect.stringContaining('Learned'), 'token', 100
     );
   });
 
@@ -207,7 +207,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token'
+      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token', 100
     );
   });
 
@@ -218,7 +218,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token'
+      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
     );
   });
 
@@ -238,7 +238,17 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(draftReplyMock).toHaveBeenCalledWith('', 'hello');
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token');
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token', 100);
+  });
+
+  it('nests issue_comment replies under the tagged comment (threaded reply)', async () => {
+    classifyIntentMock.mockResolvedValue('QUESTION');
+    draftReplyMock.mockResolvedValue('threaded reply');
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'threaded reply', 'token', 100);
+    expect(mocked.replyToReviewComment).not.toHaveBeenCalled();
   });
 
   it('stays silent for GENERAL intent', async () => {

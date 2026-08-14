@@ -140,19 +140,23 @@ export async function getFileContent(
 /**
  * Post an issue comment on a PR.
  * (PRs are issues — uses the Issues API.)
+ *
+ * @param inReplyToId - When set, the comment is nested under that issue
+ *   comment (GitHub renders it as a reply in the same thread).
  */
 export async function postComment(
   owner: string,
   repo: string,
   prNumber: number,
   body: string,
-  token: string
+  token: string,
+  inReplyToId?: number
 ): Promise<{ id: number }> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments`;
   return githubFetch<{ id: number }>(url, token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body }),
+    body: JSON.stringify(inReplyToId === undefined ? { body } : { body, in_reply_to_id: inReplyToId }),
   });
 }
 

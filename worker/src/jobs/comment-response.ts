@@ -49,12 +49,15 @@ export async function executeCommentResponseJob(
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // Helper to abstract the reply endpoint selection
+  // Helper to abstract the reply endpoint selection. issue_comment replies are
+  // nested under the tagged comment (in_reply_to_id) so they stay in its thread
+  // instead of becoming a new top-level comment; review comments already reply
+  // into the diff thread via /replies.
   const postReply = async (body: string) => {
     if (commentType === 'pull_request_review_comment') {
       await replyToReviewComment(owner, repo, prNumber, commentId, body, token);
     } else {
-      await postIssueComment(owner, repo, prNumber, body, token);
+      await postIssueComment(owner, repo, prNumber, body, token, commentId);
     }
   };
 

@@ -813,7 +813,7 @@ async function postCommentReply(
   if (review.trigger_comment_type === 'pull_request_review_comment') {
     await replyToReviewComment(owner, repo, prNumber, review.trigger_comment_id, body, token);
   } else {
-    await postComment(owner, repo, prNumber, body, token);
+    await postComment(owner, repo, prNumber, body, token, review.trigger_comment_id);
   }
 }
 
