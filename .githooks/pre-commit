@@ -1,0 +1,24 @@
+#!/bin/sh
+# Pre-commit secret guard.
+#
+# Blocks credential-bearing environment files from ever being committed,
+# even when forced with `git add -f` (the incident where worker/.env.moved
+# with live production secrets entered git history via checkpoint commits).
+#
+# Enabled repo-wide via `git config core.hooksPath .githooks` (see root
+# package.json "setup:hooks" script).
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+for f in $staged; do
+  case "$f" in
+    *.env|*.env.*|*/env|*/env.*)
+      echo "✘ Refusing to commit environment file: $f"
+      echo "  Environment files contain secrets and must not enter git history."
+      echo "  Move the value to a provisioner (wrangler secret / provider dashboard)."
+      exit 1
+      ;;
+  esac
+done
+exit 0
