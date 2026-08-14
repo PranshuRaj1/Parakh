@@ -41,6 +41,7 @@ import {
   addCommentReaction,
   removeCommentReaction,
 } from '../github/api.js';
+import { replyToIssueComment } from '../github/reply-comment.js';
 import {
   updateReviewStatus,
   updateReviewResults,
@@ -813,7 +814,7 @@ async function postCommentReply(
   if (review.trigger_comment_type === 'pull_request_review_comment') {
     await replyToReviewComment(owner, repo, prNumber, review.trigger_comment_id, body, token);
   } else {
-    await postComment(owner, repo, prNumber, body, token, review.trigger_comment_id);
+    await replyToIssueComment(owner, repo, review.trigger_comment_id, body, token);
   }
 }
 

@@ -3,7 +3,8 @@ import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
-import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { replyToIssueComment } from '../github/reply-comment.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
@@ -50,14 +51,14 @@ export async function executeCommentResponseJob(
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
   // Helper to abstract the reply endpoint selection. issue_comment replies are
-  // nested under the tagged comment (in_reply_to_id) so they stay in its thread
-  // instead of becoming a new top-level comment; review comments already reply
-  // into the diff thread via /replies.
+  // nested under the tagged comment (GraphQL addCommentReply) so they stay in
+  // its thread instead of becoming a new top-level comment; review comments
+  // already reply into the diff thread via /replies.
   const postReply = async (body: string) => {
     if (commentType === 'pull_request_review_comment') {
       await replyToReviewComment(owner, repo, prNumber, commentId, body, token);
     } else {
-      await postIssueComment(owner, repo, prNumber, body, token, commentId);
+      await replyToIssueComment(owner, repo, commentId, body, token);
     }
   };
 

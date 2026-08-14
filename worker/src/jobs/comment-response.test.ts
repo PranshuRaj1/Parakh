@@ -44,6 +44,9 @@ vi.mock('../github/api.js', () => ({
   replyToReviewComment: vi.fn(),
   addCommentReaction: vi.fn(),
 }));
+vi.mock('../github/reply-comment.js', () => ({
+  replyToIssueComment: vi.fn(),
+}));
 vi.mock('../db/reviews.js', () => ({
   getRepoSettings: vi.fn(),
   getResumableReview: vi.fn(),
@@ -57,6 +60,7 @@ vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
 
 import { executeCommentResponseJob } from './comment-response.js';
 import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { replyToIssueComment } from '../github/reply-comment.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { triggerReview } from './review.js';
@@ -67,6 +71,7 @@ const mocked = {
   getRepoSettings: vi.mocked(getRepoSettings),
   getResumableReview: vi.mocked(getResumableReview),
   postComment: vi.mocked(postComment),
+  replyToIssueComment: vi.mocked(replyToIssueComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
   addCommentReaction: vi.mocked(addCommentReaction),
   triggerReview: vi.mocked(triggerReview),
@@ -133,7 +138,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token', 100);
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith('acme', 'app', 100, 'On it — resuming the previous review 👀', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
       'existing-review', 'del'
@@ -147,7 +152,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100);
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith('acme', 'app', 100, 'On it — re-reviewing 👀', 'token');
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
@@ -175,8 +180,8 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, '⚠️ A review is already in progress, please wait and try again.', 'token'
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
   });
@@ -193,8 +198,8 @@ describe('executeCommentResponseJob', () => {
       { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues' },
       env
     );
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Learned'), 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, expect.stringContaining('Learned'), 'token'
     );
   });
 
@@ -206,8 +211,8 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, expect.stringContaining("won't raise"), 'token'
     );
   });
 
@@ -217,8 +222,8 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, expect.stringContaining("Couldn't save that right now"), 'token'
     );
   });
 
@@ -227,7 +232,7 @@ describe('executeCommentResponseJob', () => {
       classifyIntentMock.mockResolvedValueOnce(intent);
       await executeCommentResponseJob(payload(), env);
     }
-    const notedReplies = mocked.postComment.mock.calls.filter(([, , , body]) => body === '👍 Noted.');
+    const notedReplies = mocked.replyToIssueComment.mock.calls.filter(([, , , body]) => body === '👍 Noted.');
     expect(notedReplies).toHaveLength(2);
   });
 
@@ -238,7 +243,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(draftReplyMock).toHaveBeenCalledWith('', 'hello');
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token', 100);
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith('acme', 'app', 100, 'Here is the answer...', 'token');
   });
 
   it('nests issue_comment replies under the tagged comment (threaded reply)', async () => {
@@ -247,7 +252,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'threaded reply', 'token', 100);
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith('acme', 'app', 100, 'threaded reply', 'token');
     expect(mocked.replyToReviewComment).not.toHaveBeenCalled();
   });
 
@@ -270,5 +275,6 @@ describe('executeCommentResponseJob', () => {
 
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith('acme', 'app', 7, 100, 'reply body', 'token');
     expect(mocked.postComment).not.toHaveBeenCalled();
+    expect(mocked.replyToIssueComment).not.toHaveBeenCalled();
   });
 });
