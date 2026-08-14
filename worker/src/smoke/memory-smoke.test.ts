@@ -44,6 +44,10 @@ vi.mock('../github/api.js', () => ({
   removeCommentReaction: vi.fn(),
 }));
 
+vi.mock('../github/reply-comment.js', () => ({
+  replyToIssueComment: vi.fn(),
+}));
+
 vi.mock('../db/reviews.js', () => ({
   getRepoSettings: vi.fn(),
   getResumableReview: vi.fn(),
@@ -138,6 +142,7 @@ import { handleQueueBatch } from '../jobs/queue-handler.js';
 import { handleWebhookEvent } from '../webhook/handler.js';
 import { getCachedToken } from '../github/auth.js';
 import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { replyToIssueComment } from '../github/reply-comment.js';
 import { getRepoSettings } from '../db/reviews.js';
 import {
   insertRule,
@@ -152,6 +157,7 @@ import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet } from
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
+  replyToIssueComment: vi.mocked(replyToIssueComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
   addCommentReaction: vi.mocked(addCommentReaction),
   getRepoSettings: vi.mocked(getRepoSettings),
@@ -206,7 +212,7 @@ function correctionComment(body: string): Record<string, unknown> {
     installation: { id: 1 },
     repository: { full_name: 'acme/app', owner: { login: 'acme' }, name: 'app' },
     issue: { number: 7, pull_request: { url: 'https://api.github.com/repos/acme/app/pulls/7' } },
-    comment: { id: 100, body, user: { login: 'dev', id: 555 } },
+    comment: { id: 100, body, user: { login: 'dev', id: 555 }, author_association: 'OWNER' },
   };
 }
 
@@ -228,6 +234,8 @@ function makeCommentMessage(body: string, commentType: 'issue_comment' | 'pull_r
       commentId: 100,
       commentBody: body,
       commentType,
+      authorAssociation: 'OWNER',
+      authorLogin: 'dev',
       githubDeliveryId: 'del-memory',
     },
   };
@@ -371,8 +379,8 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
     );
 
     // Confirmation reply — instruction rules get the "Noted" suppression reply.
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Noted'), 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, expect.stringContaining('Noted'), 'token'
     );
 
     // Contradiction check enqueued with the rule payload (real installationId).
@@ -418,8 +426,8 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
+    expect(mocked.replyToIssueComment).toHaveBeenCalledWith(
+      'acme', 'app', 100, expect.stringContaining("Couldn't save that right now"), 'token'
     );
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
