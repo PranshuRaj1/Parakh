@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError } = vi.hoisted(() => ({
+const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError, sqlImpl, getDbMock } = vi.hoisted(() => ({
   mockGenerateEmbedding: vi.fn(),
   mockClassifyPriority: vi.fn(),
   mockConsoleError: vi.fn(),
+  sqlImpl: vi.fn(),
+  getDbMock: vi.fn(() => sqlImpl),
 }));
 
 // Stub the LLM factory so rule creation can run without a real model call:
@@ -23,10 +25,12 @@ vi.mock('../llm/factory.js', () => ({
 
 vi.mock('./contradiction.js', () => ({ executeContradictionJob: vi.fn() }));
 vi.mock('../db/rules.js', () => ({ insertRule: vi.fn() }));
+vi.mock('../db/client.js', () => ({ getDb: getDbMock }));
 
-import { handleCreateRule } from './rule-api.js';
+import { handleCreateRule, handleApproveRule, handleRejectRule } from './rule-api.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
+import { getDb } from '../db/client.js';
 
 const mocked = {
   executeContradictionJob: vi.mocked(executeContradictionJob),
@@ -127,5 +131,46 @@ describe('handleCreateRule', () => {
     const result = await handleCreateRule({ repo: 'acme/app', body: 'x' }, env);
     expect(mocked.executeContradictionJob).not.toHaveBeenCalled();
     expect(result.contradictionCheckEnqueued).toBe(true);
+  });
+});
+
+describe('handleApproveRule / handleRejectRule', () => {
+  const VALID_UUID = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+
+  it('rejects a malformed rule id before touching the database', async () => {
+    sqlImpl.mockReset();
+    getDbMock.mockClear();
+
+    await expect(handleApproveRule('not-a-uuid; DROP TABLE rules', env)).rejects.toThrow('Invalid rule id');
+    await expect(handleRejectRule('', env)).rejects.toThrow('Invalid rule id');
+    expect(getDb).not.toHaveBeenCalled();
+  });
+
+  it('approves a PENDING rule by flipping it to ACTIVE', async () => {
+    sqlImpl.mockReset().mockResolvedValueOnce([{ id: VALID_UUID }]);
+
+    await expect(handleApproveRule(VALID_UUID, env)).resolves.toBeUndefined();
+
+    const [strings, ...values] = sqlImpl.mock.calls[0];
+    expect(strings.join('')).toContain('WHERE id =');
+    expect(values[0]).toBe('ACTIVE');
+    expect(values[1]).toBe(VALID_UUID);
+  });
+
+  it('rejects a PENDING rule by flipping it to INACTIVE', async () => {
+    sqlImpl.mockReset().mockResolvedValueOnce([{ id: VALID_UUID }]);
+
+    await expect(handleRejectRule(VALID_UUID, env)).resolves.toBeUndefined();
+
+    const [strings, ...values] = sqlImpl.mock.calls[0];
+    expect(strings.join('')).toContain('WHERE id =');
+    expect(values[0]).toBe('INACTIVE');
+    expect(values[1]).toBe(VALID_UUID);
+  });
+
+  it('errors when the rule does not exist or is not PENDING', async () => {
+    sqlImpl.mockReset().mockResolvedValueOnce([]);
+
+    await expect(handleApproveRule(VALID_UUID, env)).rejects.toThrow('not found or not in PENDING');
   });
 });

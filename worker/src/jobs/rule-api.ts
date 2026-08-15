@@ -108,7 +108,13 @@ export async function handleCreateRule(
  * Shared by approve/reject so the two handlers can't drift apart.
  * Only PENDING rules may be moved; anything else is reported to the caller.
  */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function moveRuleOutOfPending(ruleId: string, target: Extract<RuleStatus, 'ACTIVE' | 'INACTIVE'>, action: string, env: Env): Promise<void> {
+  if (!UUID_PATTERN.test(ruleId)) {
+    throw new Error(`Invalid rule id: expected a UUID, got "${ruleId}"`);
+  }
+
   const sql = getDb(env.DATABASE_URL);
 
   const rows = await sql`
