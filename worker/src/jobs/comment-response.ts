@@ -1,4 +1,4 @@
-import type { CommentJobPayload } from '@parakh/shared';
+import type { CommentJobPayload, GitHubAuthorAssociation } from '@parakh/shared';
 import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
@@ -13,7 +13,7 @@ import { createRedisGet, createRedisSet } from '../redis.js';
 
 type TrustLevel = 'admin' | 'write' | 'read' | 'none';
 
-function resolveTrustLevel(association: string): TrustLevel {
+function resolveTrustLevel(association: GitHubAuthorAssociation): TrustLevel {
   switch (association) {
     case 'OWNER':
     case 'MEMBER':

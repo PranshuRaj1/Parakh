@@ -2,7 +2,22 @@
 
 export type ReviewMode = 'full' | 'incremental';
 
-/** Rule lifecycle status. SUGGESTED is cut from v1 — named future extension for auto-suggestion. */
+/**
+ * GitHub's `author_association` field on comments. `resolveTrustLevel` maps
+ * these onto Parakh's internal trust levels; the union catches typos at the
+ * call site instead of at runtime.
+ */
+export type GitHubAuthorAssociation =
+  | 'OWNER'
+  | 'MEMBER'
+  | 'COLLABORATOR'
+  | 'CONTRIBUTOR'
+  | 'FIRST_TIMER'
+  | 'FIRST_TIME_CONTRIBUTOR'
+  | 'MANNEQUIN'
+  | 'NONE';
+
+/** Rule lifecycle status. PENDING = collaborator-created rule awaiting owner/member approval before it takes effect. */
 export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE' | 'PENDING';
 
 /** Rule priority — determines severity weight for violations. */
@@ -211,7 +226,7 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
-  authorAssociation: string;
+  authorAssociation: GitHubAuthorAssociation;
   authorLogin: string;
   githubDeliveryId: string;
 }

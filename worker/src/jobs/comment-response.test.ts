@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
-import type { Intent } from '@parakh/shared';
+import type { Intent, GitHubAuthorAssociation } from '@parakh/shared';
 
 const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(() => {
   const providerShape = () => ({
@@ -83,7 +83,7 @@ const env = {
   UPSTASH_REDIS_TOKEN: 't',
 } as unknown as Env;
 
-function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment'; authorAssociation: string; authorLogin: string }> = {}) {
+function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment'; authorAssociation: GitHubAuthorAssociation; authorLogin: string }> = {}) {
   return {
     type: 'COMMENT_RESPONSE' as const,
     installationId: 1,

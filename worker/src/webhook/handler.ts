@@ -7,7 +7,7 @@
  */
 
 import { REACTIONS, GITHUB_APP_BOT_SUFFIX } from '@parakh/shared';
-import type { ReviewJobPayload, CommentJobPayload } from '@parakh/shared';
+import type { ReviewJobPayload, CommentJobPayload, GitHubAuthorAssociation } from '@parakh/shared';
 import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
@@ -30,7 +30,7 @@ interface WebhookEvent {
     id: number;
     body: string;
     user: { login: string; id: number };
-    author_association: string;
+    author_association: GitHubAuthorAssociation;
     in_reply_to_id?: number;
   };
   issue?: {
