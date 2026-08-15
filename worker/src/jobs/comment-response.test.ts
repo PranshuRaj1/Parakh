@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 import type { Intent } from '@parakh/shared';
 
-const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(() => {
+const { classifyIntentMock, draftReplyMock, geminiMock, groqMock, incrMock, expireMock } = vi.hoisted(() => {
   const providerShape = () => ({
     reviewDiff: vi.fn(),
     classifyIntent: vi.fn(),
@@ -16,6 +16,8 @@ const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(
     draftReplyMock: vi.fn(),
     geminiMock: providerShape(),
     groqMock: providerShape(),
+    incrMock: vi.fn(),
+    expireMock: vi.fn(),
   };
 });
 
@@ -51,16 +53,18 @@ vi.mock('../db/reviews.js', () => ({
 vi.mock('../redis.js', () => ({
   createRedisGet: vi.fn(),
   createRedisSet: vi.fn(),
+  createRedisIncr: () => incrMock,
+  createRedisExpire: () => expireMock,
 }));
 vi.mock('./review.js', () => ({ triggerReview: vi.fn() }));
-vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
+vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn(), CorrectionRejectedError: class extends Error {} }));
 
 import { executeCommentResponseJob } from './comment-response.js';
 import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { triggerReview } from './review.js';
-import { saveCorrectionAsRule } from './correction.js';
+import { saveCorrectionAsRule, CorrectionRejectedError } from './correction.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
@@ -91,14 +95,18 @@ function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_c
     commentBody: 'hello',
     commentType: 'issue_comment' as const,
     githubDeliveryId: 'del',
+    commenterLogin: 'dev',
     ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
   classifyIntentMock.mockReset();
   draftReplyMock.mockReset();
+  incrMock.mockReset().mockResolvedValue(1);
+  expireMock.mockReset();
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
@@ -190,11 +198,24 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
     expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues' },
-      env
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues', commenterLogin: 'dev' },
+      env,
+      'token'
     );
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+    );
+  });
+
+  it('refuses to save a rule when the correction is rejected', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockRejectedValue(new CorrectionRejectedError('Non-collaborator dev cannot add rules'));
+
+    await executeCommentResponseJob(payload({ commentBody: '@parakh use snake_case everywhere' }), env);
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('only repository collaborators can teach me'), 'token'
     );
   });
 
@@ -239,6 +260,61 @@ describe('executeCommentResponseJob', () => {
 
     expect(draftReplyMock).toHaveBeenCalledWith('', 'hello');
     expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token');
+  });
+
+  it('redirects META questions with a canned reply instead of generating one', async () => {
+    classifyIntentMock.mockResolvedValue('META');
+
+    await executeCommentResponseJob(payload({ commentBody: '@parakh who is your owner?' }), env);
+
+    expect(draftReplyMock).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("I only help with code review on this PR"), 'token'
+    );
+  });
+
+  it('scrubs secret-like patterns from drafted replies before posting', async () => {
+    classifyIntentMock.mockResolvedValue('QUESTION');
+    const googleKey = `AIza${'x'.repeat(35)}`;
+    draftReplyMock.mockResolvedValue(`The key is ghp_abcdefghijklmnopqrstuvwxyz0123456789 and ${googleKey}.`);
+
+    await executeCommentResponseJob(payload(), env);
+
+    const posted = mocked.postComment.mock.calls[0][3] as string;
+    expect(posted).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(posted).not.toContain(googleKey);
+    expect(posted).toContain('[redacted]');
+  });
+
+  it('hard-caps drafted replies to a bounded length', async () => {
+    classifyIntentMock.mockResolvedValue('QUESTION');
+    draftReplyMock.mockResolvedValue('x'.repeat(5000));
+
+    await executeCommentResponseJob(payload(), env);
+
+    const posted = mocked.postComment.mock.calls[0][3] as string;
+    expect(posted.length).toBeLessThanOrEqual(2001);
+    expect(posted.endsWith('…')).toBe(true);
+  });
+
+  it('skips chat processing entirely when the per-repo hourly budget is exceeded', async () => {
+    const cappedEnv = { ...env, CHAT_LLM_BUDGET_PER_HOUR: '2' } as unknown as Env;
+    incrMock.mockResolvedValue(3);
+
+    await executeCommentResponseJob(payload(), cappedEnv);
+
+    expect(classifyIntentMock).not.toHaveBeenCalled();
+    expect(mocked.postComment).not.toHaveBeenCalled();
+    expect(mocked.getCachedToken).not.toHaveBeenCalled();
+  });
+
+  it('sets the hourly TTL on the first budget window increment', async () => {
+    incrMock.mockResolvedValue(1);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(incrMock).toHaveBeenCalledWith(expect.stringContaining('chat_budget:acme/app:'));
+    expect(expireMock).toHaveBeenCalledWith(expect.stringContaining('chat_budget:acme/app:'), 3600);
   });
 
   it('stays silent for GENERAL intent', async () => {

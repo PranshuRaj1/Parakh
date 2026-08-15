@@ -211,6 +211,7 @@ describe('comment events (issue_comment + pull_request_review_comment)', () => {
           commentBody: 'please re-review',
           commentType,
           githubDeliveryId: 'del-3',
+          commenterLogin: 'dev',
         })
       );
     }

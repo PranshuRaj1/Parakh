@@ -42,6 +42,7 @@ vi.mock('../github/api.js', () => ({
   removeReaction: vi.fn(),
   addCommentReaction: vi.fn(),
   removeCommentReaction: vi.fn(),
+  isRepoCollaborator: vi.fn(),
 }));
 
 vi.mock('../db/reviews.js', () => ({
@@ -100,6 +101,8 @@ vi.mock('../redis.js', () => ({
   createRedisSet: vi.fn(),
   createRedisSetNX: vi.fn(),
   createRedisDel: vi.fn(),
+  createRedisIncr: vi.fn(),
+  createRedisExpire: vi.fn(),
 }));
 
 const {
@@ -137,7 +140,7 @@ import worker from '../index.js';
 import { handleQueueBatch } from '../jobs/queue-handler.js';
 import { handleWebhookEvent } from '../webhook/handler.js';
 import { getCachedToken } from '../github/auth.js';
-import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment, replyToReviewComment, addCommentReaction, isRepoCollaborator } from '../github/api.js';
 import { getRepoSettings } from '../db/reviews.js';
 import {
   insertRule,
@@ -147,13 +150,14 @@ import {
   incrementReinforcementCount,
   insertRuleRelationship,
 } from '../db/rules.js';
-import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet, createRedisIncr, createRedisExpire } from '../redis.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
   addCommentReaction: vi.mocked(addCommentReaction),
+  isRepoCollaborator: vi.mocked(isRepoCollaborator),
   getRepoSettings: vi.mocked(getRepoSettings),
   insertRule: vi.mocked(insertRule),
   findSimilarRules: vi.mocked(findSimilarRules),
@@ -165,6 +169,8 @@ const mocked = {
   createRedisDel: vi.mocked(createRedisDel),
   createRedisGet: vi.mocked(createRedisGet),
   createRedisSet: vi.mocked(createRedisSet),
+  createRedisIncr: vi.mocked(createRedisIncr),
+  createRedisExpire: vi.mocked(createRedisExpire),
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -229,6 +235,7 @@ function makeCommentMessage(body: string, commentType: 'issue_comment' | 'pull_r
       commentBody: body,
       commentType,
       githubDeliveryId: 'del-memory',
+      commenterLogin: 'dev',
     },
   };
 }
@@ -260,11 +267,14 @@ function setupRedisMocks() {
   mocked.createRedisDel.mockReturnValue((async () => undefined) as never);
   mocked.createRedisGet.mockReturnValue((async () => null) as never);
   mocked.createRedisSet.mockReturnValue((async () => undefined) as never);
+  mocked.createRedisIncr.mockReturnValue((async () => 1) as never);
+  mocked.createRedisExpire.mockReturnValue((async () => undefined) as never);
 }
 
 function setupLeaves() {
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null } as never);
+  mocked.isRepoCollaborator.mockResolvedValue(true);
   mocked.insertRule.mockResolvedValue({
     id: 'rule-new', body: 'never flag EOF newline issues', priority: 'normal', kind: 'instruction',
   } as never);

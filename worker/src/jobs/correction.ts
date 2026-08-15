@@ -16,6 +16,7 @@
 
 import type { ContradictionJobPayload, RuleKind, RulePriority } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
+import { isRepoCollaborator } from '../github/api.js';
 import { insertRule } from '../db/rules.js';
 import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
@@ -49,8 +50,44 @@ export function isInstructionRule(ruleBody: string): boolean {
 }
 
 /**
+ * Attempts to override, extract, or reveal the bot's own instructions/secrets
+ * instead of stating a coding standard. A correction matching these must never
+ * become a stored rule — it would poison future reviews.
+ */
+const INJECTION_PATTERNS = [
+  /ignore\s+(?:all\s+)?(?:your|the|previous|prior|above)\s+instructions?/i,
+  /disregard\s+(?:your|the|this|all)\s+instructions?/i,
+  /system\s+prompt/i,
+  /developer\s+mode/i,
+  /jailbreak/i,
+  /reveal\s+(?:your\s+)?(?:secrets?|api\s*[-_]?keys?|instructions?|prompts?)/i,
+  /print\s+(?:your|the|all|my)\s+(?:secrets?|api\s*[-_]?keys?|instructions?|prompts?)/i,
+  /show\s+(?:me\s+)?(?:your|the)\s+(?:secrets?|api\s*[-_]?keys?|system\s+prompt)/i,
+  /(?:give|send|leak)\s+(?:me\s+)?(?:your\s+)?(?:secrets?|api\s*[-_]?keys?)/i,
+];
+
+export function containsInjectionAttempt(ruleBody: string): boolean {
+  return INJECTION_PATTERNS.some((pattern) => pattern.test(ruleBody));
+}
+
+/**
+ * Thrown when a correction cannot become a rule — non-collaborator author,
+ * missing author identity, or an injection-style body. The caller replies with
+ * a canned refusal instead of the normal "Learned" confirmation.
+ */
+export class CorrectionRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CorrectionRejectedError';
+  }
+}
+
+/**
  * Save a correction comment as an ACTIVE rule and enqueue the contradiction check.
  * Returns the created rule (used by the caller to post a confirmation reply).
+ *
+ * @param token - Installation token used to verify the commenter is a repository
+ *   collaborator. Rules may only be taught by trusted users.
  */
 export async function saveCorrectionAsRule(
   input: {
@@ -59,8 +96,10 @@ export async function saveCorrectionAsRule(
     repo: string;
     prNumber: number;
     commentBody: string;
+    commenterLogin?: string;
   },
-  env: Env
+  env: Env,
+  token: string
 ) {
   const fullRepo = `${input.owner}/${input.repo}`;
 
@@ -70,6 +109,22 @@ export async function saveCorrectionAsRule(
     .replace(/^\s*@parakh\b(?:\s+correction\b)?\s*[:,-]?\s*/i, '')
     .trim();
   if (!ruleBody) throw new Error('Correction must include rule text');
+
+  if (containsInjectionAttempt(ruleBody)) {
+    throw new CorrectionRejectedError('Correction body looks like a prompt-injection attempt');
+  }
+
+  // Only repo collaborators may teach rules. Fail closed: missing identity
+  // (e.g. queue message from before commenterLogin shipped) is a rejection.
+  if (!input.commenterLogin) {
+    throw new CorrectionRejectedError('Cannot verify commenter identity — correction rejected');
+  }
+  const isCollaborator = await isRepoCollaborator(input.owner, input.repo, input.commenterLogin, token);
+  if (!isCollaborator) {
+    throw new CorrectionRejectedError(
+      `Non-collaborator ${input.commenterLogin} cannot add rules to ${fullRepo}`
+    );
+  }
 
   const { llm } = createLLMClients(env);
 

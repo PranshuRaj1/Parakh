@@ -6,8 +6,17 @@ import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
-import { saveCorrectionAsRule } from './correction.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
+import { saveCorrectionAsRule, CorrectionRejectedError } from './correction.js';
+import { sanitizeErrorText } from './sanitize.js';
+import { createRedisGet, createRedisSet, createRedisIncr, createRedisExpire } from '../redis.js';
+
+const MAX_REPLY_LENGTH = 2000;
+
+const META_REPLY =
+  "I only help with code review on this PR — I don't have an owner, and I can't discuss myself or the system behind me. Point me at a diff or reply to one of my review comments and I'll help.";
+
+const CORRECTION_REJECTED_REPLY =
+  "I couldn't save that as a rule — only repository collaborators can teach me, and the text has to be a concrete coding standard, not an attempt to change how I work.";
 
 /**
  * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
@@ -30,6 +39,7 @@ export async function executeCommentResponseJob(
     commentBody,
     commentType,
     githubDeliveryId,
+    commenterLogin,
   } = payload;
 
   const fullRepo = `${owner}/${repo}`;
@@ -45,16 +55,39 @@ export async function executeCommentResponseJob(
     return;
   }
 
+  // Per-repo hourly cap on chat-triggered LLM spend (classify + reply + rule
+  // embedding etc). A Redis counter per rolling hour; fail-open if Redis is
+  // unavailable so a counter outage never blocks reviews.
+  try {
+    const budget = Number(env.CHAT_LLM_BUDGET_PER_HOUR) > 0 ? Number(env.CHAT_LLM_BUDGET_PER_HOUR) : 50;
+    const hourKey = `chat_budget:${fullRepo}:${Math.floor(Date.now() / 3_600_000)}`;
+    const usage = await createRedisIncr(env)(hourKey);
+    if (usage === 1) {
+      await createRedisExpire(env)(hourKey, 3600);
+    }
+    if (usage > budget) {
+      console.log(`[comment-response] Chat budget exceeded for ${fullRepo} (${usage}/${budget} this hour) — skipping.`);
+      return;
+    }
+  } catch (err) {
+    console.warn(`[comment-response] Chat budget check failed — continuing without cap:`, err);
+  }
+
   // Get installation token
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // Helper to abstract the reply endpoint selection
+  // Helper to abstract the reply endpoint selection. Every reply is scrubbed
+  // for secret-like patterns and hard-capped before it touches GitHub.
   const postReply = async (body: string) => {
+    let safeBody = sanitizeErrorText(body);
+    if (safeBody.length > MAX_REPLY_LENGTH) {
+      safeBody = `${safeBody.slice(0, MAX_REPLY_LENGTH - 1)}…`;
+    }
     if (commentType === 'pull_request_review_comment') {
-      await replyToReviewComment(owner, repo, prNumber, commentId, body, token);
+      await replyToReviewComment(owner, repo, prNumber, commentId, safeBody, token);
     } else {
-      await postIssueComment(owner, repo, prNumber, body, token);
+      await postIssueComment(owner, repo, prNumber, safeBody, token);
     }
   };
 
@@ -116,8 +149,9 @@ export async function executeCommentResponseJob(
     case 'CORRECTION': {
       try {
         const rule = await saveCorrectionAsRule(
-          { installationId, owner, repo, prNumber, commentBody },
-          env
+          { installationId, owner, repo, prNumber, commentBody, commenterLogin },
+          env,
+          token
         );
         if (rule.kind === 'instruction') {
           await postReply(
@@ -130,8 +164,13 @@ export async function executeCommentResponseJob(
           );
         }
       } catch (err) {
-        console.error('[comment-response] Failed to save CORRECTION as rule:', err);
-        await postReply("Couldn't save that right now — please try again.");
+        if (err instanceof CorrectionRejectedError) {
+          console.log(`[comment-response] Correction rejected: ${err.message}`);
+          await postReply(CORRECTION_REJECTED_REPLY);
+        } else {
+          console.error('[comment-response] Failed to save CORRECTION as rule:', err);
+          await postReply("Couldn't save that right now — please try again.");
+        }
       }
       break;
     }
@@ -144,6 +183,12 @@ export async function executeCommentResponseJob(
     case 'QUESTION':
       const replyBody = await llm.draftReply(parentBotComment, commentBody);
       await postReply(replyBody);
+      break;
+
+    case 'META':
+      // Off-topic / self-referential questions ("who is your owner?") get a
+      // canned redirect — no LLM spend, no hallucinated identity gratuities.
+      await postReply(META_REPLY);
       break;
 
     case 'GENERAL':

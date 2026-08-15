@@ -90,6 +90,9 @@ export interface Env {
   // Worker API auth (dashboard → worker)
   WORKER_API_SECRET: string;
 
+  // Per-repo hourly cap on comment-triggered LLM calls (default 50).
+  CHAT_LLM_BUDGET_PER_HOUR?: string;
+
 }
 
 // ─── Worker Export ────────────────────────────────────────────────────────────

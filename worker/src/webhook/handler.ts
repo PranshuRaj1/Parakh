@@ -219,6 +219,7 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     commentBody: comment.body,
     commentType: 'issue_comment',
     githubDeliveryId: deliveryId,
+    commenterLogin: comment.user.login,
   };
 
   await env.WATCHDOG_QUEUE.send(payload);
@@ -267,6 +268,7 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     commentBody: comment.body,
     commentType: 'pull_request_review_comment',
     githubDeliveryId: deliveryId,
+    commenterLogin: comment.user.login,
   };
 
   await env.WATCHDOG_QUEUE.send(payload);
