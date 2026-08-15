@@ -13,7 +13,6 @@ import type {
   ReviewStage,
   Review,
   ReviewMode,
-  ReviewTriggerResult,
   IncrementalReviewResult,
 } from '@parakh/shared';
 import {
@@ -48,7 +47,6 @@ import {
   updateReviewResults,
   updateReviewReactions,
   getLatestReviewByPR,
-  getActiveReviewByPR,
   getLatestCompletedReviewBefore,
   insertReview,
   getReview,
@@ -101,6 +99,7 @@ import {
   getReviewRetryDelaySeconds,
 } from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
+import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
@@ -450,6 +449,8 @@ const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:$
 
 interface ReviewState {
   reviewId: string;
+  requestedMode: ReviewMode;
+  effectiveMode: ReviewMode;
   allFiles: string[];
   completedFiles: string[];
   accumulatedFindings: Finding[];
@@ -1055,7 +1056,7 @@ async function executeReviewJobInternal(
     if (state && (
       state.diffHash !== executionDiffHash ||
       state.reviewId !== reviewId ||
-      state.requestedMode !== payload.requestedMode ||
+      state.requestedMode !== (payload.requestedMode ?? 'full') ||
       state.effectiveMode !== effectiveMode
     )) {
       console.warn('[review] Resume state does not match the pinned review — starting fresh');
@@ -1081,7 +1082,7 @@ async function executeReviewJobInternal(
       );
       state = {
         reviewId,
-        requestedMode: payload.requestedMode,
+        requestedMode: payload.requestedMode ?? 'full',
         effectiveMode,
         allFiles,
         completedFiles: [],
@@ -1097,6 +1098,8 @@ async function executeReviewJobInternal(
         terminalFailedFiles: [],
       };
     }
+
+    state = state as ReviewState;
 
     await saveReviewState(fullRepo, prNumber, state, redisSet);
     const remainingFiles = state.allFiles.filter((file) => !state!.completedFiles.includes(file));
