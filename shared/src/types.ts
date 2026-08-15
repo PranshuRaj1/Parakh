@@ -198,6 +198,8 @@ export interface ReviewJobPayload {
   repo: string;
   prNumber: number;
   reviewId: string;
+  /** Optional — the requested review mode. Absent on queue messages from before mode rollout. */
+  requestedMode?: ReviewMode;
 }
 
 export interface CommentJobPayload {
