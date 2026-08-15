@@ -141,6 +141,11 @@ export async function getFileContent(
  * Post an issue comment on a PR.
  * (PRs are issues — uses the Issues API.)
  *
+ * @param owner - Repository owner (e.g. "acme").
+ * @param repo - Repository name (e.g. "app").
+ * @param prNumber - Pull request number.
+ * @param body - Markdown comment body.
+ * @param token - GitHub installation access token.
  * @param inReplyToId - When set, the comment is nested under that issue
  *   comment (GitHub renders it as a reply in the same thread).
  */
