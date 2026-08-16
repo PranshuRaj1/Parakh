@@ -28,6 +28,7 @@ max_batch_size = 1
 # REASONING_THINKING_BUDGET (optional, default 1024 — max thinking tokens per review call)
 # REASONING_RETENTION_DAYS (optional, default 14 — prune stored reasoning after this)
 # DASHBOARD_BASE_URL (optional — adds a dashboard reasoning link to PR comments)
+# CHAT_LLM_BUDGET_PER_HOUR (optional, default 50 — per-repo hourly cap on comment-triggered LLM calls)
 # DATABASE_URL
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN

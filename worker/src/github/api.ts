@@ -166,7 +166,9 @@ export async function postComment(
   });
 }
 
-/** Check whether `headSha` descends from `baseSha` without downloading a diff. */
+/**
+ * Check whether `headSha` descends from `baseSha` without downloading a diff.
+ */
 export async function getCompareStatus(
   owner: string,
   repo: string,
@@ -177,6 +179,32 @@ export async function getCompareStatus(
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`;
   const result = await githubFetch<{ status: 'ahead' | 'behind' | 'diverged' | 'identical' }>(url, token);
   return result.status;
+}
+
+/**
+ * Check whether a GitHub user is a collaborator on a repository.
+ *
+ * GET /repos/{owner}/{repo}/collaborators/{username} returns 204 when the
+ * user has any access level, 404 otherwise. Used to gate comment-driven rule
+ * creation to trusted users.
+ */
+export async function isRepoCollaborator(
+  owner: string,
+  repo: string,
+  username: string,
+  token: string
+): Promise<boolean> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}`;
+  const response = await fetch(url, {
+    headers: headers(token),
+    signal: createRequestSignal(),
+  });
+
+  if (response.status === 204) return true;
+  if (response.status === 404) return false;
+
+  const body = await response.text();
+  throw new Error(`Collaborator check failed (${response.status}) ${url}: ${body}`);
 }
 
 export async function postCommentOnce(

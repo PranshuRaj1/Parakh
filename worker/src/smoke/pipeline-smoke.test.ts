@@ -87,6 +87,8 @@ vi.mock('../redis.js', () => ({
   createRedisSet: vi.fn(),
   createRedisSetNX: vi.fn(),
   createRedisDel: vi.fn(),
+  createRedisIncr: vi.fn(),
+  createRedisExpire: vi.fn(),
 }));
 
 const { classifyIntentMock, draftReplyMock, reviewDiffMock } = vi.hoisted(() => ({
@@ -114,7 +116,7 @@ import { buildIntentPrompt } from '../gemini/prompts.js';
 import { getCachedToken } from '../github/auth.js';
 import { postComment, addReaction, getPRDetails, addCommentReaction } from '../github/api.js';
 import { insertReview, getLatestReviewByPR, getResumableReview, getRepoSettings } from '../db/reviews.js';
-import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet, createRedisIncr, createRedisExpire } from '../redis.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
@@ -130,6 +132,8 @@ const mocked = {
   createRedisDel: vi.mocked(createRedisDel),
   createRedisGet: vi.mocked(createRedisGet),
   createRedisSet: vi.mocked(createRedisSet),
+  createRedisIncr: vi.mocked(createRedisIncr),
+  createRedisExpire: vi.mocked(createRedisExpire),
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -205,6 +209,7 @@ function makeCommentMessage(body: string, attempts = 1) {
       authorAssociation: 'OWNER',
       authorLogin: 'dev',
       githubDeliveryId: 'del-comment',
+      commenterLogin: 'dev',
     },
   };
 }
@@ -214,6 +219,8 @@ function setupRedisMocks() {
   mocked.createRedisDel.mockReturnValue((async () => undefined) as never);
   mocked.createRedisGet.mockReturnValue((async () => null) as never);
   mocked.createRedisSet.mockReturnValue((async () => undefined) as never);
+  mocked.createRedisIncr.mockReturnValue((async () => 1) as never);
+  mocked.createRedisExpire.mockReturnValue((async () => undefined) as never);
 }
 
 function setupReviewLeaves() {

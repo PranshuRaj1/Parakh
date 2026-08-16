@@ -216,14 +216,15 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     owner,
     repo,
     prNumber,
-commentId: comment.id,
-      commentBody: comment.body,
-      commentType: 'issue_comment',
-      inReplyToCommentId: comment.in_reply_to_id,
-      authorAssociation: comment.author_association ?? 'NONE',
-      authorLogin: comment.user.login,
-      githubDeliveryId: deliveryId,
-    };
+    commentId: comment.id,
+    commentBody: comment.body,
+    commentType: 'issue_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
+    githubDeliveryId: deliveryId,
+    commenterLogin: comment.user.login,
+  };
 
   await env.WATCHDOG_QUEUE.send(payload);
   return { status: 200, body: 'comment response dispatched' };
@@ -268,13 +269,14 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     repo,
     prNumber,
 commentId: comment.id,
-      commentBody: comment.body,
-      commentType: 'pull_request_review_comment',
-      inReplyToCommentId: comment.in_reply_to_id,
-      authorAssociation: comment.author_association ?? 'NONE',
-      authorLogin: comment.user.login,
-      githubDeliveryId: deliveryId,
-    };
+    commentBody: comment.body,
+    commentType: 'pull_request_review_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
+    githubDeliveryId: deliveryId,
+    commenterLogin: comment.user.login,
+  };
 
   await env.WATCHDOG_QUEUE.send(payload);
   return { status: 200, body: 'comment response dispatched' };

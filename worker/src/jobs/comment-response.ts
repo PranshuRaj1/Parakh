@@ -6,10 +6,19 @@ import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
-import { saveCorrectionAsRule, isInstructionRule } from './correction.js';
+import { saveCorrectionAsRule, CorrectionRejectedError, isInstructionRule } from './correction.js';
+import { sanitizeErrorText } from './sanitize.js';
 import { findingMappingKey } from './anchored-findings.js';
 import { truncateBody } from './truncate.js';
-import { createRedisGet, createRedisSet } from '../redis.js';
+import { createRedisGet, createRedisSet, createRedisIncr, createRedisExpire } from '../redis.js';
+
+const MAX_REPLY_LENGTH = 2000;
+
+const META_REPLY =
+  "I only help with code review on this PR — I don't have an owner, and I can't discuss myself or the system behind me. Point me at a diff or reply to one of my review comments and I'll help.";
+
+const CORRECTION_REJECTED_REPLY =
+  "I couldn't save that as a rule — only repository collaborators can teach me, and the text has to be a concrete coding standard, not an attempt to change how I work.";
 
 // ─── Authorization Helpers ─────────────────────────────────────────────────────
 
@@ -79,6 +88,7 @@ export async function executeCommentResponseJob(
     authorAssociation,
     authorLogin,
     githubDeliveryId,
+    commenterLogin,
   } = payload;
 
   const fullRepo = `${owner}/${repo}`;
@@ -94,22 +104,45 @@ export async function executeCommentResponseJob(
     return;
   }
 
+  // Per-repo hourly cap on chat-triggered LLM spend (classify + reply + rule
+  // embedding etc). A Redis counter per rolling hour; fail-open if Redis is
+  // unavailable so a counter outage never blocks reviews.
+  try {
+    const budget = Number(env.CHAT_LLM_BUDGET_PER_HOUR) > 0 ? Number(env.CHAT_LLM_BUDGET_PER_HOUR) : 50;
+    const hourKey = `chat_budget:${fullRepo}:${Math.floor(Date.now() / 3_600_000)}`;
+    const usage = await createRedisIncr(env)(hourKey);
+    if (usage === 1) {
+      await createRedisExpire(env)(hourKey, 3600);
+    }
+    if (usage > budget) {
+      console.log(`[comment-response] Chat budget exceeded for ${fullRepo} (${usage}/${budget} this hour) — skipping.`);
+      return;
+    }
+  } catch (err) {
+    console.warn(`[comment-response] Chat budget check failed — continuing without cap:`, err);
+  }
+
   // Get installation token
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // Helper for reply endpoint selection:
+// Helper to abstract the reply endpoint selection. Every reply is scrubbed
+  // for secret-like patterns and hard-capped before it touches GitHub:
   // - review comments thread into the diff via /replies; the target must be
   //   the thread's top-level comment (GitHub rejects replies to a reply), so
   //   walk the in_reply_to_id chain back to the root first.
   // - issue comments can't thread at all (GitHub does not support
   //   in_reply_to_id on the Conversation tab), so they post top-level.
   const postReply = async (body: string) => {
+    let safeBody = sanitizeErrorText(body);
+    if (safeBody.length > MAX_REPLY_LENGTH) {
+      safeBody = `${safeBody.slice(0, MAX_REPLY_LENGTH - 1)}…`;
+    }
     if (commentType === 'pull_request_review_comment') {
       const rootId = await resolveReviewCommentRoot(owner, repo, commentId, inReplyToCommentId, token);
-      await replyToReviewComment(owner, repo, prNumber, rootId, body, token);
+      await replyToReviewComment(owner, repo, prNumber, rootId, safeBody, token);
     } else {
-      await postIssueComment(owner, repo, prNumber, body, token);
+      await postIssueComment(owner, repo, prNumber, safeBody, token);
     }
   };
 
@@ -241,7 +274,9 @@ export async function executeCommentResponseJob(
       // trust) need an owner/member to approve the rule before it enforces.
       const initialStatus = trust === 'write' ? 'PENDING' : 'ACTIVE';
 
-      // Save per rule — one insert + one contradiction enqueue each.
+      // Save per rule — one insert + one contradiction enqueue each. A
+      // rejection (injection body, non-collaborator author) aborts with a
+      // canned refusal instead of the normal "Learned" confirmation.
       const savedRules = [];
       const failedBodies = [];
       for (const rule of rules) {
@@ -253,11 +288,18 @@ export async function executeCommentResponseJob(
               priority: rule.priority,
               createdBy: authorLogin,
               initialStatus,
+              commenterLogin: authorLogin,
             },
-            env
+            env,
+            token
           );
           savedRules.push(saved);
         } catch (err) {
+          if (err instanceof CorrectionRejectedError) {
+            console.log(`[comment-response] Correction rejected: ${err.message}`);
+            await postReply(CORRECTION_REJECTED_REPLY);
+            return;
+          }
           console.error(`[comment-response] Failed to save rule "${truncateBody(rule.body)}":`, err);
           failedBodies.push(rule.body);
         }
@@ -290,6 +332,12 @@ export async function executeCommentResponseJob(
     case 'QUESTION':
       const replyBody = await llm.draftReply(parentBotComment, commentBody);
       await postReply(replyBody);
+      break;
+
+    case 'META':
+      // Off-topic / self-referential questions ("who is your owner?") get a
+      // canned redirect — no LLM spend, no hallucinated identity gratuities.
+      await postReply(META_REPLY);
       break;
 
     case 'GENERAL':

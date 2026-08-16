@@ -133,6 +133,25 @@ export function createRedisSetNX(env: Env): (key: string, value: string, exSecon
 }
 
 /**
+ * INCR — atomically increment a key and return the new value.
+ * Used for per-repo/hour chat-spend budget counters. TTL is applied by the
+ * caller (via createRedisExpire) so a fresh window resets the counter.
+ */
+export function createRedisIncr(env: Env): (key: string) => Promise<number> {
+  return async (key: string) => {
+    const response = await fetch(
+      `${env.UPSTASH_REDIS_URL}/incr/${encodeURIComponent(key)}`,
+      { headers: { Authorization: `Bearer ${env.UPSTASH_REDIS_TOKEN}` }, signal: createRequestSignal() }
+    );
+    if (!response.ok) {
+      throw new Error(`Redis INCR failed (${response.status}) for key ${key}`);
+    }
+    const { result } = await parseRedisResponse(response, 'INCR', key);
+    return result as number;
+  };
+}
+
+/**
  * DEL — delete a key. Used for lock release and stale state cleanup.
  */
 export function createRedisDel(env: Env): (key: string) => Promise<void> {

@@ -43,7 +43,7 @@ export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADI
 export type StageReasonCode = 'PROCESSING' | 'RATE_LIMITED_BACKOFF' | 'RETRYING_AFTER_FAILURE' | 'WAITING_ON_GEMINI' | 'WAITING_ON_GITHUB_API' | 'RETRY_QUEUED';
 
 /** Intent classification for reply comments. */
-export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL';
+export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL' | 'META';
 
 /**
  * A single distinct corrective standard extracted from a CORRECTION comment.
@@ -250,6 +250,12 @@ export interface CommentJobPayload {
   authorAssociation: GitHubAuthorAssociation;
   authorLogin: string;
   githubDeliveryId: string;
+  /**
+   * GitHub login of the comment author. Optional because messages already in
+   * the queue when this field shipped won't have it — the correction guard
+   * fails closed (rejects) when it's absent.
+   */
+  commenterLogin?: string;
 }
 
 export interface ContradictionJobPayload {
