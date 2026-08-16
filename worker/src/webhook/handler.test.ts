@@ -217,6 +217,21 @@ describe('comment events (issue_comment + pull_request_review_comment)', () => {
     }
   });
 
+  it('propagates the comment in_reply_to_id so replies can anchor at the thread root', async () => {
+    const event = {
+      ...COMMENT_EVENT,
+      comment: { ...COMMENT_EVENT.comment, in_reply_to_id: 250 },
+      pull_request: PR_EVENT.pull_request,
+    };
+    const env = { ...BASE_ENV };
+
+    await handleWebhookEvent(event, 'pull_request_review_comment', 'del-4', env);
+
+    expect(queueSend(env)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'COMMENT_RESPONSE', inReplyToCommentId: 250 })
+    );
+  });
+
   it('ignores comments posted by the bot itself (self-loop prevention)', async () => {
     for (const { eventType, event } of commentShapes) {
       const selfEvent = {

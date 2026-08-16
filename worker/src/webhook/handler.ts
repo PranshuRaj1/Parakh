@@ -7,7 +7,7 @@
  */
 
 import { REACTIONS, GITHUB_APP_BOT_SUFFIX } from '@parakh/shared';
-import type { ReviewJobPayload, CommentJobPayload } from '@parakh/shared';
+import type { ReviewJobPayload, CommentJobPayload, GitHubAuthorAssociation } from '@parakh/shared';
 import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
@@ -30,6 +30,7 @@ interface WebhookEvent {
     id: number;
     body: string;
     user: { login: string; id: number };
+    author_association: GitHubAuthorAssociation;
     in_reply_to_id?: number;
   };
   issue?: {
@@ -218,6 +219,9 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'issue_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
     githubDeliveryId: deliveryId,
     commenterLogin: comment.user.login,
   };
@@ -264,9 +268,12 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     owner,
     repo,
     prNumber,
-    commentId: comment.id,
+commentId: comment.id,
     commentBody: comment.body,
     commentType: 'pull_request_review_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
+    authorAssociation: comment.author_association ?? 'NONE',
+    authorLogin: comment.user.login,
     githubDeliveryId: deliveryId,
     commenterLogin: comment.user.login,
   };

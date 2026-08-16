@@ -2,8 +2,23 @@
 
 export type ReviewMode = 'full' | 'incremental';
 
-/** Rule lifecycle status. SUGGESTED is cut from v1 — named future extension for auto-suggestion. */
-export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE';
+/**
+ * GitHub's `author_association` field on comments. `resolveTrustLevel` maps
+ * these onto Parakh's internal trust levels; the union catches typos at the
+ * call site instead of at runtime.
+ */
+export type GitHubAuthorAssociation =
+  | 'OWNER'
+  | 'MEMBER'
+  | 'COLLABORATOR'
+  | 'CONTRIBUTOR'
+  | 'FIRST_TIMER'
+  | 'FIRST_TIME_CONTRIBUTOR'
+  | 'MANNEQUIN'
+  | 'NONE';
+
+/** Rule lifecycle status. PENDING = collaborator-created rule awaiting owner/member approval before it takes effect. */
+export type RuleStatus = 'ACTIVE' | 'SUPERSEDED' | 'INACTIVE' | 'PENDING';
 
 /** Rule priority — determines severity weight for violations. */
 export type RulePriority = 'high' | 'normal';
@@ -30,6 +45,26 @@ export type StageReasonCode = 'PROCESSING' | 'RATE_LIMITED_BACKOFF' | 'RETRYING_
 /** Intent classification for reply comments. */
 export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL' | 'META';
 
+/**
+ * A single distinct corrective standard extracted from a CORRECTION comment.
+ * Extracted by the same folded LLM call that classifies the intent.
+ */
+export interface CorrectionRuleInput {
+  body: string;
+  priority: RulePriority;
+}
+
+/**
+ * Result of the folded intent + rule-extraction LLM call. `rules` carries the
+ * distinct standards from a CORRECTION comment (at most MAX_RULES_PER_COMMENT);
+ * `ignored` carries non-actionable excerpts that were not turned into rules.
+ */
+export interface CommentAnalysis {
+  intent: Intent;
+  rules: CorrectionRuleInput[];
+  ignored: string[];
+}
+
 /** Relationship between two rules, determined by contradiction engine. */
 export type Relationship = 'DUPLICATE' | 'REFINEMENT' | 'CONTRADICTION' | 'UNRELATED';
 
@@ -48,6 +83,8 @@ export interface Rule {
   supersedes: string | null;
   superseded_by: string | null;
   source_pr: number | null;
+  /** Login of the user who created this rule (null for dashboard-created rules). */
+  created_by: string | null;
   /** Number of individual violation instances across reviews. Incremented per-finding, not per-review. */
   evidence_count: number;
   /** Number of duplicate correction attempts (DUPLICATE branch in contradiction engine). */
@@ -196,6 +233,8 @@ export interface ReviewJobPayload {
   repo: string;
   prNumber: number;
   reviewId: string;
+  /** Optional — the requested review mode. Absent on queue messages from before mode rollout. */
+  requestedMode?: ReviewMode;
 }
 
 export interface CommentJobPayload {
@@ -207,6 +246,9 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
+  inReplyToCommentId?: number;
+  authorAssociation: GitHubAuthorAssociation;
+  authorLogin: string;
   githubDeliveryId: string;
   /**
    * GitHub login of the comment author. Optional because messages already in

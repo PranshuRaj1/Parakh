@@ -1,31 +1,6 @@
 import NextAuth from 'next-auth';
-import GithubProvider from 'next-auth/providers/github';
+import { authOptions } from '@/lib/auth';
 
-const handler = NextAuth({
-  providers: [
-    GithubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID || '',
-      clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-    }),
-  ],
-  callbacks: {
-    async session({ session, token }) {
-      if (session.user) {
-        // Expose username (login) to the session
-        (session.user as Record<string, unknown>).login = token.login;
-      }
-      return session;
-    },
-    async jwt({ token, profile }) {
-      if (profile) {
-        token.login = (profile as Record<string, unknown>).login;
-      }
-      return token;
-    },
-  },
-  pages: {
-    signIn: '/',
-  },
-});
+const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };

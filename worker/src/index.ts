@@ -11,7 +11,7 @@
 import { verifySignature } from './webhook/verify.js';
 import { handleWebhookEvent } from './webhook/handler.js';
 import { handleQueueBatch } from './jobs/queue-handler.js';
-import { handleCreateRule } from './jobs/rule-api.js';
+import { handleCreateRule, handleApproveRule, handleRejectRule } from './jobs/rule-api.js';
 import { handleRetryReview } from './jobs/retry-api.js';
 import { handleCronTrigger } from './cron.js';
 import type { JobPayload } from '@parakh/shared';
@@ -124,6 +124,17 @@ export default {
       return handleRetryRequest(request, retryMatch[1], env, _ctx);
     }
 
+    // ── Dashboard rule approval API ─────────────────────────────────
+    const approveMatch = url.pathname.match(/^\/api\/rules\/([^\/]+)\/approve$/);
+    if (approveMatch && request.method === 'POST') {
+      return handleRuleApprovalRequest(request, approveMatch[1], 'ACTIVE', env, _ctx);
+    }
+
+    const rejectMatch = url.pathname.match(/^\/api\/rules\/([^\/]+)\/reject$/);
+    if (rejectMatch && request.method === 'POST') {
+      return handleRuleApprovalRequest(request, rejectMatch[1], 'INACTIVE', env, _ctx);
+    }
+
     // ── Health check ──────────────────────────────────────────────────
     if (url.pathname === '/' || url.pathname === '/health') {
       return new Response(JSON.stringify({ status: 'ok', service: 'parakh-worker' }), {
@@ -216,4 +227,38 @@ async function handleRetryRequest(request: Request, reviewId: string, env: Env, 
   }
 
   return handleRetryReview(reviewId, env, _ctx);
+}
+
+async function handleRuleApprovalRequest(
+  request: Request,
+  ruleId: string,
+  newStatus: 'ACTIVE' | 'INACTIVE',
+  env: Env,
+  _ctx?: ExecutionContext
+): Promise<Response> {
+  const authHeader = request.headers.get('Authorization') || '';
+  const expectedAuth = `Bearer ${env.WORKER_API_SECRET}`;
+
+  if (authHeader !== expectedAuth) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    if (newStatus === 'ACTIVE') {
+      await handleApproveRule(ruleId, env);
+    } else {
+      await handleRejectRule(ruleId, env);
+    }
+    return new Response(JSON.stringify({ ruleId, status: newStatus }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error(`[worker] Rule ${newStatus} error:`, err);
+    const message = err instanceof Error ? err.message : 'Internal error';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

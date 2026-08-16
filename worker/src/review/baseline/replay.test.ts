@@ -9,7 +9,7 @@ import {
 
 describe('current review baseline', () => {
   it('matches the reviewed, mechanically generated golden file', async () => {
-    const expected = await readFile(EXPECTED_BASELINE_PATH, 'utf8');
+    const expected = (await readFile(EXPECTED_BASELINE_PATH, 'utf8')).replace(/\r\n/g, '\n');
     expect(await generateCurrentBaselines()).toBe(expected);
   });
 

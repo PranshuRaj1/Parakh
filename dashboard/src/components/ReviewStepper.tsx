@@ -197,10 +197,10 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
 
                     {/* Step Content */}
                     <div className={`flex flex-col pt-0.5 ${isPending ? 'opacity-50' : ''}`}>
-                      <span className={`font-dm-sans font-medium text-[16px] ${stepFailed ? 'text-[#ffb4ab]' : (isCurrent ? 'text-[#9bd3ad]' : 'text-white')}`}>
+                      <span className={`font-dm-sans font-medium text-sm ${stepFailed ? 'text-[#ffb4ab]' : (isCurrent ? 'text-[#9bd3ad]' : 'text-white')}`}>
                         {step.label}
                       </span>
-                      <span className={`font-space-mono text-[12px] mt-1 ${isCurrent ? 'text-[#9bd3ad]/70' : 'text-[#c0c9c0]'}`}>
+                      <span className={`font-space-mono text-[11px] mt-0.5 ${isCurrent ? 'text-[#9bd3ad]/70' : 'text-[#c0c9c0]'}`}>
                         {detailText}
                       </span>
                     </div>
@@ -214,15 +214,15 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
 
       {/* Bottom Section: Model Reasoning */}
       {(!isCompletedOverall && !isFailed) && (
-        <div className="mt-16 max-w-4xl mx-auto w-full">
-          <div className="glass-card rounded-xl p-6 flex flex-col md:flex-row items-start md:items-center gap-6">
-            <div className="relative w-16 h-16 rounded-lg bg-[#0A0A0A] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
-              <span className="material-symbols-outlined text-[#9bd3ad] text-3xl z-10">memory_alt</span>
+        <div className="mt-4 max-w-4xl mx-auto w-full">
+          <div className="glass-card rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center gap-4">
+            <div className="relative w-12 h-12 rounded-lg bg-[#0A0A0A] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+              <span className="material-symbols-outlined text-[#9bd3ad] text-2xl z-10">memory_alt</span>
               <div className="absolute inset-0 border-2 border-transparent border-t-[#9bd3ad] border-r-[#9bd3ad] rounded-lg animate-spin" style={{ animationDuration: '2s' }}></div>
             </div>
             <div className="flex-1">
-              <div className="flex items-center gap-3 mb-2">
-                <h4 className="font-space-mono text-[14px] text-white tracking-wider font-bold">MODEL REASONING</h4>
+              <div className="flex items-center gap-3 mb-1">
+                <h4 className="font-space-mono text-[13px] text-white tracking-wider font-bold">MODEL REASONING</h4>
                 <div className="px-2 py-0.5 rounded-full bg-[#9bd3ad]/10 border border-[#9bd3ad]/20">
                   <span className="font-space-mono text-[10px] text-[#9bd3ad] uppercase font-bold">Live</span>
                 </div>
@@ -232,11 +232,11 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
                    </span>
                 )}
               </div>
-              <div className="font-dm-sans text-[16px] text-[#c0c9c0] leading-relaxed">
+              <div className="font-dm-sans text-sm text-[#c0c9c0] leading-relaxed">
                 {progress.activeStepLogs && progress.activeStepLogs.length > 0 ? (
-                  <div className="flex flex-col gap-1 h-12 overflow-hidden justify-end">
+                  <div className="flex flex-col gap-1 h-10 overflow-hidden justify-end">
                     {progress.activeStepLogs.slice(-2).map((log, i) => (
-                      <div key={i} className="flex gap-2 text-sm">
+                      <div key={`${log.at}-${log.code}-${i}`} className="flex gap-2 text-sm">
                         <span className="text-[#9bd3ad]/70 font-space-mono shrink-0">[{log.code}]</span>
                         <span className="truncate">{log.detail}</span>
                       </div>

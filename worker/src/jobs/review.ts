@@ -13,7 +13,6 @@ import type {
   ReviewStage,
   Review,
   ReviewMode,
-  ReviewTriggerResult,
   IncrementalReviewResult,
 } from '@parakh/shared';
 import {
@@ -28,6 +27,7 @@ import {
   REVIEW_LOCK_TTL_SECONDS,
 } from '@parakh/shared';
 import { getCachedToken } from '../github/auth.js';
+import { postAnchoredFindings } from './anchored-findings.js';
 import {
   fetchDiff,
   fetchDiffPinned,
@@ -38,6 +38,7 @@ import {
   addReaction,
   removeReaction,
   replyToReviewComment,
+  resolveReviewCommentRoot,
   addCommentReaction,
   removeCommentReaction,
 } from '../github/api.js';
@@ -46,7 +47,6 @@ import {
   updateReviewResults,
   updateReviewReactions,
   getLatestReviewByPR,
-  getActiveReviewByPR,
   getLatestCompletedReviewBefore,
   insertReview,
   getReview,
@@ -99,6 +99,7 @@ import {
   getReviewRetryDelaySeconds,
 } from './review-retry.js';
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
+import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
 import { getFeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
@@ -448,6 +449,8 @@ const REVIEW_LOCK_KEY  = (repo: string, pr: number) => `pr_review_lock:${repo}:$
 
 interface ReviewState {
   reviewId: string;
+  requestedMode: ReviewMode;
+  effectiveMode: ReviewMode;
   allFiles: string[];
   completedFiles: string[];
   accumulatedFindings: Finding[];
@@ -811,8 +814,14 @@ async function postCommentReply(
   const body = `${emoji} Review done! Score: **${score}/5**.${dashboardLink}`;
 
   if (review.trigger_comment_type === 'pull_request_review_comment') {
-    await replyToReviewComment(owner, repo, prNumber, review.trigger_comment_id, body, token);
+    // Anchor on the thread's top-level comment — GitHub rejects /replies to
+    // a nested reply, and the trigger may itself be a reply in the thread.
+    const rootId = await resolveReviewCommentRoot(
+      owner, repo, review.trigger_comment_id, undefined, token
+    );
+    await replyToReviewComment(owner, repo, prNumber, rootId, body, token);
   } else {
+    // Issue comments can't thread — this lands as a top-level comment.
     await postComment(owner, repo, prNumber, body, token);
   }
 }
@@ -1047,7 +1056,7 @@ async function executeReviewJobInternal(
     if (state && (
       state.diffHash !== executionDiffHash ||
       state.reviewId !== reviewId ||
-      state.requestedMode !== payload.requestedMode ||
+      state.requestedMode !== (payload.requestedMode ?? 'full') ||
       state.effectiveMode !== effectiveMode
     )) {
       console.warn('[review] Resume state does not match the pinned review — starting fresh');
@@ -1073,7 +1082,7 @@ async function executeReviewJobInternal(
       );
       state = {
         reviewId,
-        requestedMode: payload.requestedMode,
+        requestedMode: payload.requestedMode ?? 'full',
         effectiveMode,
         allFiles,
         completedFiles: [],
@@ -1089,6 +1098,8 @@ async function executeReviewJobInternal(
         terminalFailedFiles: [],
       };
     }
+
+    state = state as ReviewState;
 
     await saveReviewState(fullRepo, prNumber, state, redisSet);
     const remainingFiles = state.allFiles.filter((file) => !state!.completedFiles.includes(file));
@@ -1676,6 +1687,17 @@ async function finalizeReview(
     );
   });
   await completeStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
+
+  // Anchor the NEW findings as their own diff comments so they are individually
+  // reply-able. Best-effort (outside stage tracking — it must never fail an
+  // already-posted review): one rejected line just logs and moves on.
+  try {
+    await postAnchoredFindings(
+      reviewId, ledgerFindings, owner, repo, prNumber, headSha, token, env
+    );
+  } catch (err) {
+    console.warn(`[review] Anchored finding comments failed (review ${reviewId}):`, err);
+  }
 
   let verdictReactionId: number | null = null;
   if (score >= POSITIVE_THRESHOLD) {

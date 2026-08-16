@@ -2,12 +2,13 @@
  * Correction Job — Comment-Driven Rule Creation
  *
  * When a developer tags @parakh with a CORRECTION (e.g. "we don't flag EOF
- * newline issues, drop that rule"), the correction becomes a rule:
- * 1. Use the comment body as the rule text (the correction IS the rule)
+ * newline issues, drop that rule"), the standards extracted by the folded
+ * intent+extraction LLM call become ACTIVE rules:
+ * 1. Use the extracted standard as the rule text (one save per rule)
  * 2. Generate embedding
- * 3. Classify priority (security/architecture → high, style → normal)
- * 4. Insert rule as ACTIVE (auto-activate, not suggest-and-wait)
- * 5. Enqueue contradiction check (same queue as dashboard rule creation)
+ * 3. Insert rule as ACTIVE with the LLM-classified priority (auto-activate,
+ *    not suggest-and-wait)
+ * 4. Enqueue contradiction check (same queue as dashboard rule creation)
  *
  * This mirrors rule-api.ts — both paths share the same ACTIVE-insert +
  * contradiction-queue pipeline so there's no divergence between "rule created
@@ -18,7 +19,6 @@ import type { ContradictionJobPayload, RuleKind, RulePriority } from '@parakh/sh
 import { createLLMClients } from '../llm/factory.js';
 import { isRepoCollaborator } from '../github/api.js';
 import { insertRule } from '../db/rules.js';
-import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
 
 /**
@@ -83,7 +83,8 @@ export class CorrectionRejectedError extends Error {
 }
 
 /**
- * Save a correction comment as an ACTIVE rule and enqueue the contradiction check.
+ * Save ONE extracted corrective standard as an ACTIVE rule and enqueue the
+ * contradiction check. Called once per rule from a CORRECTION comment.
  * Returns the created rule (used by the caller to post a confirmation reply).
  *
  * @param token - Installation token used to verify the commenter is a repository
@@ -95,19 +96,17 @@ export async function saveCorrectionAsRule(
     owner: string;
     repo: string;
     prNumber: number;
-    commentBody: string;
+ruleBody: string;
+    priority?: RulePriority;
+    createdBy?: string;
+    initialStatus?: 'ACTIVE' | 'PENDING';
     commenterLogin?: string;
   },
   env: Env,
   token: string
 ) {
   const fullRepo = `${input.owner}/${input.repo}`;
-
-  // The comment body is the rule text — the @parakh command prefix (and any
-  // optional "correction:" label) is stripped so the stored rule reads clean.
-  const ruleBody = input.commentBody
-    .replace(/^\s*@parakh\b(?:\s+correction\b)?\s*[:,-]?\s*/i, '')
-    .trim();
+  const ruleBody = input.ruleBody.trim();
   if (!ruleBody) throw new Error('Correction must include rule text');
 
   if (containsInjectionAttempt(ruleBody)) {
@@ -131,33 +130,25 @@ export async function saveCorrectionAsRule(
   // Generate embedding for similarity search
   const embedding = await llm.generateEmbedding(ruleBody);
 
-  // Classify priority. Fail-open to 'normal' on error: a classifier outage
-  // must never block rule creation (mirrors the fail-open rule-mode logic
-  // below). Log for manual review.
-  let priority: RulePriority = 'normal';
-  try {
-    priority = (await llm.classifyPriority(ruleBody)) ?? 'normal';
-  } catch (err) {
-    console.error(
-      `[correction] Priority classification failed for "${truncateBody(ruleBody)}" — defaulting to normal:`,
-      err
-    );
-  }
+  // Priority comes from the folded intent+extraction call; fail-open to
+  // 'normal' on absence (a classification miss must never block rule creation).
+  const priority: RulePriority = input.priority ?? 'normal';
 
   // Suppression directives ("stop flagging X") are stored as 'instruction' rules,
   // never enforced as standards.
   const kind: RuleKind = isInstructionRule(ruleBody) ? 'instruction' : 'standard';
 
-  // Insert rule as ACTIVE — auto-activate, not SUGGESTED
+  // Insert rule as ACTIVE or PENDING — auto-activate for OWNER/MEMBER, PENDING for COLLABORATOR
   const rule = await insertRule(
     {
       repo: fullRepo,
       body: ruleBody,
       embedding,
-      status: 'ACTIVE',
+      status: input.initialStatus ?? 'ACTIVE',
       priority,
       kind,
       source_pr: input.prNumber,
+      created_by: input.createdBy ?? null,
     },
     env
   );

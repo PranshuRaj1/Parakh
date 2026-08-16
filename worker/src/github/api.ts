@@ -138,8 +138,18 @@ export async function getFileContent(
 // ─── Comments ────────────────────────────────────────────────────────────────
 
 /**
- * Post an issue comment on a PR.
+* Post a comment on a PR (Conversation tab).
  * (PRs are issues — uses the Issues API.)
+ *
+ * NB: GitHub does not support threading on issue comments (the REST API has
+ * no `in_reply_to_id`), so this always creates a top-level comment. Only
+ * diff review comments support replies, via `replyToReviewComment`.
+ *
+ * @param owner - Repository owner (e.g. "acme").
+ * @param repo - Repository name (e.g. "app").
+ * @param prNumber - Pull request number.
+ * @param body - Markdown comment body.
+ * @param token - GitHub installation access token.
  */
 export async function postComment(
   owner: string,
@@ -235,6 +245,8 @@ export async function postReviewComment(
 
 /**
  * Reply to a review comment in a PR diff thread.
+ * Target must be the top-level comment of the thread — GitHub rejects
+ * replies to a nested reply — see `resolveReviewCommentRoot`.
  */
 export async function replyToReviewComment(
   owner: string,
@@ -250,6 +262,57 @@ export async function replyToReviewComment(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body }),
   });
+}
+
+/**
+ * Get a single pull request review comment (diff thread).
+ */
+export async function getReviewComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+  token: string
+): Promise<{ id: number; in_reply_to_id: number | null }> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/comments/${commentId}`;
+  return githubFetch<{ id: number; in_reply_to_id: number | null }>(url, token);
+}
+
+const MAX_REPLY_DEPTH = 3;
+
+/**
+ * Resolve the top-level comment of a diff thread for replying.
+ *
+ * A webhook can fire for a reply inside an existing thread (e.g. the bot's
+ * own nested reply). `/replies` only accepts the thread's root comment, so
+ * walk the `in_reply_to_id` chain back to the top. The chain is capped at
+ * `MAX_REPLY_DEPTH` hops; on cap, the deepest comment reached is returned
+ * (defensive only — GitHub threads never go deeper than one reply).
+ *
+ * @param inReplyToId - Known parent from the webhook payload, when available.
+ *   When omitted, the comment is fetched to read its own `in_reply_to_id`.
+ */
+export async function resolveReviewCommentRoot(
+  owner: string,
+  repo: string,
+  commentId: number,
+  inReplyToId: number | undefined,
+  token: string
+): Promise<number> {
+  let parentId = inReplyToId;
+  if (parentId === undefined) {
+    const self = await getReviewComment(owner, repo, commentId, token);
+    parentId = self.in_reply_to_id ?? undefined;
+  }
+  if (parentId === undefined) return commentId;
+
+  let rootId = commentId;
+  for (let depth = 0; depth < MAX_REPLY_DEPTH; depth += 1) {
+    const parent = await getReviewComment(owner, repo, parentId, token);
+    rootId = parentId;
+    if (parent.in_reply_to_id === null) return rootId;
+    parentId = parent.in_reply_to_id;
+  }
+  return rootId;
 }
 
 // ─── Reactions (Emoji State Machine) ─────────────────────────────────────────
