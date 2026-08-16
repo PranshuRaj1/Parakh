@@ -13,6 +13,7 @@ export default async function Home() {
 
   let repos: string[] = [];
   let reviews: Review[] = [];
+  let loadFailed = false;
   if (session?.accessToken) {
     try {
       repos = await getUserRepos(session.accessToken);
@@ -21,6 +22,7 @@ export default async function Home() {
       }
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
+      loadFailed = true;
     }
   }
 
@@ -39,6 +41,12 @@ export default async function Home() {
             </p>
           </div>
         </section>
+
+        {loadFailed && (
+          <div className="mb-6 rounded-xl border border-[#93000a]/30 bg-[#93000a]/20 p-4 text-[#ffdad6] font-dm-sans text-sm">
+            Unable to load your dashboard data. Refresh the page to try again.
+          </div>
+        )}
 
         {session ? (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 flex-1">

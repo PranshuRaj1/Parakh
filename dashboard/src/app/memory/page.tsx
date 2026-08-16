@@ -14,13 +14,29 @@ export default async function MemoryPage({
   const session = await getServerSession(authOptions);
   if (!session) redirect('/');
 
-  const repos = session.accessToken ? await getUserRepos(session.accessToken) : [];
+  let repos: string[] = [];
+  let reposFailed = false;
+  if (session.accessToken) {
+    try {
+      repos = await getUserRepos(session.accessToken);
+    } catch (e) {
+      console.error('Failed to load repositories:', e);
+      reposFailed = true;
+    }
+  }
   const params = await searchParams;
   const requested = params.repo;
   const repo = repos.find((r) => r.toLowerCase() === requested?.toLowerCase()) ?? repos[0] ?? null;
   if (requested && !repo) notFound();
 
-  const canManage = repo ? await requireRepoPermission(repo, 'write', session) : false;
+  let canManage = false;
+  if (repo) {
+    try {
+      canManage = await requireRepoPermission(repo, 'write', session);
+    } catch (e) {
+      console.error('Failed to check repository permission:', e);
+    }
+  }
 
   // Ensure env var exists for DB connection before trying to fetch
   let rules: Rule[] = [];
@@ -44,6 +60,11 @@ export default async function MemoryPage({
   return (
     <main className="w-full flex flex-col pt-8 pb-16 px-6">
       <div className="max-w-[1000px] mx-auto w-full flex flex-col">
+          {reposFailed ? (
+            <div className="bg-[#93000a]/20 text-[#ffdad6] p-4 rounded-xl border border-[#93000a] mb-4">
+              Failed to load your repositories. Refresh the page to try again.
+            </div>
+          ) : null}
           {dbError ? (
             <div className="bg-[#93000a]/20 text-[#ffdad6] p-4 rounded-xl border border-[#93000a]">
               Failed to connect to the database. Make sure DATABASE_URL is set in .env.local.

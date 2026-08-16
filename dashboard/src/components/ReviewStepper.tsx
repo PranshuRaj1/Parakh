@@ -236,7 +236,7 @@ export function ReviewStepper({ reviewId }: { reviewId: string }) {
                 {progress.activeStepLogs && progress.activeStepLogs.length > 0 ? (
                   <div className="flex flex-col gap-1 h-10 overflow-hidden justify-end">
                     {progress.activeStepLogs.slice(-2).map((log, i) => (
-                      <div key={i} className="flex gap-2 text-sm">
+                      <div key={`${log.at}-${log.code}-${i}`} className="flex gap-2 text-sm">
                         <span className="text-[#9bd3ad]/70 font-space-mono shrink-0">[{log.code}]</span>
                         <span className="truncate">{log.detail}</span>
                       </div>

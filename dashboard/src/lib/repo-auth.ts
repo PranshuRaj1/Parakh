@@ -51,13 +51,21 @@ export async function getRepoPermission(repo: string, login: string, token: stri
   }
 
   cache.set(cacheKey, { permission, expiresAt: Date.now() + CACHE_TTL_MS });
+  pruneCache();
+  return permission;
+}
+
+function pruneCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
   if (cache.size > CACHE_MAX_ENTRIES) {
-    const now = Date.now();
-    for (const [key, entry] of cache) {
-      if (entry.expiresAt <= now) cache.delete(key);
+    for (const key of cache.keys()) {
+      if (cache.size <= CACHE_MAX_ENTRIES) break;
+      cache.delete(key);
     }
   }
-  return permission;
 }
 
 export interface AuthSession {
