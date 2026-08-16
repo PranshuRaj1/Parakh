@@ -69,6 +69,7 @@ import { executeCommentResponseJob } from './comment-response.js';
 import { postComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
+import { createRedisGet, createRedisSet } from '../redis.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
 
@@ -80,6 +81,8 @@ const mocked = {
   replyToReviewComment: vi.mocked(replyToReviewComment),
   resolveReviewCommentRoot: vi.mocked(resolveReviewCommentRoot),
   addCommentReaction: vi.mocked(addCommentReaction),
+  createRedisGet: vi.mocked(createRedisGet),
+  createRedisSet: vi.mocked(createRedisSet),
   triggerReview: vi.mocked(triggerReview),
   saveCorrectionAsRule: vi.mocked(saveCorrectionAsRule),
 };
@@ -114,6 +117,9 @@ beforeEach(() => {
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null });
+  // Default: no finding mapping found (redis returns null).
+  mocked.createRedisGet.mockReturnValue((async () => null) as never);
+  mocked.createRedisSet.mockReturnValue((async () => undefined) as never);
 });
 
 describe('executeCommentResponseJob', () => {
@@ -417,5 +423,41 @@ describe('executeCommentResponseJob', () => {
 
     expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, 150, 'token');
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith('acme', 'app', 7, 200, 'reply body', 'token');
+  });
+
+  it('uses the anchored finding as context when replying inside a finding thread', async () => {
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
+    draftReplyMock.mockResolvedValue('context-aware answer');
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
+    mocked.createRedisGet.mockReturnValue(
+      (async () => JSON.stringify({ reviewId: 'review-1', file: 'src/app.ts', line: 10, body: 'handle the error at src/app.ts:10' })) as never
+    );
+
+    await executeCommentResponseJob(
+      payload({ commentType: 'pull_request_review_comment', inReplyToCommentId: 500 }),
+      env
+    );
+
+    // The lookup targets the parent comment (the anchored finding comment).
+    expect(mocked.createRedisGet).toHaveBeenCalledWith(env);
+    expect(classifyIntentMock).toHaveBeenCalledWith('hello', 'handle the error at src/app.ts:10');
+    expect(draftReplyMock).toHaveBeenCalledWith('handle the error at src/app.ts:10', 'hello');
+    expect(mocked.replyToReviewComment).toHaveBeenCalledWith('acme', 'app', 7, 100, 'context-aware answer', 'token');
+  });
+
+  it('falls back to empty context when the finding mapping is missing or malformed', async () => {
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
+    draftReplyMock.mockResolvedValue('answer');
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
+    mocked.createRedisGet.mockReturnValue(
+      (async () => 'not-json') as never
+    );
+
+    await executeCommentResponseJob(
+      payload({ commentType: 'pull_request_review_comment', inReplyToCommentId: 500 }),
+      env
+    );
+
+    expect(classifyIntentMock).toHaveBeenCalledWith('hello', '');
   });
 });

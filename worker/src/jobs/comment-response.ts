@@ -7,6 +7,7 @@ import { postComment as postIssueComment, replyToReviewComment, resolveReviewCom
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
+import { findingMappingKey } from './anchored-findings.js';
 import { truncateBody } from './truncate.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
@@ -68,10 +69,26 @@ export async function executeCommentResponseJob(
 
   const { llm } = createLLMClients(env);
 
-  // For issue comments (top-level), there is no parentBotComment context passed directly.
-  // We can pass an empty string to the LLM classifier for now, or fetch the parent if needed.
-  // The classifier handles empty parentBotComment properly via the prompt update.
-  const parentBotComment = ''; 
+  // Diff-thread replies that land on one of our anchored finding comments get
+  // the finding as bot-comment context, so intent classification and drafted
+  // answers see exactly what is being discussed. Best-effort: a Redis miss or
+  // malformed entry just yields empty context.
+  let parentBotComment = '';
+  if (commentType === 'pull_request_review_comment') {
+    try {
+      // The human's new comment replies into an existing thread — the mapped
+      // comment is its parent (the anchored finding comment).
+      const mappedCommentId = inReplyToCommentId ?? commentId;
+      const raw = await redis.get(findingMappingKey(mappedCommentId));
+      if (raw) {
+        const mapped = JSON.parse(raw) as { body?: string };
+        parentBotComment = mapped.body ?? '';
+      }
+    } catch (err) {
+      console.warn(`[comment-response] Failed to load finding context for comment ${commentId}:`, err);
+    }
+  }
+
   // One folded call: intent + (for CORRECTION) the distinct standards and the
   // non-actionable fragments, so no second extraction pass is needed.
   const analysis = await llm.classifyIntent(commentBody, parentBotComment);

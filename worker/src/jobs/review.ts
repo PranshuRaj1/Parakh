@@ -28,6 +28,7 @@ import {
   REVIEW_LOCK_TTL_SECONDS,
 } from '@parakh/shared';
 import { getCachedToken } from '../github/auth.js';
+import { postAnchoredFindings } from './anchored-findings.js';
 import {
   fetchDiff,
   fetchDiffPinned,
@@ -1683,6 +1684,17 @@ async function finalizeReview(
     );
   });
   await completeStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
+
+  // Anchor the NEW findings as their own diff comments so they are individually
+  // reply-able. Best-effort (outside stage tracking — it must never fail an
+  // already-posted review): one rejected line just logs and moves on.
+  try {
+    await postAnchoredFindings(
+      reviewId, ledgerFindings, owner, repo, prNumber, headSha, token, env
+    );
+  } catch (err) {
+    console.warn(`[review] Anchored finding comments failed (review ${reviewId}):`, err);
+  }
 
   let verdictReactionId: number | null = null;
   if (score >= POSITIVE_THRESHOLD) {
