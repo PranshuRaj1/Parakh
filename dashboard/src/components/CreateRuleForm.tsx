@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
 export default function CreateRuleForm({ repo, canManage = true }: { repo: string; canManage?: boolean }) {
@@ -8,6 +9,7 @@ export default function CreateRuleForm({ repo, canManage = true }: { repo: strin
   const [priority, setPriority] = useState<'high' | 'normal' | ''>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,9 +36,7 @@ export default function CreateRuleForm({ repo, canManage = true }: { repo: strin
 
       setBody('');
       setPriority('');
-      // In a real app we'd mutate SWR or call a router.refresh() here.
-      // For now we'll just reload the page to see the new rule.
-      window.location.reload();
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create rule');
     } finally {
