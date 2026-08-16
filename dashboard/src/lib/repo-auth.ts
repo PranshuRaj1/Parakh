@@ -14,18 +14,23 @@ export function isRepoString(repo: string): boolean {
 }
 
 async function githubFetch<T>(url: string, token: string): Promise<{ ok: boolean; data: T | null }> {
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': API_VERSION,
-      'User-Agent': 'parakh-dashboard',
-    },
-    next: { revalidate: 0 },
-    cache: 'no-store',
-  });
-  if (!res.ok) return { ok: false, data: null };
-  return { ok: true, data: (await res.json()) as T };
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': 'parakh-dashboard',
+      },
+      next: { revalidate: 0 },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { ok: false, data: null };
+    return { ok: true, data: (await res.json()) as T };
+  } catch (error) {
+    console.warn('[repo-auth] GitHub API request failed:', url, error);
+    return { ok: false, data: null };
+  }
 }
 
 export async function getRepoPermission(repo: string, login: string, token: string): Promise<RepoPermission> {
