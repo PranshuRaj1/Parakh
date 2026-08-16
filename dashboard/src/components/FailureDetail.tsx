@@ -60,7 +60,8 @@ export function FailureDetail({ reviewId, canManage = true }: { reviewId: string
       } else {
         alert('Failed to retry review.');
       }
-    } catch {
+    } catch (e) {
+      console.error('Retry failed:', e);
       alert('Error triggering retry.');
     } finally {
       setIsRetrying(false);
