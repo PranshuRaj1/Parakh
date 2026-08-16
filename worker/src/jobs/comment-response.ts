@@ -3,7 +3,7 @@ import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
-import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment as postIssueComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
@@ -29,6 +29,7 @@ export async function executeCommentResponseJob(
     commentId,
     commentBody,
     commentType,
+    inReplyToCommentId,
     githubDeliveryId,
   } = payload;
 
@@ -49,15 +50,18 @@ export async function executeCommentResponseJob(
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // Helper to abstract the reply endpoint selection. issue_comment replies are
-  // nested under the tagged comment (in_reply_to_id) so they stay in its thread
-  // instead of becoming a new top-level comment; review comments already reply
-  // into the diff thread via /replies.
+  // Helper for reply endpoint selection:
+  // - review comments thread into the diff via /replies; the target must be
+  //   the thread's top-level comment (GitHub rejects replies to a reply), so
+  //   walk the in_reply_to_id chain back to the root first.
+  // - issue comments can't thread at all (GitHub does not support
+  //   in_reply_to_id on the Conversation tab), so they post top-level.
   const postReply = async (body: string) => {
     if (commentType === 'pull_request_review_comment') {
-      await replyToReviewComment(owner, repo, prNumber, commentId, body, token);
+      const rootId = await resolveReviewCommentRoot(owner, repo, commentId, inReplyToCommentId, token);
+      await replyToReviewComment(owner, repo, prNumber, rootId, body, token);
     } else {
-      await postIssueComment(owner, repo, prNumber, body, token, commentId);
+      await postIssueComment(owner, repo, prNumber, body, token);
     }
   };
 

@@ -38,6 +38,7 @@ vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
   replyToReviewComment: vi.fn(),
+  resolveReviewCommentRoot: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   addCommentReaction: vi.fn(),
@@ -137,7 +138,7 @@ import worker from '../index.js';
 import { handleQueueBatch } from '../jobs/queue-handler.js';
 import { handleWebhookEvent } from '../webhook/handler.js';
 import { getCachedToken } from '../github/auth.js';
-import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { getRepoSettings } from '../db/reviews.js';
 import {
   insertRule,
@@ -153,6 +154,7 @@ const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
+  resolveReviewCommentRoot: vi.mocked(resolveReviewCommentRoot),
   addCommentReaction: vi.mocked(addCommentReaction),
   getRepoSettings: vi.mocked(getRepoSettings),
   insertRule: vi.mocked(insertRule),
@@ -372,7 +374,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     // Confirmation reply — instruction rules get the "Noted" suppression reply.
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Noted'), 'token', 100
+      'acme', 'app', 7, expect.stringContaining('Noted'), 'token'
     );
 
     // Contradiction check enqueued with the rule payload (real installationId).
@@ -419,7 +421,7 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
+      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token'
     );
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -431,9 +433,11 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
       queue: 'watchdog',
       messages: [makeCommentMessage('never flag EOF newline issues', 'pull_request_review_comment')],
     } as never;
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
+    expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, undefined, 'token');
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith(
       'acme', 'app', 7, 100, expect.stringContaining('Noted'), 'token'
     );

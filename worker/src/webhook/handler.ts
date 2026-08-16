@@ -218,6 +218,7 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'issue_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
     githubDeliveryId: deliveryId,
   };
 
@@ -266,6 +267,7 @@ async function handleReviewComment(event: WebhookEvent, deliveryId: string, env:
     commentId: comment.id,
     commentBody: comment.body,
     commentType: 'pull_request_review_comment',
+    inReplyToCommentId: comment.in_reply_to_id,
     githubDeliveryId: deliveryId,
   };
 

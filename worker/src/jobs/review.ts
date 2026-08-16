@@ -38,6 +38,7 @@ import {
   addReaction,
   removeReaction,
   replyToReviewComment,
+  resolveReviewCommentRoot,
   addCommentReaction,
   removeCommentReaction,
 } from '../github/api.js';
@@ -811,9 +812,15 @@ async function postCommentReply(
   const body = `${emoji} Review done! Score: **${score}/5**.${dashboardLink}`;
 
   if (review.trigger_comment_type === 'pull_request_review_comment') {
-    await replyToReviewComment(owner, repo, prNumber, review.trigger_comment_id, body, token);
+    // Anchor on the thread's top-level comment — GitHub rejects /replies to
+    // a nested reply, and the trigger may itself be a reply in the thread.
+    const rootId = await resolveReviewCommentRoot(
+      owner, repo, review.trigger_comment_id, undefined, token
+    );
+    await replyToReviewComment(owner, repo, prNumber, rootId, body, token);
   } else {
-    await postComment(owner, repo, prNumber, body, token, review.trigger_comment_id);
+    // Issue comments can't thread — this lands as a top-level comment.
+    await postComment(owner, repo, prNumber, body, token);
   }
 }
 

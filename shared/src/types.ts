@@ -207,6 +207,7 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
+  inReplyToCommentId?: number;
   githubDeliveryId: string;
 }
 

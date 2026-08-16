@@ -29,6 +29,7 @@ vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
   replyToReviewComment: vi.fn(),
+  resolveReviewCommentRoot: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   addCommentReaction: vi.fn(),
@@ -322,7 +323,7 @@ describe('queue → comment-response → triggerReview wiring', () => {
     // triggerReview must have actually enqueued a REVIEW job.
     expect(mocked.insertReview).toHaveBeenCalled();
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100
+      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token'
     );
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -347,7 +348,7 @@ describe('queue → comment-response → triggerReview wiring', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'REVIEW', prNumber: 7, reviewId: 'review-1' });
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100
+      'acme', 'app', 7, 'On it — re-reviewing 👀', 'token'
     );
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
     expect(batch.messages[0].ack).toHaveBeenCalled();
@@ -367,7 +368,7 @@ describe('queue → comment-response → triggerReview wiring', () => {
     expect(mocked.insertReview).toHaveBeenCalled();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'REVIEW' });
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100);
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
   });
 
   it('does NOT trigger or reply for GENERAL intent (silent by design)', async () => {
@@ -416,7 +417,7 @@ describe('re-request path (@parakh review on an existing review)', () => {
 
     expect(mocked.insertReview).not.toHaveBeenCalled();
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, 'On it — resuming the previous review 👀', 'token', 100
+      'acme', 'app', 7, 'On it — resuming the previous review 👀', 'token'
     );
   });
 });

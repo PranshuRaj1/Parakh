@@ -42,6 +42,7 @@ vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));
 vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   replyToReviewComment: vi.fn(),
+  resolveReviewCommentRoot: vi.fn(),
   addCommentReaction: vi.fn(),
 }));
 vi.mock('../db/reviews.js', () => ({
@@ -56,7 +57,7 @@ vi.mock('./review.js', () => ({ triggerReview: vi.fn() }));
 vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
 
 import { executeCommentResponseJob } from './comment-response.js';
-import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { triggerReview } from './review.js';
@@ -68,6 +69,7 @@ const mocked = {
   getResumableReview: vi.mocked(getResumableReview),
   postComment: vi.mocked(postComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
+  resolveReviewCommentRoot: vi.mocked(resolveReviewCommentRoot),
   addCommentReaction: vi.mocked(addCommentReaction),
   triggerReview: vi.mocked(triggerReview),
   saveCorrectionAsRule: vi.mocked(saveCorrectionAsRule),
@@ -80,7 +82,7 @@ const env = {
   UPSTASH_REDIS_TOKEN: 't',
 } as unknown as Env;
 
-function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment' }> = {}) {
+function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment'; inReplyToCommentId: number }> = {}) {
   return {
     type: 'COMMENT_RESPONSE' as const,
     installationId: 1,
@@ -133,7 +135,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token', 100);
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — resuming the previous review 👀', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
       'existing-review', 'del'
@@ -147,7 +149,7 @@ describe('executeCommentResponseJob', () => {
 
     await executeCommentResponseJob(payload(), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token', 100);
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'On it — re-reviewing 👀', 'token');
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
     expect(mocked.triggerReview).toHaveBeenCalledWith(
       1, 'acme', 'app', 7, 'manual_mention', env,
@@ -176,7 +178,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token', 100
+      'acme', 'app', 7, '⚠️ A review is already in progress, please wait and try again.', 'token'
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', 'eyes', 'token');
   });
@@ -194,7 +196,7 @@ describe('executeCommentResponseJob', () => {
       env
     );
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining('Learned'), 'token', 100
+      'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
     );
   });
 
@@ -207,7 +209,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token', 100
+      'acme', 'app', 7, expect.stringContaining("won't raise"), 'token'
     );
   });
 
@@ -218,7 +220,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(mocked.postComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token', 100
+      'acme', 'app', 7, expect.stringContaining("Couldn't save that right now"), 'token'
     );
   });
 
@@ -238,16 +240,17 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload(), env);
 
     expect(draftReplyMock).toHaveBeenCalledWith('', 'hello');
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token', 100);
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'Here is the answer...', 'token');
   });
 
-  it('nests issue_comment replies under the tagged comment (threaded reply)', async () => {
+  it('posts issue_comment replies as flat comments (no threading on the Conversation tab)', async () => {
     classifyIntentMock.mockResolvedValue('QUESTION');
-    draftReplyMock.mockResolvedValue('threaded reply');
+    draftReplyMock.mockResolvedValue('flat reply');
 
-    await executeCommentResponseJob(payload(), env);
+    await executeCommentResponseJob(payload({ inReplyToCommentId: 99 }), env);
 
-    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'threaded reply', 'token', 100);
+    expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, 'flat reply', 'token');
+    expect(mocked.resolveReviewCommentRoot).not.toHaveBeenCalled();
     expect(mocked.replyToReviewComment).not.toHaveBeenCalled();
   });
 
@@ -262,13 +265,29 @@ describe('executeCommentResponseJob', () => {
   it('replies into the diff thread for pull_request_review_comment events', async () => {
     classifyIntentMock.mockResolvedValue('QUESTION');
     draftReplyMock.mockResolvedValue('reply body');
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
 
     await executeCommentResponseJob(
       payload({ commentType: 'pull_request_review_comment' }),
       env
     );
 
+    expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, undefined, 'token');
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith('acme', 'app', 7, 100, 'reply body', 'token');
     expect(mocked.postComment).not.toHaveBeenCalled();
+  });
+
+  it('anchors the reply at the thread root when the comment is itself a reply', async () => {
+    classifyIntentMock.mockResolvedValue('QUESTION');
+    draftReplyMock.mockResolvedValue('reply body');
+    mocked.resolveReviewCommentRoot.mockResolvedValue(200);
+
+    await executeCommentResponseJob(
+      payload({ commentType: 'pull_request_review_comment', inReplyToCommentId: 150 }),
+      env
+    );
+
+    expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, 150, 'token');
+    expect(mocked.replyToReviewComment).toHaveBeenCalledWith('acme', 'app', 7, 200, 'reply body', 'token');
   });
 });
