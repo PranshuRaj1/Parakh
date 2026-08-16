@@ -14,9 +14,13 @@ export default async function Home() {
   let repos: string[] = [];
   let reviews: Review[] = [];
   if (session?.accessToken) {
-    repos = await getUserRepos(session.accessToken);
-    if (repos.length > 0) {
-      reviews = await getRecentReviews(repos, 5);
+    try {
+      repos = await getUserRepos(session.accessToken);
+      if (repos.length > 0) {
+        reviews = await getRecentReviews(repos, 5);
+      }
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
     }
   }
 
