@@ -20,11 +20,10 @@ export default async function PullRequestPage({
   const fullRepo = `${owner}/${repo}`;
   const prNumber = parseInt(number, 10);
 
-  if (!(await requireRepoPermission(fullRepo, 'read', session))) {
+  const canManage = await requireRepoPermission(fullRepo, 'write', session);
+  if (!canManage && !(await requireRepoPermission(fullRepo, 'read', session))) {
     notFound();
   }
-
-  const canManage = await requireRepoPermission(fullRepo, 'write', session);
   const review = await getReviewByPr(fullRepo, prNumber);
   
   if (!review) {
