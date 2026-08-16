@@ -14,7 +14,7 @@
  * thinking: null. Reasoning stays Gemini-only.
  */
 
-import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Relationship, RulePriority, CommentAnalysis } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import {
   getGroqKeyPool,
@@ -281,14 +281,14 @@ export class GroqClient implements LLMProvider {
     });
   }
 
-  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent> {
+  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
+    const { normalizeAnalysis } = await import('../llm/analysis.js');
     const prompt = buildIntentPrompt(comment, parentBotComment);
 
     return this.withKeyRotation(async (apiKey) => {
       const raw = await this.chat(apiKey, prompt, { json: true }, context);
-      const parsed = this.parseJson<{ intent?: Intent }>(raw);
-      return parsed.intent ?? 'GENERAL';
+      return normalizeAnalysis(this.parseJson(raw));
     });
   }
 

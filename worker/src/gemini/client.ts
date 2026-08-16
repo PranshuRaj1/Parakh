@@ -17,11 +17,11 @@ import type {
   Rule,
   RawGenericFinding,
   RawRuleFinding,
-  Intent,
   Relationship,
   RulePriority,
   Finding,
   IncrementalReviewResult,
+  CommentAnalysis,
 } from '@parakh/shared';
 import {
   reviewResponseSchema,
@@ -41,6 +41,7 @@ import {
 import { getKeyPool, isRateLimitError, isModelUnavailableError, isDailyQuotaError, AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_COOLDOWN_MS } from './keyPool.js';
 import { MemoryCooldownStore, type CooldownStore } from './cooldown-store.js';
 import { sanitizeErrorText } from '../jobs/sanitize.js';
+import { normalizeAnalysis } from '../llm/analysis.js';
 import type { LLMProvider } from '../llm/provider.js';
 import type { LLMRequestContext } from '../llm/errors.js';
 
@@ -393,14 +394,14 @@ export class GeminiClient implements LLMProvider {
   // ── Intent Classification ────────────────────────────────────────────
 
   /**
-   * Classify the intent of a reply to a bot comment.
-   * Returns one of: CORRECTION, EXPLANATION, DISMISSAL, QUESTION.
+   * Classify the intent of a reply to a bot comment and (when CORRECTION)
+   * extract the distinct corrective standards from it — one folded call.
    */
   async classifyIntent(
     comment: string,
     parentBotComment: string,
     context?: LLMRequestContext
-  ): Promise<Intent> {
+  ): Promise<CommentAnalysis> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
       const prompt = buildIntentPrompt(comment, parentBotComment);
@@ -416,8 +417,7 @@ export class GeminiClient implements LLMProvider {
 
       const result = await model.generateContent(prompt, { signal: context?.signal, timeout: context?.timeoutMs });
       const text = result.response.text();
-      const parsed = JSON.parse(text) as { intent: Intent };
-      return parsed.intent;
+      return normalizeAnalysis(JSON.parse(text));
     });
   }
 

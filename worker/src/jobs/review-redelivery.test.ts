@@ -9,6 +9,7 @@ vi.mock('../github/api.js', () => ({
   getPRDetails: vi.fn(),
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
+  postReviewComment: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   replyToReviewComment: vi.fn(),

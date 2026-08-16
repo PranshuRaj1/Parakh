@@ -1,12 +1,14 @@
-import type { CommentJobPayload } from '@parakh/shared';
+import type { CommentJobPayload, Rule } from '@parakh/shared';
 import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
-import { postComment as postIssueComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment as postIssueComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule } from './correction.js';
+import { findingMappingKey } from './anchored-findings.js';
+import { truncateBody } from './truncate.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
 
 /**
@@ -29,6 +31,7 @@ export async function executeCommentResponseJob(
     commentId,
     commentBody,
     commentType,
+    inReplyToCommentId,
     githubDeliveryId,
   } = payload;
 
@@ -49,10 +52,16 @@ export async function executeCommentResponseJob(
   const redis = { get: createRedisGet(env), set: createRedisSet(env) };
   const token = await getCachedToken(installationId, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
 
-  // Helper to abstract the reply endpoint selection
+  // Helper for reply endpoint selection:
+  // - review comments thread into the diff via /replies; the target must be
+  //   the thread's top-level comment (GitHub rejects replies to a reply), so
+  //   walk the in_reply_to_id chain back to the root first.
+  // - issue comments can't thread at all (GitHub does not support
+  //   in_reply_to_id on the Conversation tab), so they post top-level.
   const postReply = async (body: string) => {
     if (commentType === 'pull_request_review_comment') {
-      await replyToReviewComment(owner, repo, prNumber, commentId, body, token);
+      const rootId = await resolveReviewCommentRoot(owner, repo, commentId, inReplyToCommentId, token);
+      await replyToReviewComment(owner, repo, prNumber, rootId, body, token);
     } else {
       await postIssueComment(owner, repo, prNumber, body, token);
     }
@@ -60,13 +69,32 @@ export async function executeCommentResponseJob(
 
   const { llm } = createLLMClients(env);
 
-  // For issue comments (top-level), there is no parentBotComment context passed directly.
-  // We can pass an empty string to the LLM classifier for now, or fetch the parent if needed.
-  // The classifier handles empty parentBotComment properly via the prompt update.
-  const parentBotComment = ''; 
-  const intent = await llm.classifyIntent(commentBody, parentBotComment);
+  // Diff-thread replies that land on one of our anchored finding comments get
+  // the finding as bot-comment context, so intent classification and drafted
+  // answers see exactly what is being discussed. Best-effort: a Redis miss or
+  // malformed entry just yields empty context.
+  let parentBotComment = '';
+  if (commentType === 'pull_request_review_comment') {
+    try {
+      // The human's new comment replies into an existing thread — the mapped
+      // comment is its parent (the anchored finding comment).
+      const mappedCommentId = inReplyToCommentId ?? commentId;
+      const raw = await redis.get(findingMappingKey(mappedCommentId));
+      if (raw) {
+        const mapped = JSON.parse(raw) as { body?: string };
+        parentBotComment = mapped.body ?? '';
+      }
+    } catch (err) {
+      console.warn(`[comment-response] Failed to load finding context for comment ${commentId}:`, err);
+    }
+  }
 
-  console.log(`[comment-response] Classified intent: ${intent}`);
+  // One folded call: intent + (for CORRECTION) the distinct standards and the
+  // non-actionable fragments, so no second extraction pass is needed.
+  const analysis = await llm.classifyIntent(commentBody, parentBotComment);
+  const { intent } = analysis;
+
+  console.log(`[comment-response] Classified intent: ${intent} (${analysis.rules.length} rules extracted)`);
 
   switch (intent) {
     case 'REVIEW_REQUEST': {
@@ -114,25 +142,50 @@ export async function executeCommentResponseJob(
     }
 
     case 'CORRECTION': {
-      try {
-        const rule = await saveCorrectionAsRule(
-          { installationId, owner, repo, prNumber, commentBody },
-          env
-        );
-        if (rule.kind === 'instruction') {
-          await postReply(
-            `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`
+      // The folded call extracts up to MAX_RULES_PER_COMMENT distinct
+      // standards. If none came back, fall back to the whole comment (with the
+      // @parakh command prefix stripped) so a CORRECTION intent is never lost.
+      const rules = analysis.rules.length > 0
+        ? analysis.rules
+        : [{
+            body: commentBody
+              .replace(/^\s*@parakh\b(?:\s+correction\b)?\s*[:,-]?\s*/i, '')
+              .trim(),
+            priority: 'normal' as const,
+          }];
+
+      // Save per rule — one ACTIVE insert + one contradiction enqueue each.
+      const savedRules = [];
+      const failedBodies = [];
+      for (const rule of rules) {
+        try {
+          const saved = await saveCorrectionAsRule(
+            { installationId, owner, repo, prNumber, ruleBody: rule.body, priority: rule.priority },
+            env
           );
-        } else {
-          const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
-          await postReply(
-            `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`
-          );
+          savedRules.push(saved);
+        } catch (err) {
+          console.error(`[comment-response] Failed to save rule "${truncateBody(rule.body)}":`, err);
+          failedBodies.push(rule.body);
         }
-      } catch (err) {
-        console.error('[comment-response] Failed to save CORRECTION as rule:', err);
-        await postReply("Couldn't save that right now — please try again.");
       }
+
+      if (savedRules.length === 0) {
+        await postReply("Couldn't save that right now — please try again.");
+        break;
+      }
+
+      // Acknowledge the correction on its own comment (best-effort like the
+      // SEEN reaction — must not block the confirmation reply).
+      // addCommentReaction branches to the right endpoint per commentType.
+      try {
+        await addCommentReaction(owner, repo, commentId, commentType, REACTIONS.POSITIVE, token);
+      } catch (err) {
+        console.warn(`[comment-response] Failed to add thumbs-up on correction comment:`, err);
+      }
+
+      const reply = buildCorrectionReply(savedRules, failedBodies, analysis.ignored);
+      await postReply(reply);
       break;
     }
 
@@ -151,4 +204,44 @@ export async function executeCommentResponseJob(
       console.log(`[comment-response] Skipped reply for GENERAL intent.`);
       break;
   }
+}
+
+/**
+ * Build the confirmation reply for a learned correction.
+ * - Exactly one rule and nothing failed/skipped: the familiar one-line
+ *   phrasing (suppression vs standard).
+ * - Otherwise: summarizes what was learned, what failed to save, and what was
+ *   skipped as not actionable, so nothing is lost silently.
+ */
+function buildCorrectionReply(
+  saved: Array<Pick<Rule, 'body' | 'priority' | 'kind'>>,
+  failedBodies: string[],
+  ignored: string[]
+): string {
+  if (saved.length === 1 && failedBodies.length === 0 && ignored.length === 0) {
+    const rule = saved[0];
+    if (rule.kind === 'instruction') {
+      return `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`;
+    }
+    const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+    return `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`;
+  }
+
+  const instructions = saved.filter((rule) => rule.kind === 'instruction').length;
+  const standards = saved.length - instructions;
+  const summary = [
+    standards > 0 ? `${standards} standard${standards === 1 ? '' : 's'}` : null,
+    instructions > 0 ? `${instructions} suppression${instructions === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' + ');
+
+  let body = `✅ **Learned ${saved.length} rules** (${summary}):\n`
+    + saved.map((rule) => `- **${rule.body}**`).join('\n')
+    + '\n\nStatus: **ACTIVE** — applied to future reviews in this repo.';
+  if (failedBodies.length > 0) {
+    body += `\n\n_Couldn't save: ${failedBodies.map((text) => `*${text}*`).join(', ')}._`;
+  }
+  if (ignored.length > 0) {
+    body += `\n\n_Skipped (not actionable): ${ignored.join('; ')}._`;
+  }
+  return body;
 }

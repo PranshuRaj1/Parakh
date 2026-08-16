@@ -62,7 +62,7 @@ function makeProvider(
         priorFindingResolutions: [],
       };
     },
-    classifyIntent: async () => 'GENERAL',
+    classifyIntent: async () => ({ intent: 'GENERAL' as const, rules: [], ignored: [] }),
     classifyRelationship: async () => 'UNRELATED',
     classifyPriority: async () => 'normal',
     draftReply: async () => 'ok',

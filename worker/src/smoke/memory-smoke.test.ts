@@ -37,7 +37,9 @@ vi.mock('../github/api.js', () => ({
   getPRDetails: vi.fn(),
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
+  postReviewComment: vi.fn(),
   replyToReviewComment: vi.fn(),
+  resolveReviewCommentRoot: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   addCommentReaction: vi.fn(),
@@ -137,7 +139,7 @@ import worker from '../index.js';
 import { handleQueueBatch } from '../jobs/queue-handler.js';
 import { handleWebhookEvent } from '../webhook/handler.js';
 import { getCachedToken } from '../github/auth.js';
-import { postComment, replyToReviewComment, addCommentReaction } from '../github/api.js';
+import { postComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { getRepoSettings } from '../db/reviews.js';
 import {
   insertRule,
@@ -153,6 +155,7 @@ const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
   postComment: vi.mocked(postComment),
   replyToReviewComment: vi.mocked(replyToReviewComment),
+  resolveReviewCommentRoot: vi.mocked(resolveReviewCommentRoot),
   addCommentReaction: vi.mocked(addCommentReaction),
   getRepoSettings: vi.mocked(getRepoSettings),
   insertRule: vi.mocked(insertRule),
@@ -271,7 +274,11 @@ function setupLeaves() {
 }
 
 function setupLLMMocks() {
-  classifyIntentMock.mockResolvedValue('CORRECTION');
+  classifyIntentMock.mockResolvedValue({
+    intent: 'CORRECTION',
+    rules: [{ body: 'never flag EOF newline issues in any future review', priority: 'normal' }],
+    ignored: [],
+  });
   generateEmbeddingMock.mockResolvedValue(Array(768).fill(0.1));
   classifyPriorityMock.mockResolvedValue('normal');
   classifyRelationshipMock.mockResolvedValue('UNRELATED');
@@ -351,13 +358,13 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
-    // The full learn chain must run. Intent is classified on the RAW comment
-    // (in comment-response), but the stored rule text has the @parakh command
-    // prefix stripped (correction.ts) before embedding/priority. The directive
-    // phrasing marks it an 'instruction' rule (suppression), never a standard.
+    // The full learn chain must run. Intent+rule extraction is one folded LLM
+    // call (comment-response); the extracted standard is embedded, stored as
+    // ACTIVE, and enqueued for a contradiction check. The directive phrasing
+    // marks it an 'instruction' rule (suppression), never a standard.
     expect(classifyIntentMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review', '');
     expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
-    expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
+    expect(classifyPriorityMock).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
@@ -393,6 +400,11 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
   });
 
   it('stores plain corrections (no suppression phrasing) as standard rules', async () => {
+    classifyIntentMock.mockResolvedValue({
+      intent: 'CORRECTION',
+      rules: [{ body: 'use snake_case for database columns', priority: 'normal' }],
+      ignored: [],
+    });
     const { env, sent } = makeEnv();
     const batch = {
       queue: 'watchdog',
@@ -431,9 +443,11 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
       queue: 'watchdog',
       messages: [makeCommentMessage('never flag EOF newline issues', 'pull_request_review_comment')],
     } as never;
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
+    expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, undefined, 'token');
     expect(mocked.replyToReviewComment).toHaveBeenCalledWith(
       'acme', 'app', 7, 100, expect.stringContaining('Noted'), 'token'
     );

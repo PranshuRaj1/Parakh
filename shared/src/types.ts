@@ -30,6 +30,26 @@ export type StageReasonCode = 'PROCESSING' | 'RATE_LIMITED_BACKOFF' | 'RETRYING_
 /** Intent classification for reply comments. */
 export type Intent = 'CORRECTION' | 'EXPLANATION' | 'DISMISSAL' | 'QUESTION' | 'REVIEW_REQUEST' | 'GENERAL';
 
+/**
+ * A single distinct corrective standard extracted from a CORRECTION comment.
+ * Extracted by the same folded LLM call that classifies the intent.
+ */
+export interface CorrectionRuleInput {
+  body: string;
+  priority: RulePriority;
+}
+
+/**
+ * Result of the folded intent + rule-extraction LLM call. `rules` carries the
+ * distinct standards from a CORRECTION comment (at most MAX_RULES_PER_COMMENT);
+ * `ignored` carries non-actionable excerpts that were not turned into rules.
+ */
+export interface CommentAnalysis {
+  intent: Intent;
+  rules: CorrectionRuleInput[];
+  ignored: string[];
+}
+
 /** Relationship between two rules, determined by contradiction engine. */
 export type Relationship = 'DUPLICATE' | 'REFINEMENT' | 'CONTRADICTION' | 'UNRELATED';
 
@@ -196,6 +216,8 @@ export interface ReviewJobPayload {
   repo: string;
   prNumber: number;
   reviewId: string;
+  /** Optional — the requested review mode. Absent on queue messages from before mode rollout. */
+  requestedMode?: ReviewMode;
 }
 
 export interface CommentJobPayload {
@@ -207,6 +229,7 @@ export interface CommentJobPayload {
   commentId: number;
   commentBody: string;
   commentType: 'issue_comment' | 'pull_request_review_comment';
+  inReplyToCommentId?: number;
   githubDeliveryId: string;
 }
 

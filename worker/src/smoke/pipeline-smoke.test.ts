@@ -28,7 +28,9 @@ vi.mock('../github/api.js', () => ({
   getPRDetails: vi.fn(),
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
+  postReviewComment: vi.fn(),
   replyToReviewComment: vi.fn(),
+  resolveReviewCommentRoot: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   addCommentReaction: vi.fn(),
@@ -235,7 +237,7 @@ beforeEach(() => {
 });
 
 function classifiedAs(intent: string) {
-  classifyIntentMock.mockResolvedValue(intent);
+  classifyIntentMock.mockResolvedValue({ intent, rules: [], ignored: [] });
 }
 
 // ─── HTTP layer ─────────────────────────────────────────────────────────────
@@ -428,6 +430,12 @@ describe('intent prompt hardening (regression guard)', () => {
     const prompt = buildIntentPrompt('@parakh review', '');
     expect(prompt).toContain('ALWAYS a REVIEW_REQUEST');
     expect(prompt).toContain('@parakh');
+  });
+
+  it('treats direct questions to the bot as QUESTION (not silent GENERAL)', () => {
+    const prompt = buildIntentPrompt('@parakh who is your owner?', '');
+    expect(prompt).toContain('QUESTION');
+    expect(prompt).toContain('who is your owner');
   });
 
   it('sends the request through handleWebhookEvent for a standalone @parakh review comment', async () => {

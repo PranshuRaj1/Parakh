@@ -14,7 +14,7 @@
  * thinking: null, same as Groq.
  */
 
-import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Relationship, RulePriority, CommentAnalysis } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
 import { parseJson } from '../llm/parse-json.js';
@@ -205,15 +205,16 @@ export class CfaAiClient implements LLMProvider {
     };
   }
 
-  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent> {
+  async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
+    const { normalizeAnalysis } = await import('../llm/analysis.js');
     const raw = await this.run(
       this.generationModel,
       buildIntentPrompt(comment, parentBotComment),
       true,
       context
     );
-    return parseJson<{ intent?: Intent }>(raw).intent ?? 'GENERAL';
+    return normalizeAnalysis(parseJson(raw));
   }
 
   async classifyRelationship(
