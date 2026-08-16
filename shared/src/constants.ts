@@ -46,6 +46,11 @@ export const REACTIONS = {
   NEGATIVE: '-1' as const,
 };
 
+// ─── Comment Corrections ─────────────────────────────────────────────────────
+
+/** Max distinct standards extracted from a single CORRECTION comment. */
+export const MAX_RULES_PER_COMMENT = 3;
+
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
 /** Gemini free-tier rate limits (conservative estimates). */

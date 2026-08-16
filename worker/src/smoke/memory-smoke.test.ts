@@ -273,7 +273,11 @@ function setupLeaves() {
 }
 
 function setupLLMMocks() {
-  classifyIntentMock.mockResolvedValue('CORRECTION');
+  classifyIntentMock.mockResolvedValue({
+    intent: 'CORRECTION',
+    rules: [{ body: 'never flag EOF newline issues in any future review', priority: 'normal' }],
+    ignored: [],
+  });
   generateEmbeddingMock.mockResolvedValue(Array(768).fill(0.1));
   classifyPriorityMock.mockResolvedValue('normal');
   classifyRelationshipMock.mockResolvedValue('UNRELATED');
@@ -353,13 +357,13 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
 
     await handleQueueBatch(batch as Parameters<typeof handleQueueBatch>[0], env);
 
-    // The full learn chain must run. Intent is classified on the RAW comment
-    // (in comment-response), but the stored rule text has the @parakh command
-    // prefix stripped (correction.ts) before embedding/priority. The directive
-    // phrasing marks it an 'instruction' rule (suppression), never a standard.
+    // The full learn chain must run. Intent+rule extraction is one folded LLM
+    // call (comment-response); the extracted standard is embedded, stored as
+    // ACTIVE, and enqueued for a contradiction check. The directive phrasing
+    // marks it an 'instruction' rule (suppression), never a standard.
     expect(classifyIntentMock).toHaveBeenCalledWith('@parakh never flag EOF newline issues in any future review', '');
     expect(generateEmbeddingMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
-    expect(classifyPriorityMock).toHaveBeenCalledWith('never flag EOF newline issues in any future review');
+    expect(classifyPriorityMock).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
       expect.objectContaining({
         repo: 'acme/app',
@@ -395,6 +399,11 @@ describe('memory: queue → comment-response → saveCorrectionAsRule wiring', (
   });
 
   it('stores plain corrections (no suppression phrasing) as standard rules', async () => {
+    classifyIntentMock.mockResolvedValue({
+      intent: 'CORRECTION',
+      rules: [{ body: 'use snake_case for database columns', priority: 'normal' }],
+      ignored: [],
+    });
     const { env, sent } = makeEnv();
     const batch = {
       queue: 'watchdog',

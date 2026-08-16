@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
-import type { Intent } from '@parakh/shared';
+import type { CommentAnalysis, CorrectionRuleInput, Intent } from '@parakh/shared';
+
+/** Folded response the mocked classifyIntent resolves with. */
+function analysis(
+  intent: Intent,
+  rules: CorrectionRuleInput[] = [],
+  ignored: string[] = []
+): CommentAnalysis {
+  return { intent, rules, ignored };
+}
 
 const { classifyIntentMock, draftReplyMock, geminiMock, groqMock } = vi.hoisted(() => {
   const providerShape = () => ({
@@ -119,7 +128,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('responds to any comment in all_comments mode (case-insensitive mention check)', async () => {
-    classifyIntentMock.mockResolvedValue('GENERAL');
+    classifyIntentMock.mockResolvedValue(analysis('GENERAL'));
 
     await executeCommentResponseJob(payload({ commentBody: '@PARAKH please review' }), env);
     expect(classifyIntentMock).toHaveBeenCalledWith('@PARAKH please review', '');
@@ -130,7 +139,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('resumes the previous review when a resumable review exists on REVIEW_REQUEST', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    classifyIntentMock.mockResolvedValue(analysis('REVIEW_REQUEST'));
     mocked.getResumableReview.mockResolvedValue({ id: 'existing-review' } as never);
 
     await executeCommentResponseJob(payload(), env);
@@ -143,7 +152,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('starts a fresh review when no resumable review exists on REVIEW_REQUEST', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    classifyIntentMock.mockResolvedValue(analysis('REVIEW_REQUEST'));
     mocked.getResumableReview.mockResolvedValue(null);
     mocked.addCommentReaction.mockResolvedValue(777);
 
@@ -158,7 +167,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('still starts a fresh review when adding the trigger reaction fails (best-effort)', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    classifyIntentMock.mockResolvedValue(analysis('REVIEW_REQUEST'));
     mocked.getResumableReview.mockResolvedValue(null);
     mocked.addCommentReaction.mockRejectedValue(new Error('reaction failed'));
 
@@ -171,7 +180,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('posts a waiting warning when the lock is held and no review is enqueued', async () => {
-    classifyIntentMock.mockResolvedValue('REVIEW_REQUEST');
+    classifyIntentMock.mockResolvedValue(analysis('REVIEW_REQUEST'));
     mocked.getResumableReview.mockResolvedValue(null);
     mocked.triggerReview.mockResolvedValue(false);
 
@@ -184,15 +193,17 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('saves CORRECTION intents as active rules and confirms', async () => {
-    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'never flag EOF newline issues', priority: 'normal' }])
+    );
     mocked.saveCorrectionAsRule.mockResolvedValue({
-      id: 'rule-9', body: 'never flag EOF newlines', priority: 'normal',
+      id: 'rule-9', body: 'never flag EOF newline issues', priority: 'normal',
     } as never);
 
     await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
     expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues' },
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'never flag EOF newline issues', priority: 'normal' },
       env
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', '+1', 'token');
@@ -201,10 +212,89 @@ describe('executeCommentResponseJob', () => {
     );
   });
 
-  it('posts the thumbs-up on diff-thread corrections too', async () => {
-    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+  it('splits a multi-standard comment into one ACTIVE rule per standard', async () => {
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [
+        { body: 'use Zustand for state management', priority: 'normal' },
+        { body: 'use snake_case for database columns', priority: 'normal' },
+      ])
+    );
+    mocked.saveCorrectionAsRule
+      .mockResolvedValueOnce({ id: 'rule-a', body: 'use Zustand for state management', priority: 'normal' } as never)
+      .mockResolvedValueOnce({ id: 'rule-b', body: 'use snake_case for database columns', priority: 'normal' } as never);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledTimes(2);
+    expect(mocked.saveCorrectionAsRule).toHaveBeenNthCalledWith(
+      1,
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use Zustand for state management', priority: 'normal' },
+      env
+    );
+    expect(mocked.saveCorrectionAsRule).toHaveBeenNthCalledWith(
+      2,
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use snake_case for database columns', priority: 'normal' },
+      env
+    );
+    expect(mocked.addCommentReaction).toHaveBeenCalledTimes(1);
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7,
+      expect.stringContaining('Learned 2 rules'),
+      'token'
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7,
+      expect.stringContaining('use Zustand for state management'),
+      'token'
+    );
+  });
+
+  it('surfaces per-rule save failures and the ignored fragments in the reply', async () => {
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [
+        { body: 'use Zustand for state management', priority: 'high' },
+        { body: 'use snake_case for database columns', priority: 'normal' },
+      ], ['this check is useless for us'])
+    );
+    mocked.saveCorrectionAsRule
+      .mockResolvedValueOnce({ id: 'rule-1', body: 'use Zustand for state management', priority: 'high' } as never)
+      .mockRejectedValueOnce(new Error('embedding failed'));
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.addCommentReaction).toHaveBeenCalledTimes(1);
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7,
+      expect.stringContaining("Couldn't save: *use snake_case for database columns*"),
+      'token'
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7,
+      expect.stringContaining('Skipped (not actionable): this check is useless for us'),
+      'token'
+    );
+  });
+
+  it('falls back to the whole comment when CORRECTION produced no extracted rules', async () => {
+    classifyIntentMock.mockResolvedValueOnce(analysis('CORRECTION'));
     mocked.saveCorrectionAsRule.mockResolvedValue({
-      id: 'rule-10', body: 'never flag EOF newlines', priority: 'normal',
+      id: 'rule-fb', body: '@parakh we never flag EOF newline issues', priority: 'normal',
+    } as never);
+
+    await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'we never flag EOF newline issues', priority: 'normal' },
+      env
+    );
+  });
+
+  it('posts the thumbs-up on diff-thread corrections too', async () => {
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'never flag EOF newline issues', priority: 'normal' }])
+    );
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-10', body: 'never flag EOF newline issues', priority: 'normal',
     } as never);
     mocked.resolveReviewCommentRoot.mockResolvedValue(100);
 
@@ -219,9 +309,11 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('still confirms the correction when the thumbs-up reaction fails (best-effort)', async () => {
-    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'never flag EOF newline issues', priority: 'normal' }])
+    );
     mocked.saveCorrectionAsRule.mockResolvedValue({
-      id: 'rule-11', body: 'never flag EOF newlines', priority: 'normal',
+      id: 'rule-11', body: 'never flag EOF newline issues', priority: 'normal',
     } as never);
     mocked.addCommentReaction.mockRejectedValue(new Error('reaction failed'));
 
@@ -233,7 +325,9 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('acknowledges suppression directives with the instruction wording', async () => {
-    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'stop flagging "No newline at the end of the file"', priority: 'normal' }])
+    );
     mocked.saveCorrectionAsRule.mockResolvedValue({
       id: 'rule-9', body: 'stop flagging "No newline at the end of the file"', priority: 'normal', kind: 'instruction',
     } as never);
@@ -246,7 +340,9 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('replies gracefully when saving a CORRECTION fails', async () => {
-    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'never flag EOF newline issues', priority: 'normal' }])
+    );
     mocked.saveCorrectionAsRule.mockRejectedValue(new Error('embedding failed'));
 
     await executeCommentResponseJob(payload(), env);
@@ -258,7 +354,7 @@ describe('executeCommentResponseJob', () => {
 
   it('acknowledges EXPLANATION/DISMISSAL intents with canned replies', async () => {
     for (const intent of ['EXPLANATION', 'DISMISSAL'] as Intent[]) {
-      classifyIntentMock.mockResolvedValueOnce(intent);
+      classifyIntentMock.mockResolvedValueOnce(analysis(intent));
       await executeCommentResponseJob(payload(), env);
     }
     const notedReplies = mocked.postComment.mock.calls.filter(([, , , body]) => body === '👍 Noted.');
@@ -266,7 +362,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('answers QUESTIONS with a drafted reply', async () => {
-    classifyIntentMock.mockResolvedValue('QUESTION');
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
     draftReplyMock.mockResolvedValue('Here is the answer...');
 
     await executeCommentResponseJob(payload(), env);
@@ -276,7 +372,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('posts issue_comment replies as flat comments (no threading on the Conversation tab)', async () => {
-    classifyIntentMock.mockResolvedValue('QUESTION');
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
     draftReplyMock.mockResolvedValue('flat reply');
 
     await executeCommentResponseJob(payload({ inReplyToCommentId: 99 }), env);
@@ -287,7 +383,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('stays silent for GENERAL intent', async () => {
-    classifyIntentMock.mockResolvedValue('GENERAL');
+    classifyIntentMock.mockResolvedValue(analysis('GENERAL'));
 
     await executeCommentResponseJob(payload(), env);
 
@@ -295,7 +391,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('replies into the diff thread for pull_request_review_comment events', async () => {
-    classifyIntentMock.mockResolvedValue('QUESTION');
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
     draftReplyMock.mockResolvedValue('reply body');
     mocked.resolveReviewCommentRoot.mockResolvedValue(100);
 
@@ -310,7 +406,7 @@ describe('executeCommentResponseJob', () => {
   });
 
   it('anchors the reply at the thread root when the comment is itself a reply', async () => {
-    classifyIntentMock.mockResolvedValue('QUESTION');
+    classifyIntentMock.mockResolvedValue(analysis('QUESTION'));
     draftReplyMock.mockResolvedValue('reply body');
     mocked.resolveReviewCommentRoot.mockResolvedValue(200);
 

@@ -236,7 +236,7 @@ beforeEach(() => {
 });
 
 function classifiedAs(intent: string) {
-  classifyIntentMock.mockResolvedValue(intent);
+  classifyIntentMock.mockResolvedValue({ intent, rules: [], ignored: [] });
 }
 
 // ─── HTTP layer ─────────────────────────────────────────────────────────────

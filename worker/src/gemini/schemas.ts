@@ -116,7 +116,8 @@ export const incrementalReviewResponseSchema = {
 };
 
 /**
- * Intent classification schema — four buckets.
+ * Intent classification schema — folded: one call returns the intent AND the
+ * corrective standards extracted from a CORRECTION comment (multi-rule split).
  */
 export const intentResponseSchema = {
   type: 'OBJECT' as SchemaType,
@@ -125,6 +126,30 @@ export const intentResponseSchema = {
       type: 'STRING' as SchemaType,
       enum: ['CORRECTION', 'EXPLANATION', 'DISMISSAL', 'QUESTION', 'REVIEW_REQUEST', 'GENERAL'],
       description: 'The intent behind the user reply to the bot comment.',
+    },
+    rules: {
+      type: 'ARRAY' as SchemaType,
+      items: {
+        type: 'OBJECT' as SchemaType,
+        properties: {
+          body: {
+            type: 'STRING' as SchemaType,
+            description: 'A single distinct corrective standard, phrased as a forward-looking actionable rule.',
+          },
+          priority: {
+            type: 'STRING' as SchemaType,
+            enum: ['high', 'normal'],
+            description: 'high for security/architecture/data integrity, normal for style/convention.',
+          },
+        },
+        required: ['body', 'priority'],
+      },
+      description: 'Distinct corrective standards from the comment, at most 3. Empty when intent is not CORRECTION.',
+    },
+    ignored: {
+      type: 'ARRAY' as SchemaType,
+      items: { type: 'STRING' as SchemaType },
+      description: 'Short quoted excerpts of the comment that are NOT actionable standards (sentiment, tone, complaints).',
     },
   },
   required: ['intent'],

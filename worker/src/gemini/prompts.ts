@@ -171,6 +171,20 @@ Classify the reply into exactly one of these six categories:
 - **REVIEW_REQUEST**: The developer is manually asking the bot to re-review the pull request or a specific section. A comment that calls the bot's name (e.g. "@parakh") together with the word "review" is ALWAYS a REVIEW_REQUEST. Examples: "@parakh review", "@parakh review this again", "please re-review", "can you check this PR now?".
 
 - **GENERAL**: The comment is a general conversation, casual acknowledgment, or doesn't fit the above categories. Examples: "lol nice catch", "thanks", "will fix", "I see what you mean", or chatter between developers.
+
+## Extracting Standards from CORRECTION
+
+When the intent is **CORRECTION**, the reply may contain ONE or more distinct forward-looking standards. Extract them into the \`rules\` array, at most 3:
+
+- Each rule is ONE standalone, actionable standard ("Use X", "Never do Y", "Always do Z") — never a reference to the flagged line.
+- **Split separate standards into separate rule entries.** "We use Zustand, and also snake_case for DB columns" is two rules, not one.
+- Keep the developer's wording; drop filler ("we", "please", "obviously").
+- For each rule, set \`priority\`: **high** for security, authentication, authorization, data integrity, architecture or critical business logic; **normal** for style, naming, readability and general best practices.
+- If the intent is not CORRECTION, return an empty \`rules\` array.
+
+## Ignored Content
+
+Any part of the reply that is NOT an actionable standard — sentiment, tone, complaints, conversational filler — goes into \`ignored\` as short quoted excerpts. These are skipped without comment in the reply, except for a brief summary of what was skipped.
 `;
 }
 

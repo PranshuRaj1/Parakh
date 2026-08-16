@@ -1,4 +1,4 @@
-import type { Finding, IncrementalReviewResult, Rule, Intent, Relationship, RulePriority } from '@parakh/shared';
+import type { Finding, IncrementalReviewResult, Rule, Relationship, RulePriority, CommentAnalysis } from '@parakh/shared';
 import type { ReviewResult } from '../gemini/client.js';
 import type { Env } from '../index.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError } from '../gemini/keyPool.js';
@@ -22,7 +22,7 @@ const PROVIDER_TRANSITION_RESERVE_MS = 250;
 export interface LLMProvider {
   reviewDiff(fileName: string, diff: string, activeRules: Rule[], context?: LLMRequestContext): Promise<ReviewResult>;
   reviewIncrementalDiff(fileName: string, diff: string, activeRules: Rule[], priorFindings: Finding[], context?: LLMRequestContext): Promise<IncrementalReviewResult>;
-  classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<Intent>;
+  classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis>;
   classifyRelationship(newRule: { body: string }, existingRule: { body: string }, context?: LLMRequestContext): Promise<Relationship>;
   classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority>;
   draftReply(context: string, question: string, requestContext?: LLMRequestContext): Promise<string>;
@@ -185,7 +185,7 @@ export class LLMClient {
     }, signal);
   }
 
-  classifyIntent(comment: string, parent: string): Promise<Intent> {
+  classifyIntent(comment: string, parent: string): Promise<CommentAnalysis> {
     return this.route('intent', this.providers, (provider, context) => provider.classifyIntent(comment, parent, context));
   }
 
