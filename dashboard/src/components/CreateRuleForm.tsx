@@ -11,6 +11,14 @@ export default function CreateRuleForm({ repo, canManage = true }: { repo: strin
   const [error, setError] = useState('');
   const router = useRouter();
 
+  if (!canManage) {
+    return (
+      <p className="font-dm-sans text-sm text-[#c0c9c0]">
+        You need write access to this repository to create rules.
+      </p>
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!body.trim()) return;
@@ -42,14 +50,6 @@ export default function CreateRuleForm({ repo, canManage = true }: { repo: strin
     } finally {
       setLoading(false);
     }
-  }
-
-  if (!canManage) {
-    return (
-      <p className="font-dm-sans text-sm text-[#c0c9c0]">
-        You need write access to this repository to create rules.
-      </p>
-    );
   }
 
   return (
