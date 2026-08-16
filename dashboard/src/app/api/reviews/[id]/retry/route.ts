@@ -12,12 +12,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { id } = await params;
 
-  const review = await getReview(id);
-  if (!review) {
-    return NextResponse.json({ error: 'not found' }, { status: 404 });
-  }
-  if (!(await requireRepoPermission(review.repo, 'write', session))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  try {
+    const review = await getReview(id);
+    if (!review) {
+      return NextResponse.json({ error: 'not found' }, { status: 404 });
+    }
+    if (!(await requireRepoPermission(review.repo, 'write', session))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  } catch (error) {
+    console.error('Error verifying repository access:', error);
+    return NextResponse.json({ error: 'Failed to verify repository access' }, { status: 500 });
   }
 
   const workerUrl = process.env.WORKER_API_URL;
