@@ -138,12 +138,18 @@ export async function getFileContent(
 // ─── Comments ────────────────────────────────────────────────────────────────
 
 /**
- * Post a comment on a PR (Conversation tab).
+* Post a comment on a PR (Conversation tab).
  * (PRs are issues — uses the Issues API.)
  *
  * NB: GitHub does not support threading on issue comments (the REST API has
  * no `in_reply_to_id`), so this always creates a top-level comment. Only
  * diff review comments support replies, via `replyToReviewComment`.
+ *
+ * @param owner - Repository owner (e.g. "acme").
+ * @param repo - Repository name (e.g. "app").
+ * @param prNumber - Pull request number.
+ * @param body - Markdown comment body.
+ * @param token - GitHub installation access token.
  */
 export async function postComment(
   owner: string,

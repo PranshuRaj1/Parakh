@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
-import type { CommentAnalysis, CorrectionRuleInput, Intent } from '@parakh/shared';
+import type { CommentAnalysis, CorrectionRuleInput, Intent, GitHubAuthorAssociation } from '@parakh/shared';
 
 /** Folded response the mocked classifyIntent resolves with. */
 function analysis(
@@ -59,11 +59,14 @@ vi.mock('../db/reviews.js', () => ({
   getResumableReview: vi.fn(),
 }));
 vi.mock('../redis.js', () => ({
-  createRedisGet: vi.fn(),
-  createRedisSet: vi.fn(),
+  createRedisGet: vi.fn(() => vi.fn()),
+  createRedisSet: vi.fn(() => vi.fn()),
 }));
 vi.mock('./review.js', () => ({ triggerReview: vi.fn() }));
-vi.mock('./correction.js', () => ({ saveCorrectionAsRule: vi.fn() }));
+vi.mock('./correction.js', () => ({
+  saveCorrectionAsRule: vi.fn(),
+  isInstructionRule: vi.fn((body: string) => body.toLowerCase().includes('stop flagging') || body.toLowerCase().includes('never flag')),
+}));
 
 import { executeCommentResponseJob } from './comment-response.js';
 import { postComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
@@ -94,7 +97,7 @@ const env = {
   UPSTASH_REDIS_TOKEN: 't',
 } as unknown as Env;
 
-function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment'; inReplyToCommentId: number }> = {}) {
+function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_comment' | 'pull_request_review_comment'; inReplyToCommentId: number; authorAssociation: GitHubAuthorAssociation; authorLogin: string }> = {}) {
   return {
     type: 'COMMENT_RESPONSE' as const,
     installationId: 1,
@@ -104,6 +107,8 @@ function payload(overrides: Partial<{ commentBody: string; commentType: 'issue_c
     commentId: 100,
     commentBody: 'hello',
     commentType: 'issue_comment' as const,
+    authorAssociation: 'OWNER',
+    authorLogin: 'testuser',
     githubDeliveryId: 'del',
     ...overrides,
   };
@@ -203,13 +208,17 @@ describe('executeCommentResponseJob', () => {
       analysis('CORRECTION', [{ body: 'never flag EOF newline issues', priority: 'normal' }])
     );
     mocked.saveCorrectionAsRule.mockResolvedValue({
-      id: 'rule-9', body: 'never flag EOF newline issues', priority: 'normal',
+      id: 'rule-9', body: 'never flag EOF newline issues', priority: 'normal', status: 'ACTIVE',
     } as never);
 
     await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
     expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'never flag EOF newline issues', priority: 'normal' },
+      {
+        installationId: 1, owner: 'acme', repo: 'app', prNumber: 7,
+        ruleBody: 'never flag EOF newline issues', priority: 'normal',
+        createdBy: 'testuser', initialStatus: 'ACTIVE',
+      },
       env
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', '+1', 'token');
@@ -234,12 +243,12 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.saveCorrectionAsRule).toHaveBeenCalledTimes(2);
     expect(mocked.saveCorrectionAsRule).toHaveBeenNthCalledWith(
       1,
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use Zustand for state management', priority: 'normal' },
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use Zustand for state management', priority: 'normal', createdBy: 'testuser', initialStatus: 'ACTIVE' },
       env
     );
     expect(mocked.saveCorrectionAsRule).toHaveBeenNthCalledWith(
       2,
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use snake_case for database columns', priority: 'normal' },
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'use snake_case for database columns', priority: 'normal', createdBy: 'testuser', initialStatus: 'ACTIVE' },
       env
     );
     expect(mocked.addCommentReaction).toHaveBeenCalledTimes(1);
@@ -290,7 +299,7 @@ describe('executeCommentResponseJob', () => {
     await executeCommentResponseJob(payload({ commentBody: '@parakh we never flag EOF newline issues' }), env);
 
     expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
-      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'we never flag EOF newline issues', priority: 'normal' },
+      { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'we never flag EOF newline issues', priority: 'normal', createdBy: 'testuser', initialStatus: 'ACTIVE' },
       env
     );
   });
@@ -335,7 +344,7 @@ describe('executeCommentResponseJob', () => {
       analysis('CORRECTION', [{ body: 'stop flagging "No newline at the end of the file"', priority: 'normal' }])
     );
     mocked.saveCorrectionAsRule.mockResolvedValue({
-      id: 'rule-9', body: 'stop flagging "No newline at the end of the file"', priority: 'normal', kind: 'instruction',
+      id: 'rule-9', body: 'stop flagging "No newline at the end of the file"', priority: 'normal', kind: 'instruction', status: 'ACTIVE',
     } as never);
 
     await executeCommentResponseJob(payload(), env);
@@ -459,5 +468,65 @@ describe('executeCommentResponseJob', () => {
     );
 
     expect(classifyIntentMock).toHaveBeenCalledWith('hello', '');
+  });
+
+  it('blocks REVIEW_REQUEST from untrusted commenters (NONE association)', async () => {
+    classifyIntentMock.mockResolvedValue(analysis('REVIEW_REQUEST'));
+
+    await executeCommentResponseJob(payload({ authorAssociation: 'NONE' }), env);
+
+    expect(mocked.triggerReview).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('write access'), 'token'
+    );
+  });
+
+  it('blocks CORRECTION from untrusted commenters (CONTRIBUTOR association)', async () => {
+    classifyIntentMock.mockResolvedValue(analysis('CORRECTION'));
+
+    await executeCommentResponseJob(payload({ authorAssociation: 'CONTRIBUTOR' }), env);
+
+    expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('write access'), 'token'
+    );
+  });
+
+  it('blocks suppression rules from COLLABORATORs', async () => {
+    classifyIntentMock.mockResolvedValue(
+      analysis('CORRECTION', [{ body: 'stop flagging "unused imports"', priority: 'normal' }])
+    );
+
+    await executeCommentResponseJob(
+      payload({ authorAssociation: 'COLLABORATOR', commentBody: '@parakh stop flagging "unused imports"' }),
+      env
+    );
+
+    expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('owners'), 'token'
+    );
+  });
+
+  it('allows COLLABORATORs to create standard rules with PENDING status', async () => {
+    classifyIntentMock.mockResolvedValue(
+      analysis('CORRECTION', [{ body: 'always use const', priority: 'normal' }])
+    );
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-10', body: 'always use const', priority: 'normal', status: 'PENDING',
+    } as never);
+
+    await executeCommentResponseJob(
+      payload({ authorAssociation: 'COLLABORATOR', commentBody: '@parakh always use const' }),
+      env
+    );
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
+      expect.objectContaining({ ruleBody: 'always use const', initialStatus: 'PENDING', createdBy: 'testuser' }),
+      env
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('Saved as pending'), 'token'
+    );
   });
 });

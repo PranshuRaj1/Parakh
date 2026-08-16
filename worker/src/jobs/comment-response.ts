@@ -1,4 +1,4 @@
-import type { CommentJobPayload, Rule } from '@parakh/shared';
+import type { CommentJobPayload, Rule, GitHubAuthorAssociation } from '@parakh/shared';
 import { REACTIONS } from '@parakh/shared';
 import type { Env } from '../index.js';
 import { getCachedToken } from '../github/auth.js';
@@ -6,10 +6,54 @@ import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
-import { saveCorrectionAsRule } from './correction.js';
+import { saveCorrectionAsRule, isInstructionRule } from './correction.js';
 import { findingMappingKey } from './anchored-findings.js';
 import { truncateBody } from './truncate.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
+
+// ─── Authorization Helpers ─────────────────────────────────────────────────────
+
+type TrustLevel = 'admin' | 'write' | 'read' | 'none';
+
+function resolveTrustLevel(association: GitHubAuthorAssociation): TrustLevel {
+  switch (association) {
+    case 'OWNER':
+    case 'MEMBER':
+      return 'admin';
+    case 'COLLABORATOR':
+      return 'write';
+    case 'CONTRIBUTOR':
+      return 'read';
+    default:
+      return 'none';
+  }
+}
+
+const RATE_LIMITS: Record<string, { max: number; windowSeconds: number }> = {
+  REVIEW_REQUEST: { max: 10, windowSeconds: 3600 },
+  CORRECTION: { max: 5, windowSeconds: 3600 },
+};
+
+async function checkRateLimit(
+  intent: string,
+  authorLogin: string,
+  fullRepo: string,
+  env: Env
+): Promise<{ allowed: boolean; remaining: number }> {
+  const limit = RATE_LIMITS[intent];
+  if (!limit) return { allowed: true, remaining: Infinity };
+
+  const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+  const key = `ratelimit:${intent}:${fullRepo}:${authorLogin}`;
+  const current = parseInt((await redis.get(key)) ?? '0', 10);
+
+  if (current >= limit.max) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  await redis.set(key, String(current + 1), { ex: limit.windowSeconds });
+  return { allowed: true, remaining: limit.max - current - 1 };
+}
 
 /**
  * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
@@ -32,6 +76,8 @@ export async function executeCommentResponseJob(
     commentBody,
     commentType,
     inReplyToCommentId,
+    authorAssociation,
+    authorLogin,
     githubDeliveryId,
   } = payload;
 
@@ -96,6 +142,43 @@ export async function executeCommentResponseJob(
 
   console.log(`[comment-response] Classified intent: ${intent} (${analysis.rules.length} rules extracted)`);
 
+  // ── Rate limit check ──
+  const { allowed } = await checkRateLimit(intent, authorLogin, fullRepo, env);
+  if (!allowed) {
+    console.log(`[comment-response] Rate limited: ${authorLogin} on ${fullRepo}`);
+    await postReply(`⚠️ Rate limit reached for ${intent.replace('_', ' ').toLowerCase()} commands. Try again later.`);
+    return;
+  }
+
+  // ── Authorization gate ──
+  const trust = resolveTrustLevel(authorAssociation);
+
+  if (intent === 'REVIEW_REQUEST' && trust === 'none') {
+    await postReply(
+      "⚠️ You need repository write access to trigger a review. " +
+      "Only repository owners, members, and collaborators can request reviews."
+    );
+    return;
+  }
+
+  if (intent === 'CORRECTION') {
+    if (trust === 'none' || trust === 'read') {
+      await postReply(
+        "⚠️ You need repository write access to create rules. " +
+        "Only repository owners, members, and collaborators can persist corrections."
+      );
+      return;
+    }
+
+    if (trust === 'write' && isInstructionRule(commentBody)) {
+      await postReply(
+        "⚠️ Only repository **owners** and **members** can create suppression rules. " +
+        "Your correction has been noted but not persisted as a rule."
+      );
+      return;
+    }
+  }
+
   switch (intent) {
     case 'REVIEW_REQUEST': {
       // Check for an existing resumable review before creating a new one
@@ -154,13 +237,23 @@ export async function executeCommentResponseJob(
             priority: 'normal' as const,
           }];
 
-      // Save per rule — one ACTIVE insert + one contradiction enqueue each.
+      // Repo owners/members (admin trust) auto-activate; collaborators (write
+      // trust) need an owner/member to approve the rule before it enforces.
+      const initialStatus = trust === 'write' ? 'PENDING' : 'ACTIVE';
+
+      // Save per rule — one insert + one contradiction enqueue each.
       const savedRules = [];
       const failedBodies = [];
       for (const rule of rules) {
         try {
           const saved = await saveCorrectionAsRule(
-            { installationId, owner, repo, prNumber, ruleBody: rule.body, priority: rule.priority },
+            {
+              installationId, owner, repo, prNumber,
+              ruleBody: rule.body,
+              priority: rule.priority,
+              createdBy: authorLogin,
+              initialStatus,
+            },
             env
           );
           savedRules.push(saved);
@@ -184,7 +277,7 @@ export async function executeCommentResponseJob(
         console.warn(`[comment-response] Failed to add thumbs-up on correction comment:`, err);
       }
 
-      const reply = buildCorrectionReply(savedRules, failedBodies, analysis.ignored);
+      const reply = buildCorrectionReply(savedRules, failedBodies, analysis.ignored, initialStatus);
       await postReply(reply);
       break;
     }
@@ -214,9 +307,10 @@ export async function executeCommentResponseJob(
  *   skipped as not actionable, so nothing is lost silently.
  */
 function buildCorrectionReply(
-  saved: Array<Pick<Rule, 'body' | 'priority' | 'kind'>>,
+  saved: Array<Pick<Rule, 'body' | 'priority' | 'kind' | 'status'>>,
   failedBodies: string[],
-  ignored: string[]
+  ignored: string[],
+  initialStatus: 'ACTIVE' | 'PENDING'
 ): string {
   if (saved.length === 1 && failedBodies.length === 0 && ignored.length === 0) {
     const rule = saved[0];
@@ -224,6 +318,9 @@ function buildCorrectionReply(
       return `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`;
     }
     const priorityLabel = rule.priority === 'high' ? '🔴 high' : '🟢 normal';
+    if (initialStatus === 'PENDING') {
+      return `⏳ **Saved as pending** — your rule *${rule.body}* needs approval from a repository owner/member before it takes effect.`;
+    }
     return `✅ **Learned:** *${rule.body}*\n\nPriority: ${priorityLabel} · Status: **ACTIVE** — applied to future reviews in this repo.`;
   }
 
@@ -234,9 +331,13 @@ function buildCorrectionReply(
     instructions > 0 ? `${instructions} suppression${instructions === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' + ');
 
+  const statusLine = initialStatus === 'PENDING'
+    ? 'Status: **PENDING** — needs approval from a repository owner/member before it takes effect.'
+    : 'Status: **ACTIVE** — applied to future reviews in this repo.';
+
   let body = `✅ **Learned ${saved.length} rules** (${summary}):\n`
     + saved.map((rule) => `- **${rule.body}**`).join('\n')
-    + '\n\nStatus: **ACTIVE** — applied to future reviews in this repo.';
+    + `\n\n${statusLine}`;
   if (failedBodies.length > 0) {
     body += `\n\n_Couldn't save: ${failedBodies.map((text) => `*${text}*`).join(', ')}._`;
   }

@@ -15,10 +15,11 @@
  * and "rule created via dashboard" — both trigger the contradiction engine.
  */
 
-import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload } from '@parakh/shared';
+import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload, RuleStatus } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
+import { getDb } from '../db/client.js';
 import { truncateBody } from './truncate.js';
 import type { Env } from '../index.js';
 
@@ -102,4 +103,46 @@ export async function handleCreateRule(
     rule,
     contradictionCheckEnqueued: true,
   };
+}
+
+/**
+ * Transition a rule from PENDING to the given target status.
+ *
+ * Shared by approve/reject so the two handlers can't drift apart.
+ * Only PENDING rules may be moved; anything else is reported to the caller.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function moveRuleOutOfPending(ruleId: string, target: Extract<RuleStatus, 'ACTIVE' | 'INACTIVE'>, action: string, env: Env): Promise<void> {
+  if (!UUID_PATTERN.test(ruleId)) {
+    throw new Error(`Invalid rule id: expected a UUID, got "${ruleId}"`);
+  }
+
+  const sql = getDb(env.DATABASE_URL);
+
+  const rows = await sql`
+    UPDATE rules SET status = ${target}
+    WHERE id = ${ruleId} AND status = 'PENDING'
+    RETURNING id
+  `;
+
+  if (rows.length === 0) {
+    throw new Error(`Rule ${ruleId} not found or not in PENDING status`);
+  }
+
+  console.log(`[rule-api] ${action} rule ${ruleId}`);
+}
+
+/**
+ * Approve a PENDING rule (change status to ACTIVE).
+ */
+export async function handleApproveRule(ruleId: string, env: Env): Promise<void> {
+  await moveRuleOutOfPending(ruleId, 'ACTIVE', 'Approved', env);
+}
+
+/**
+ * Reject a PENDING rule (change status to INACTIVE).
+ */
+export async function handleRejectRule(ruleId: string, env: Env): Promise<void> {
+  await moveRuleOutOfPending(ruleId, 'INACTIVE', 'Rejected', env);
 }

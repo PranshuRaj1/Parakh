@@ -41,7 +41,7 @@ export async function getActiveRules(
     const sql = getDb(env.DATABASE_URL);
     const rows = await sql`
       SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-             source_pr, evidence_count, reinforcement_count, created_at, superseded_at
+             source_pr, created_by, evidence_count, reinforcement_count, created_at, superseded_at
       FROM rules
       WHERE status = 'ACTIVE' AND repo = ${repo}
       ORDER BY created_at ASC
@@ -62,7 +62,7 @@ export async function getRuleById(
   const sql = getDb(env.DATABASE_URL);
   const rows = await sql`
     SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-           source_pr, evidence_count, reinforcement_count, created_at, superseded_at
+           source_pr, created_by, evidence_count, reinforcement_count, created_at, superseded_at
     FROM rules
     WHERE id = ${id}
   `;
@@ -98,6 +98,7 @@ export async function insertRule(
     priority?: RulePriority;
     kind?: RuleKind;
     source_pr?: number;
+    created_by?: string | null;
   },
   env: EnvWithDB
 ): Promise<Rule> {
@@ -105,7 +106,7 @@ export async function insertRule(
   const sql = getDb(env.DATABASE_URL);
   const embeddingStr = `[${rule.embedding.join(',')}]`;
   const rows = await sql`
-    INSERT INTO rules (repo, body, embedding, status, scope, priority, kind, source_pr)
+    INSERT INTO rules (repo, body, embedding, status, scope, priority, kind, source_pr, created_by)
     VALUES (
       ${rule.repo},
       ${rule.body},
@@ -114,10 +115,11 @@ export async function insertRule(
       ${JSON.stringify(rule.scope || {})}::jsonb,
       ${rule.priority || 'normal'},
       ${rule.kind || 'standard'},
-      ${rule.source_pr || null}
+      ${rule.source_pr || null},
+      ${rule.created_by || null}
     )
     RETURNING id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-              source_pr, evidence_count, reinforcement_count, created_at, superseded_at
+              source_pr, created_by, evidence_count, reinforcement_count, created_at, superseded_at
   `;
 
   return rows[0] as unknown as Rule;
@@ -186,7 +188,7 @@ export async function findSimilarRules(
 
   const rows = await sql`
     SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-           source_pr, evidence_count, reinforcement_count, created_at, superseded_at,
+           source_pr, created_by, evidence_count, reinforcement_count, created_at, superseded_at,
            1 - (embedding <=> ${embeddingStr}::vector) as similarity
     FROM rules
     WHERE status = 'ACTIVE'
@@ -270,14 +272,14 @@ export async function getSupersessionChain(
     WITH RECURSIVE chain AS (
       -- Start from the given rule
       SELECT id, repo, body, status, scope, priority, kind, supersedes, superseded_by,
-             source_pr, evidence_count, reinforcement_count, created_at, superseded_at
+             source_pr, created_by, evidence_count, reinforcement_count, created_at, superseded_at
       FROM rules WHERE id = ${ruleId}
 
       UNION ALL
 
       -- Walk backwards (older rules that this one supersedes)
       SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.kind, r.supersedes, r.superseded_by,
-             r.source_pr, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
+             r.source_pr, r.created_by, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
       FROM rules r
       INNER JOIN chain c ON r.id = c.supersedes
 
@@ -285,7 +287,7 @@ export async function getSupersessionChain(
 
       -- Walk forwards (newer rules that supersede this one)
       SELECT r.id, r.repo, r.body, r.status, r.scope, r.priority, r.kind, r.supersedes, r.superseded_by,
-             r.source_pr, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
+             r.source_pr, r.created_by, r.evidence_count, r.reinforcement_count, r.created_at, r.superseded_at
       FROM rules r
       INNER JOIN chain c ON r.id = c.superseded_by
     )

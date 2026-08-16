@@ -61,6 +61,8 @@ export async function saveCorrectionAsRule(
     prNumber: number;
     ruleBody: string;
     priority?: RulePriority;
+    createdBy?: string;
+    initialStatus?: 'ACTIVE' | 'PENDING';
   },
   env: Env
 ) {
@@ -81,16 +83,17 @@ export async function saveCorrectionAsRule(
   // never enforced as standards.
   const kind: RuleKind = isInstructionRule(ruleBody) ? 'instruction' : 'standard';
 
-  // Insert rule as ACTIVE — auto-activate, not SUGGESTED
+  // Insert rule as ACTIVE or PENDING — auto-activate for OWNER/MEMBER, PENDING for COLLABORATOR
   const rule = await insertRule(
     {
       repo: fullRepo,
       body: ruleBody,
       embedding,
-      status: 'ACTIVE',
+      status: input.initialStatus ?? 'ACTIVE',
       priority,
       kind,
       source_pr: input.prNumber,
+      created_by: input.createdBy ?? null,
     },
     env
   );

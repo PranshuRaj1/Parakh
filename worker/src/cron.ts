@@ -8,6 +8,7 @@ import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
 import { swapCommentReaction, releaseReviewLock } from './jobs/review.js';
 import { createRedisGet, createRedisSet } from './redis.js';
+import { getDb } from './db/client.js';
 import type { Env } from './index.js';
 
 // Watchdog stall window. Must EXCEED the longest internal timeout: a large PR
@@ -27,6 +28,16 @@ export async function handleCronTrigger(env: Env): Promise<void> {
     }
   } catch (err) {
     console.error(`[cron] Failed to prune expired reasoning:`, err);
+  }
+
+  // Auto-expire PENDING rules older than 7 days (unapproved collaborator rules).
+  try {
+    const expired = await expirePendingRules(env);
+    if (expired > 0) {
+      console.log(`[cron] Expired ${expired} unapproved PENDING rule(s)`);
+    }
+  } catch (err) {
+    console.error(`[cron] Failed to expire pending rules:`, err);
   }
 
   // Auto-resume reviews paused for DAILY quota once their resume window has
@@ -118,4 +129,19 @@ export async function handleCronTrigger(env: Env): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Expire PENDING rules older than 7 days (unapproved collaborator rules).
+ */
+async function expirePendingRules(env: Env): Promise<number> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    UPDATE rules
+    SET status = 'INACTIVE'
+    WHERE status = 'PENDING'
+      AND created_at < now() - interval '7 days'
+    RETURNING id
+  `;
+  return rows.length;
 }

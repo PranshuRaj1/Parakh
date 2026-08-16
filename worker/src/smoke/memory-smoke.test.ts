@@ -209,7 +209,7 @@ function correctionComment(body: string): Record<string, unknown> {
     installation: { id: 1 },
     repository: { full_name: 'acme/app', owner: { login: 'acme' }, name: 'app' },
     issue: { number: 7, pull_request: { url: 'https://api.github.com/repos/acme/app/pulls/7' } },
-    comment: { id: 100, body, user: { login: 'dev', id: 555 } },
+    comment: { id: 100, body, user: { login: 'dev', id: 555 }, author_association: 'OWNER' },
   };
 }
 
@@ -231,6 +231,8 @@ function makeCommentMessage(body: string, commentType: 'issue_comment' | 'pull_r
       commentId: 100,
       commentBody: body,
       commentType,
+      authorAssociation: 'OWNER',
+      authorLogin: 'dev',
       githubDeliveryId: 'del-memory',
     },
   };

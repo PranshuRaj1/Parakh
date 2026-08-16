@@ -202,6 +202,8 @@ function makeCommentMessage(body: string, attempts = 1) {
       commentId: 100,
       commentBody: body,
       commentType: 'issue_comment' as const,
+      authorAssociation: 'OWNER',
+      authorLogin: 'dev',
       githubDeliveryId: 'del-comment',
     },
   };
