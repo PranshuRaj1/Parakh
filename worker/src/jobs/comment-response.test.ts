@@ -195,6 +195,38 @@ describe('executeCommentResponseJob', () => {
       { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, commentBody: '@parakh we never flag EOF newline issues' },
       env
     );
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith('acme', 'app', 100, 'issue_comment', '+1', 'token');
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
+    );
+  });
+
+  it('posts the thumbs-up on diff-thread corrections too', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-10', body: 'never flag EOF newlines', priority: 'normal',
+    } as never);
+    mocked.resolveReviewCommentRoot.mockResolvedValue(100);
+
+    await executeCommentResponseJob(
+      payload({ commentType: 'pull_request_review_comment' }),
+      env
+    );
+
+    expect(mocked.addCommentReaction).toHaveBeenCalledWith(
+      'acme', 'app', 100, 'pull_request_review_comment', '+1', 'token'
+    );
+  });
+
+  it('still confirms the correction when the thumbs-up reaction fails (best-effort)', async () => {
+    classifyIntentMock.mockResolvedValueOnce('CORRECTION');
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-11', body: 'never flag EOF newlines', priority: 'normal',
+    } as never);
+    mocked.addCommentReaction.mockRejectedValue(new Error('reaction failed'));
+
+    await executeCommentResponseJob(payload(), env);
+
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7, expect.stringContaining('Learned'), 'token'
     );

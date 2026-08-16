@@ -126,6 +126,14 @@ export async function executeCommentResponseJob(
           { installationId, owner, repo, prNumber, commentBody },
           env
         );
+        // Acknowledge the correction on its own comment (best-effort like the
+        // SEEN reaction — must not block the confirmation reply).
+        // addCommentReaction branches to the right endpoint per commentType.
+        try {
+          await addCommentReaction(owner, repo, commentId, commentType, REACTIONS.POSITIVE, token);
+        } catch (err) {
+          console.warn(`[comment-response] Failed to add thumbs-up on correction comment:`, err);
+        }
         if (rule.kind === 'instruction') {
           await postReply(
             `✅ **Noted** — I won't raise *${rule.body}* issues in future reviews of this repo.`
