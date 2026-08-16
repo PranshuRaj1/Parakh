@@ -1,97 +1,70 @@
 import { getDashboardRules, getDashboardRuleRelationships } from '@/lib/db';
 import { getServerSession } from 'next-auth';
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 import CreateRuleForm from '@/components/CreateRuleForm';
 import type { Rule, RuleRelationshipRecord } from '@parakh/shared';
-import Link from 'next/link';
+import { authOptions } from '@/lib/auth';
+import { getUserRepos, requireRepoPermission } from '@/lib/repo-auth';
 
 export default async function MemoryPage({
   searchParams,
 }: {
   searchParams: Promise<{ repo?: string }>
 }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect('/');
 
+  let repos: string[] = [];
+  let reposFailed = false;
+  if (session.accessToken) {
+    try {
+      repos = await getUserRepos(session.accessToken);
+    } catch (e) {
+      console.error('Failed to load repositories:', e);
+      reposFailed = true;
+    }
+  }
   const params = await searchParams;
-  const repo = params.repo || 'PranshuRaj1/Parakh'; // Default for demo
+  const requested = params.repo;
+  const repo = repos.find((r) => r.toLowerCase() === requested?.toLowerCase()) ?? repos[0] ?? null;
+  if (requested && !repo) notFound();
+
+  let canManage = false;
+  if (repo) {
+    try {
+      canManage = await requireRepoPermission(repo, 'write', session);
+    } catch (e) {
+      console.error('Failed to check repository permission:', e);
+    }
+  }
 
   // Ensure env var exists for DB connection before trying to fetch
   let rules: Rule[] = [];
   let relationships: RuleRelationshipRecord[] = [];
   let dbError = false;
 
-  try {
-    rules = await getDashboardRules(repo);
-    relationships = await getDashboardRuleRelationships(repo);
-  } catch (e) {
-    console.error(e);
-    dbError = true;
+  if (repo) {
+    try {
+      rules = await getDashboardRules(repo);
+      relationships = await getDashboardRuleRelationships(repo);
+    } catch (e) {
+      console.error(e);
+      dbError = true;
+    }
   }
 
   const activeRules = rules.filter(r => r.status === 'ACTIVE');
   const supersededRules = rules.filter(r => r.status === 'SUPERSEDED');
-  const userName = session.user?.name || session.user?.email || 'PranshuRaj1';
   const shortId = (id: string) => id.substring(0, 8);
 
   return (
-    <div className="flex w-full min-h-[calc(100vh-64px)]">
-      
-      {/* SideNavBar (Desktop Only) */}
-      <aside className="hidden md:flex flex-col w-64 px-6 py-8 border-r border-white/5 space-y-2 font-anybody fixed left-0 top-16 h-[calc(100vh-64px)] bg-[#000000] z-10 overflow-y-auto">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#3D3B4F] flex items-center justify-center font-bold text-white shadow-inner">
-            PR
-          </div>
-          <div>
-            <div className="text-white text-lg font-semibold leading-tight">{userName}</div>
-            <div className="text-[#c0c9c0] text-xs font-dm-sans">Parakh</div>
-          </div>
-        </div>
-
-        <nav className="flex-1 space-y-1">
-          <Link href="/" className="flex items-center gap-3 px-4 py-3 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors font-medium text-sm">
-            <span className="material-symbols-outlined text-[20px]">dashboard</span>
-            Overview
-          </Link>
-          <Link href="#" className="flex items-center gap-3 px-4 py-3 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors font-medium text-sm">
-            <span className="material-symbols-outlined text-[20px]">folder_open</span>
-            Files
-          </Link>
-          <Link href="#" className="flex items-center gap-3 px-4 py-3 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors font-medium text-sm">
-            <span className="material-symbols-outlined text-[20px]">history</span>
-            Commits
-          </Link>
-          <Link href="/memory" className="flex items-center gap-3 px-4 py-3 bg-[#3D3B4F]/30 text-[#c5c0ff] rounded-lg scale-[1.02] transition-transform hover:bg-white/5 font-semibold text-sm">
-            <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>rule</span>
-            Rules
-          </Link>
-          <Link href="/pulls" className="flex items-center gap-3 px-4 py-3 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors font-medium text-sm">
-            <span className="material-symbols-outlined text-[20px]">analytics</span>
-            Activity
-          </Link>
-        </nav>
-
-        <div className="mt-auto pt-8 space-y-4">
-          <button className="w-full bg-transparent border border-[#c5c0ff] text-white font-dm-sans text-sm px-4 py-2 rounded-lg hover:bg-[#c5c0ff]/10 transition-colors">
-            Add Repository
-          </button>
-          <div className="space-y-1 border-t border-white/5 pt-4">
-            <Link href="#" className="flex items-center gap-3 px-4 py-2 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors text-sm">
-              <span className="material-symbols-outlined text-[18px]">menu_book</span>
-              Docs
-            </Link>
-            <Link href="#" className="flex items-center gap-3 px-4 py-2 text-[#c0c9c0] hover:text-white rounded-lg hover:bg-white/5 transition-colors text-sm">
-              <span className="material-symbols-outlined text-[18px]">help_outline</span>
-              Support
-            </Link>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Canvas */}
-      <main className="flex-1 md:ml-64 w-full flex flex-col pt-8 pb-16 px-6">
-        <div className="max-w-[1000px] mx-auto w-full flex flex-col">
+    <main className="w-full flex flex-col pt-8 pb-16 px-6">
+      <div className="max-w-[1000px] mx-auto w-full flex flex-col">
+          {reposFailed ? (
+            <div className="bg-[#93000a]/20 text-[#ffdad6] p-4 rounded-xl border border-[#93000a] mb-4">
+              Failed to load your repositories. Refresh the page to try again.
+            </div>
+          ) : null}
           {dbError ? (
             <div className="bg-[#93000a]/20 text-[#ffdad6] p-4 rounded-xl border border-[#93000a]">
               Failed to connect to the database. Make sure DATABASE_URL is set in .env.local.
@@ -104,17 +77,18 @@ export default async function MemoryPage({
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h1 className="font-anybody text-3xl font-bold text-white mb-2 tracking-tight">Repository Memory</h1>
-                  <p className="font-dm-sans text-[#c0c9c0] text-lg">Rules learned and enforced for <strong className="font-semibold text-white">{repo}</strong></p>
+                  <p className="font-dm-sans text-[#c0c9c0] text-lg">Rules learned and enforced for {repo ? <strong className="font-semibold text-white">{repo}</strong> : 'your repositories'}</p>
                 </div>
                 <form className="flex gap-2" method="GET">
-                  <input
-                    type="text"
+                  <select
                     name="repo"
-                    defaultValue={repo}
-                    placeholder="owner/repo"
+                    defaultValue={repo ?? ''}
+                    disabled={repos.length === 0}
                     aria-label="Repository"
                     className="rounded-md border border-[#2a2a2a] bg-[#131313] text-white shadow-sm focus:border-[#00FF8C] focus:ring-[#00FF8C] focus:outline-none sm:text-sm p-2 transition-all font-space-mono"
-                  />
+                  >
+                    {repos.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
                   <button type="submit" className="px-4 py-2 bg-[#3D3B4F] text-white rounded-md text-sm font-bold font-space-mono hover:brightness-110 transition-colors">
                     Switch
                   </button>
@@ -235,7 +209,7 @@ export default async function MemoryPage({
                     <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>add_circle</span>
                     Create a Rule
                   </h3>
-                  <CreateRuleForm repo={repo} />
+                  <CreateRuleForm repo={repo ?? ''} canManage={canManage} />
                 </div>
 
                 {/* How it Works Explainer */}
@@ -253,8 +227,7 @@ export default async function MemoryPage({
             
           </div>
         )}
-        </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }

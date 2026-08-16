@@ -45,7 +45,7 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
   const toggle = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
 
   if (loading) {
-    return <div className="animate-pulse bg-white/5 h-32 rounded-xl border border-white/10 mt-8"></div>;
+    return <div className="animate-pulse bg-white/5 h-32 rounded-xl border border-white/10 mt-4"></div>;
   }
 
   const rows = data?.reasoning ?? [];
@@ -53,10 +53,10 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
   const failedCount = rows.filter(r => r.error_message).length;
 
   return (
-    <div className="glass-card rounded-xl p-6 max-w-4xl mx-auto mt-8 border-white/10">
-      <div className="flex items-center gap-3 mb-5">
+    <div className="glass-card rounded-xl p-4 max-w-4xl mx-auto mt-4 border-white/10">
+      <div className="flex items-center gap-3 mb-3">
         <Brain className="h-5 w-5 text-[#c5c0ff]" />
-        <h3 className="text-lg font-semibold text-white">Model Reasoning</h3>
+        <h3 className="text-base font-semibold text-white">Model Reasoning</h3>
         {hasAnyContent && failedCount > 0 && (
           <span className="text-xs font-medium text-[#ffb4ab] bg-[#93000a]/20 border border-[#93000a]/30 rounded-full px-2.5 py-0.5">
             {failedCount} failed
@@ -70,7 +70,7 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
           {'Reasoning unavailable — no per-file thoughts were captured for this review (either the feature is disabled or Google skipped thought generation).'}
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {rows.map(row => {
             const isOpen = !!expanded[row.id];
             const isError = !!row.error_message;
@@ -78,7 +78,7 @@ export function ReasoningPanel({ reviewId }: { reviewId: string }) {
               <div key={row.id} className="rounded-md border border-white/10 overflow-hidden bg-[#131313]">
                 <button
                   onClick={() => toggle(row.id)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center min-w-0">
                     <span
