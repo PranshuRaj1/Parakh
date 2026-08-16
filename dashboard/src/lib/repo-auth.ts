@@ -8,6 +8,7 @@ const WRITE_LEVELS: RepoPermission[] = ['admin', 'write'];
 
 const cache = new Map<string, { permission: RepoPermission; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 100;
 
 export function isRepoString(repo: string): boolean {
   return /^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(repo);
@@ -50,6 +51,12 @@ export async function getRepoPermission(repo: string, login: string, token: stri
   }
 
   cache.set(cacheKey, { permission, expiresAt: Date.now() + CACHE_TTL_MS });
+  if (cache.size > CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= now) cache.delete(key);
+    }
+  }
   return permission;
 }
 
