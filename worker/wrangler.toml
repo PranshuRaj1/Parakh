@@ -64,6 +64,15 @@ STALENESS_CHECK_ENABLED = "false"
 DETERMINISTIC_ANALYSIS_ENABLED = "false"
 INCREMENTAL_REVIEW_ENABLED = "false"
 INCREMENTAL_REVIEW_SHADOW = "true"
+# Review-quality rollout (issue #30) — staged flags, on for the comparison run.
+# Full-file grounding + post-hoc finding verification (fabrication rejection).
+REVIEW_FILE_CONTEXT_ENABLED = "true"
+# Deterministic attention focus for per-file prompts (PR summary + prior findings).
+ATTENTION_FOCUS_ENABLED = "true"
+# Cap oversized per-file diffs before they reach the model.
+BOUNDED_RAW_DIFFS_ENABLED = "true"
+# One LLM call at review start reads the execution diff and shapes the focus.
+REVIEW_START_FOCUS_ENABLED = "true"
 # Optional tertiary/quaternary generation models (no secrets on the vars side).
 CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"

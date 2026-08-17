@@ -136,6 +136,32 @@ describe('handleCronTrigger', () => {
     expect(mocked.postComment).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a transient DB connect failure instead of aborting the tick', async () => {
+    mocked.pruneExpiredReasoning
+      .mockRejectedValueOnce(new Error('NeonDbError: Error connecting to database: The operation was aborted due to timeout'))
+      .mockResolvedValueOnce(1);
+    mocked.dbSweepStalledReviews.mockResolvedValue([]);
+
+    await handleCronTrigger(env);
+
+    expect(mocked.pruneExpiredReasoning).toHaveBeenCalledTimes(2);
+  });
+
+  it('rides out a transient failure in the stalled-review sweep path', async () => {
+    mocked.dbSweepStalledReviews
+      .mockRejectedValueOnce(new Error('NeonDbError: Error connecting to database: The operation was aborted due to timeout'))
+      .mockResolvedValueOnce([
+        { reviewId: 'r1', stage: 'FETCHING_DIFF', attempt: 1 },
+      ]);
+    mocked.getReview.mockResolvedValue(stalledReview());
+
+    await handleCronTrigger(env);
+
+    expect(mocked.dbSweepStalledReviews).toHaveBeenCalledTimes(2);
+    expect(mocked.dbTimeoutStage).toHaveBeenCalledTimes(1);
+    expect(mocked.postComment).toHaveBeenCalledTimes(1);
+  });
+
   it('swaps the trigger-comment reaction to confused when a comment-triggered review stalls', async () => {
     mocked.dbSweepStalledReviews.mockResolvedValue([
       { reviewId: 'r1', stage: 'FETCHING_DIFF', attempt: 1 },

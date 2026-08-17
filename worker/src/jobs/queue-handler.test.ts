@@ -156,6 +156,44 @@ describe('handleQueueBatch', () => {
     expect(batch.messages[0].retry).not.toHaveBeenCalled();
   });
 
+  it('keeps retrying a DB connect failure past the app retry cap instead of acking', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    reviewJob.mockRejectedValue(
+      new Error('NeonDbError: Error connecting to database: The operation was aborted due to timeout')
+    );
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+    batch.messages[0].attempts = 10;
+
+    await handleQueueBatch(batch, env);
+
+    expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(batch.messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it('keeps retrying when failure persistence double-failed on a DB outage (cause chain)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cause = new Error('The operation was aborted due to timeout');
+    const persistence = new Error('Error connecting to database: The operation was aborted due to timeout');
+    const wrapper = new Error(
+      'Review failed with "provider request failed" and failure persistence also failed with "Error connecting to database"',
+      { cause }
+    );
+    wrapper.name = 'ReviewFailurePersistenceError';
+    persistence.name = 'NeonDbError';
+    reviewJob.mockRejectedValue(wrapper);
+    const batch = makeBatch([
+      { type: 'REVIEW', installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, reviewId: 'r1', requestedMode: 'full', effectiveMode: 'full' },
+    ]);
+    batch.messages[0].attempts = 9;
+
+    await handleQueueBatch(batch, env);
+
+    expect(batch.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(batch.messages[0].ack).not.toHaveBeenCalled();
+  });
+
   it('resumes the same review on a second delivery after a batch checkpoint', async () => {
     reviewJob.mockReset();
     reviewJob
