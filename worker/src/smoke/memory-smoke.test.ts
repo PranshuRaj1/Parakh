@@ -38,6 +38,7 @@ vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postCommentOnce: vi.fn(),
   postReviewComment: vi.fn(),
+  listReviewComments: vi.fn(),
   replyToReviewComment: vi.fn(),
   resolveReviewCommentRoot: vi.fn(),
   addReaction: vi.fn(),

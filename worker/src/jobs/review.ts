@@ -1603,10 +1603,10 @@ async function executeReviewJobInternal(
       throw err;
     }
     if (err instanceof SubrequestBudgetExceededError) {
-      // Budget checkpoint: the stage event stays open on purpose — the next
-      // delivery reuses it (attempt number bumps, unique index scopes to
-      // ended_at IS NULL) and resumes from the per-file Redis state. Not a
-      // failure, so don't failStage.
+      // Budget checkpoint: the stage event stays open until the next delivery
+      // starts the same stage, which supersedes it (attempt number bumps,
+      // unique index scopes to ended_at IS NULL) and resumes from the per-file
+      // Redis state. Not a failure, so don't failStage.
       console.warn(`[review] ${err.message} — checkpointing ${fullRepo}#${prNumber} for redelivery`);
       metricsOutcome = 'checkpoint';
       checkpointReason = 'subrequest_budget';

@@ -5,17 +5,19 @@ import type { LedgerFinding } from '../review/incremental/ledger.js';
 vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postReviewComment: vi.fn(),
+  listReviewComments: vi.fn(),
 }));
 vi.mock('../redis.js', () => ({
   createRedisSet: vi.fn(),
 }));
 
-import { postAnchoredFindings, findingMappingKey } from './anchored-findings.js';
-import { postReviewComment } from '../github/api.js';
+import { postAnchoredFindings, findingMappingKey, findingAnchorMarker } from './anchored-findings.js';
+import { postReviewComment, listReviewComments } from '../github/api.js';
 import { createRedisSet } from '../redis.js';
 
 const mocked = {
   postReviewComment: vi.mocked(postReviewComment),
+  listReviewComments: vi.mocked(listReviewComments),
   createRedisSet: vi.mocked(createRedisSet),
 };
 
@@ -47,6 +49,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   mocked.postReviewComment.mockReset().mockResolvedValue({ id: 500 });
+  mocked.listReviewComments.mockReset().mockResolvedValue([]);
   mocked.createRedisSet.mockReset().mockReturnValue((async () => undefined) as never);
 });
 
@@ -61,9 +64,32 @@ describe('postAnchoredFindings', () => {
 
     expect(posted).toBe(1);
     expect(mocked.postReviewComment).toHaveBeenCalledTimes(1);
-    expect(mocked.postReviewComment).toHaveBeenCalledWith(
-      'acme', 'app', 7, HEAD_SHA, 'src/app.ts', 10, 'handle the error', 'token'
-    );
+    const [owner, repo, pr, sha, file, line, body] = mocked.postReviewComment.mock.calls[0];
+    expect([owner, repo, pr, sha, file, line]).toEqual(['acme', 'app', 7, HEAD_SHA, 'src/app.ts', 10]);
+    expect(String(body)).toContain('handle the error');
+    expect(String(body)).toContain('<!-- parakh-anchor:review-1:src/app.ts:10:f-1 -->');
+  });
+
+  it('does not re-post a finding whose anchor marker already exists (redelivery dedupe)', async () => {
+    const findings = [ledgerFinding()];
+    mocked.listReviewComments.mockResolvedValue([
+      { id: 900, body: 'handle the error\n\n<!-- parakh-anchor:review-1:src/app.ts:10:f-1 -->' },
+    ]);
+
+    const posted = await postAnchoredFindings('review-1', findings, 'acme', 'app', 7, HEAD_SHA, 'token', env);
+
+    expect(posted).toBe(0);
+    expect(mocked.postReviewComment).not.toHaveBeenCalled();
+  });
+
+  it('still posts when the dedupe list call fails (best-effort dedupe)', async () => {
+    const findings = [ledgerFinding()];
+    mocked.listReviewComments.mockRejectedValue(new Error('GitHub API error (500)'));
+
+    const posted = await postAnchoredFindings('review-1', findings, 'acme', 'app', 7, HEAD_SHA, 'token', env);
+
+    expect(posted).toBe(1);
+    expect(mocked.postReviewComment).toHaveBeenCalledTimes(1);
   });
 
   it('returns 0 and posts nothing when no findings are new', async () => {
