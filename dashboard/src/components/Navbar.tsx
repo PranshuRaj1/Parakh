@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
-import { BrainCircuit, GitPullRequest, LogOut } from 'lucide-react';
+import { BrainCircuit, GitPullRequest, LogOut, Plug } from 'lucide-react';
 import type { ReactNode } from 'react';
 import Logo from './Logo';
 
@@ -42,6 +42,10 @@ export default function Navbar() {
               <NavLink href="/pulls" active={pathname === '/pulls'}>
                 <GitPullRequest className="w-4 h-4 mr-2" />
                 Pulls
+              </NavLink>
+              <NavLink href="/connect" active={pathname === '/connect'}>
+                <Plug className="w-4 h-4 mr-2" />
+                Connect
               </NavLink>
             </div>
           )}
