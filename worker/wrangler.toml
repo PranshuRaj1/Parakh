@@ -19,7 +19,7 @@ max_batch_size = 1
 # GEMINI_API_KEY
 # GEMINI_API_KEYS (comma-separated failover pool)
 # GROQ_API_KEY / GROQ_API_KEYS (comma-separated fallback pool, optional)
-# GROQ_GENERATION_MODEL (optional, default llama-3.3-70b-versatile)
+# GROQ_GENERATION_MODEL (optional, default openai/gpt-oss-120b)
 # CF_ACCOUNT_ID (optional — enables Cloudflare Workers AI tertiary fallback)
 # CF_API_TOKEN (optional secret, Workers AI access — enables CF AI fallback)
 # OPENROUTER_API_KEY (optional secret — enables OpenRouter quaternary fallback)
@@ -45,7 +45,8 @@ GEMINI_GENERATION_MODEL = "gemini-3-flash-preview"
 # per PR by setting REASONING_CAPTURE_ENABLED="true" here or as a secret.
 REASONING_CAPTURE_ENABLED = "false"
 # Groq fallback model + provider routing (keys themselves are secrets).
-GROQ_GENERATION_MODEL = "llama-3.3-70b-versatile"
+# llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16.
+GROQ_GENERATION_MODEL = "openai/gpt-oss-120b"
 # Provider routing: primary → fallback → (configured) cfai → (configured)
 # openrouter. LLM_PRIMARY/LLM_FALLBACK pick the first two; the others are
 # appended automatically when their credentials are present as secrets.

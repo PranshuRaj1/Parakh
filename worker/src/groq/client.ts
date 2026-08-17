@@ -34,8 +34,11 @@ import { classifyHttpFailure, type LLMRequestContext } from '../llm/errors.js';
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 
-/** Default Groq generation model. Env override: GROQ_GENERATION_MODEL. */
-export const DEFAULT_GROQ_GENERATION_MODEL = 'llama-3.3-70b-versatile';
+/**
+ * Default Groq generation model. Env override: GROQ_GENERATION_MODEL.
+ * llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16.
+ */
+export const DEFAULT_GROQ_GENERATION_MODEL = 'openai/gpt-oss-120b';
 
 /** Serialize an object for the payload without silently dropping fields. */
 function jsonStringify(value: unknown): string {
