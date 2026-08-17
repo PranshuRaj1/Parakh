@@ -297,7 +297,7 @@ describe('executeCommentResponseJob', () => {
     );
     expect(mocked.postComment).toHaveBeenCalledWith(
       'acme', 'app', 7,
-      expect.stringContaining('Skipped (not actionable): this check is useless for us'),
+      expect.stringContaining('Skipped (not actionable): *this check is useless for us*'),
       'token'
     );
   });
@@ -314,6 +314,62 @@ describe('executeCommentResponseJob', () => {
       { installationId: 1, owner: 'acme', repo: 'app', prNumber: 7, ruleBody: 'we never flag EOF newline issues', priority: 'normal', createdBy: 'testuser', initialStatus: 'ACTIVE', commenterLogin: 'testuser' },
       env,
       'token'
+    );
+  });
+
+  it('never saves a rebuttal extracted as a rule and replies with the no-standard message', async () => {
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [{ body: 'not true as stated — the handler never runs on that path', priority: 'normal' }])
+    );
+
+    await executeCommentResponseJob(payload({ commentBody: '@parakh not true as stated' }), env);
+
+    expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
+    expect(mocked.addCommentReaction).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("couldn't identify an actionable standard"), 'token'
+    );
+  });
+
+  it('rejects a multi-paragraph rebuttal in the zero-rule fallback without saving', async () => {
+    classifyIntentMock.mockResolvedValueOnce(analysis('CORRECTION'));
+    const rebuttal = [
+      'remember this is not a real issue — the DATABASE_URL is read once at module load.',
+      'The cron job sets it before any worker runs, and the timeout is global.',
+    ].join('\n');
+
+    await executeCommentResponseJob(payload({ commentBody: `@parakh ${rebuttal}` }), env);
+
+    expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining("couldn't identify an actionable standard"), 'token'
+    );
+  });
+
+  it('skips gate-rejected candidates into the ignored bucket without aborting the batch', async () => {
+    classifyIntentMock.mockResolvedValueOnce(
+      analysis('CORRECTION', [
+        { body: 'use Zustand for state management', priority: 'normal' },
+        { body: 'we use hex coding so remember that', priority: 'normal' },
+      ])
+    );
+    mocked.saveCorrectionAsRule.mockResolvedValue({
+      id: 'rule-z', body: 'use Zustand for state management', priority: 'normal',
+    } as never);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledTimes(1);
+    expect(mocked.saveCorrectionAsRule).toHaveBeenCalledWith(
+      expect.objectContaining({ ruleBody: 'use Zustand for state management' }),
+      env,
+      'token'
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('Skipped (not actionable)'), 'token'
+    );
+    expect(mocked.postComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, expect.stringContaining('we use hex coding so remember that'), 'token'
     );
   });
 

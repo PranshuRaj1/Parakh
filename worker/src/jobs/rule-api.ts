@@ -21,6 +21,7 @@ import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import { getDb } from '../db/client.js';
 import { truncateBody } from './truncate.js';
+import { assessRuleBody } from './rule-quality.js';
 import type { Env } from '../index.js';
 
 /**
@@ -39,39 +40,49 @@ export async function handleCreateRule(
     throw new Error(`Malformed repo: ${request.repo}`);
   }
 
+  // 2. Quality gate — the SAME deterministic validator used for PR-comment
+  //    corrections. A rebuttal/chat/code-block body is rejected with a
+  //    descriptive error instead of silently becoming an ACTIVE standard.
+  const assessment = assessRuleBody(request.body);
+  if (!assessment.ok) {
+    throw new Error(
+      `Rule text is not an actionable coding standard (${assessment.reason}): ` +
+      'use a single imperative like "use X for Y" or "never do Z"'
+    );
+  }
+
   // Embeddings and priority classification both route through the LLM client
   // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini
   // is exhausted. (Groq/OpenRouter have no embeddings API — the chain skips
   // providers that don't implement generateEmbedding.)
   const { llm } = createLLMClients(env);
 
-  // 2. Generate embedding
-  const embedding = await llm.generateEmbedding(request.body);
+  // 3. Generate embedding (on the gate-cleaned body)
+  const embedding = await llm.generateEmbedding(assessment.body);
 
-  // 3. Classify priority (or use override from request). Fail-open to 'normal'
+  // 4. Classify priority (or use override from request). Fail-open to 'normal'
   //    on error so rule creation is never blocked by a classifier outage.
   let priority = request.priority;
   if (!priority) {
     try {
-      priority = (await llm.classifyPriority(request.body)) ?? 'normal';
+      priority = (await llm.classifyPriority(assessment.body)) ?? 'normal';
     } catch (err) {
       priority = 'normal';
       console.error(
-        `[rule-api] Priority classification failed for "${truncateBody(request.body)}" (repo: ${request.repo}) — defaulting to normal:`,
+        `[rule-api] Priority classification failed for "${truncateBody(assessment.body)}" (repo: ${request.repo}) — defaulting to normal:`,
         err
       );
     }
   }
 
-  // 4. Insert rule as ACTIVE. Dashboard rules are enforceable standards
-  //    (kind defaults to 'standard' in the insert); suppression directives are
-  //    created via @parakh corrections.
+  // 5. Dashboard-created rules always land PENDING pending explicit admin
+  //    approval, regardless of creator role — no dashboard path auto-activates.
   const rule = await insertRule(
     {
       repo: request.repo,
-      body: request.body,
+      body: assessment.body,
       embedding,
-      status: 'ACTIVE',
+      status: 'PENDING',
       scope: request.scope || {},
       priority,
     },
@@ -86,7 +97,7 @@ export async function handleCreateRule(
     owner: request.repo.split('/')[0],
     repo: request.repo.split('/')[1],
     prNumber: 0,
-    ruleBody: request.body,
+    ruleBody: assessment.body,
     embedding: Array.from(embedding),
   };
 

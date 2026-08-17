@@ -26,6 +26,7 @@ import {
   REVIEW_STATE_TTL_SECONDS,
   REVIEW_LOCK_TTL_SECONDS,
 } from '@parakh/shared';
+import { capCosmeticSeverity } from './finding-quality.js';
 import { getCachedToken } from '../github/auth.js';
 import { postAnchoredFindings } from './anchored-findings.js';
 import {
@@ -33,6 +34,7 @@ import {
   fetchDiffPinned,
   getCompareStatus,
   getPRDetails,
+  getFileContent,
   postComment,
   postCommentOnce,
   addReaction,
@@ -101,7 +103,7 @@ import {
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
-import { getFeatureFlags } from '../config/feature-flags.js';
+import { getFeatureFlags, type FeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
 import { buildShadowObservation } from '../review/incremental/shadow.js';
 import { parseDiffChanges, prepareIncrementalLedger } from '../review/incremental/changes.js';
@@ -120,10 +122,22 @@ import {
   ReviewBaselineCollector,
   type ReviewBaselineOutcome,
 } from '../review/baseline/metrics.js';
+import { verifyFindings } from '../review/finding-verification.js';
+import { buildAttentionFocus } from '../review/attention-focus.js';
+import { boundDiff } from '../review/diff-bounding.js';
+import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
+
+/**
+ * Cap for the full-file reference fed to the model. Grounding must never
+ * balloon the prompt past a bounded size, so oversized files are truncated
+ * (head of file — declaration/import regions survive, which is the bulk of
+ * what verification needs).
+ */
+const REVIEW_FILE_CONTEXT_MAX_CHARS = 60_000;
 
 /** Concurrent files reviewed within a batch (env FILE_CONCURRENCY overrides). */
 const DEFAULT_FILE_CONCURRENCY = 2;
@@ -183,10 +197,28 @@ export function matchesScope(filePath: string, scope: Record<string, unknown>): 
 
 /**
  * Junk patterns Parakh never raises, regardless of LLM behavior. The EOF-newline
- * check is the canonical one the project explicitly considers useless.
+ * check is the canonical one the project explicitly considers useless. The rest
+ * are fabricated-claim families identified in the Aug 2026 review-quality
+ * diagnosis: whole-file/cross-file assertions the model cannot verify from a
+ * 3-line diff hunk ("not used anywhere", "call sites not updated", "lacks a
+ * prop") and cosmetic nits ("could be more descriptive", "consider extracting").
  */
 const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
   /newline at (the )?end of (the )?file/i,
+  // Fabricated / unverifiable whole-file or cross-file claims.
+  /used without (?:prior )?validation/i,
+  /without (?:prior )?validation/i,
+  /could be more descriptive/i,
+  /consider extracting/i,
+  /extract (?:a|this into a|the) function/i,
+  /add a comment explaining/i,
+  /comment explaining/i,
+  /(?:is|was|isn'?t|are|were) not used (?:anywhere|elsewhere)/i,
+  /(?:is|was) never used in (?:this|the) (?:function|file)/i,
+  /ensure (?:all )?call sites? (?:are|is|were) (?:updated|migrated)/i,
+  /call sites? (?:were|are|was) not updated/i,
+  /lacks a .{0,40}prop/i,
+  /import of [^.,;]+ (?:was )?not (?:checked|validated)/i,
 ];
 
 function escapeRegExp(text: string): string {
@@ -221,6 +253,8 @@ export function suppressFindings(findings: Finding[], instructions: Rule[]): Fin
 export interface ResolvedReviewResult {
   rawFindingCount: number;
   findings: Finding[];
+  /** Number of generic findings demoted to LOW by the cosmetic-family cap. */
+  cosmeticDemotions: number;
   /** Stored rules whose evidence counters should be incremented. */
   matchedRuleIds: string[];
 }
@@ -261,9 +295,15 @@ export function resolveReviewResult(
     if (rule) matchedRuleIds.push(rule.id);
   }
 
+  // Cosmetic families ("consider extracting", "add a comment explaining")
+  // must never score above LOW, no matter what severity the model assigned.
+  // Rule-sourced findings are untouched — their severity is deterministic.
+  const { findings: cappedFindings, demoted } = capCosmeticSeverity(findings);
+
   return {
     rawFindingCount: result.genericFindings.length + result.ruleFindings.length,
-    findings: findings.filter((finding) => !suppressPatterns.some((pattern) => pattern.test(finding.body))),
+    findings: cappedFindings.filter((finding) => !suppressPatterns.some((pattern) => pattern.test(finding.body))),
+    cosmeticDemotions: demoted,
     matchedRuleIds,
   };
 }
@@ -530,10 +570,28 @@ async function reviewSingleFile(
   budget: SubrequestBudget,
   metrics: ReviewBaselineCollector,
   priorFindings: LedgerFinding[] | null,
-  headSha: string
+  headSha: string,
+  featureFlags: FeatureFlags,
+  owner: string,
+  repo: string,
+  token: string,
+  attentionFocus: string | null
 ): Promise<ReviewedFileResult> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
+
+  // Bounded raw diffs: when the cap is enabled, oversized per-file diffs are
+  // trimmed (head hunks preserved + explicit truncation marker) before they
+  // reach the model. The ledger, reconciliation, and scoring always use the
+  // FULL diff — bounding only affects the LLM-facing text.
+  let reviewDiffText = fileDiff;
+  if (featureFlags.boundedRawDiffs) {
+    const bounded = boundDiff(fileDiff);
+    if (bounded.truncated) {
+      reviewDiffText = bounded.diff;
+      metrics.recordTruncatedDiff();
+    }
+  }
 
   const applicableRules = activeRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
@@ -553,13 +611,34 @@ async function reviewSingleFile(
   }
 
   let result: ReviewResult | IncrementalReviewResult;
+  // Full-file grounding: fetch the file at head so the model can cross-check
+  // diff-implied claims (and a bounded post-hoc verifier can reject flat
+  // fabrication). Best-effort — a failed fetch degrades to diff-only review.
+  let referenceFileContent: string | null = null;
   try {
     // The real Gemini/Groq calls happen inside the provider's key rotation,
     // which spends from the budget per actual attempt — so no spend here.
     metrics.recordReviewCall();
+
+    if (featureFlags.reviewFileContext && budget.hasRoomFor(1)) {
+      try {
+        budget.spend(1);
+        const content = await getFileContent(owner, repo, fileName, headSha, token);
+        if (content.length > REVIEW_FILE_CONTEXT_MAX_CHARS) {
+          referenceFileContent = content.slice(0, REVIEW_FILE_CONTEXT_MAX_CHARS);
+        } else {
+          referenceFileContent = content;
+        }
+        metrics.recordFileContextUsed();
+      } catch (err) {
+        console.warn(`[review] Failed to fetch full-file context for ${fileName} — diff-only review:`, err);
+        referenceFileContent = null;
+      }
+    }
+
     result = priorFindings === null
-      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal)
-      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal);
+      ? await llm.reviewDiff(fileName, reviewDiffText, applicableRules, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined)
+      : await llm.reviewIncrementalDiff(fileName, reviewDiffText, applicableRules, priorFindings, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;
@@ -604,7 +683,25 @@ async function reviewSingleFile(
   }
 
   const resolved = resolveReviewResult(result, fileName, applicableRules, suppressPatterns);
-  metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
+
+  // Post-hoc factual verification against the full-file reference: drop flat
+  // fabrication (missing identifiers / out-of-range lines), keep unverifiable
+  // findings untouched, and count everything for telemetry.
+  let finalFindings = resolved.findings;
+  let unverifiedCount = 0;
+  let contradictedCount = 0;
+  if (referenceFileContent) {
+    const outcome = verifyFindings(resolved.findings, referenceFileContent, fileName);
+    finalFindings = outcome.verified;
+    unverifiedCount = outcome.unverifiedCount;
+    contradictedCount = outcome.contradictedCount;
+  }
+  metrics.recordFindings(
+    resolved.rawFindingCount,
+    finalFindings.length,
+    { cosmeticDemotions: resolved.cosmeticDemotions }
+  );
+  metrics.recordVerification(unverifiedCount, contradictedCount);
   const telemetry = {
     findingsCount: result.genericFindings.length + result.ruleFindings.length,
     matchedRuleIds: resolved.matchedRuleIds,
@@ -616,7 +713,7 @@ async function reviewSingleFile(
     const incremental = result as IncrementalReviewResult;
     const reconciled = await reconcileFileFindings(
       priorFindings,
-      resolved.findings,
+      finalFindings,
       incremental.priorFindingResolutions,
       headSha
     );
@@ -624,7 +721,7 @@ async function reviewSingleFile(
   }
 
   return {
-    findings: resolved.findings,
+    findings: finalFindings,
     outcomes: [],
     summary: emptyReconciliationSummary(),
     telemetry,
@@ -1046,6 +1143,12 @@ async function executeReviewJobInternal(
       (path) => !isIgnoredLockfile(path)
     );
     const priorFindingsByFile = preparedLedger.priorFindingsByFile;
+
+    // Deterministic attention focus (flag-gated): anchor files that carried
+    // prior findings (incremental), else fall back to the raw PR summary for
+    // first-time reviews. Computed below once the subrequest budget exists;
+    // the PR-details fetch is only needed for the fallback path.
+    let attentionFocus: string | null = null;
     const finalizeOutput: FinalizeReviewOutput = {
       rangeStartSha: effectiveMode === 'incremental' ? parent?.head_sha ?? null : baseSha,
       fallbackReason: planningFallbackReason,
@@ -1129,10 +1232,50 @@ async function executeReviewJobInternal(
     // exceed the real cap even if our counting misses an edge.
     activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE);
 
+    if (featureFlags.attentionFocus) {
+      try {
+        let prTitle: string | null = null;
+        let prBody: string | null = null;
+        const hasPriorFindings = priorFindingsByFile.size > 0;
+        if (!hasPriorFindings && activeBudget.hasRoomFor(1)) {
+          activeBudget.spend(1);
+          const details = await getPRDetails(owner, repo, prNumber, token);
+          prTitle = details.title ?? null;
+          prBody = details.body ?? null;
+        }
+        attentionFocus = buildAttentionFocus({
+          priorFindingsByFile,
+          deltaFiles: Array.from(fileChunks.keys()).filter((file) => !isIgnoredLockfile(file)),
+          prTitle,
+          prBody,
+        });
+      } catch (err) {
+        console.warn('[review] Attention focus unavailable — continuing without it:', err);
+        attentionFocus = null;
+      }
+    }
+
     // Provider stack: Gemini primary, Groq fallback (configurable). The budget
     // is attached so every REAL key attempt (incl. rotation retries + fallback)
     // counts against the guard — the key to not undercounting during storms.
     const { llm } = createLLMClients(env, activeBudget);
+
+    // Phase 4: review-start attention focus — one LLM call over the execution
+    // diff, before the per-file loop. The raw response is validated and
+    // bounded in code; any failure falls back to the deterministic focus (or
+    // none) without failing the delivery. LLM attempts are budget-accounted
+    // inside route().
+    if (featureFlags.reviewStartFocus && activeBudget.hasRoomFor(1)) {
+      try {
+        const focus = validateFocusResponse(await llm.reviewFocus(executionDiff));
+        if (focus) {
+          attentionFocus = renderFocusBlock(focus);
+          metrics.recordReviewFocus();
+        }
+      } catch (err) {
+        console.warn('[review] Review-start focus call failed — using deterministic focus:', err);
+      }
+    }
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 
@@ -1225,7 +1368,9 @@ async function executeReviewJobInternal(
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
                 captureReasoning, retentionDays, reasoningBuffer, activeBudget, metrics,
                 effectiveMode === 'incremental' ? (priorFindingsByFile.get(fileName) ?? []) : null,
-                headSha ?? 'unknown'
+                headSha ?? 'unknown',
+                featureFlags, owner, repo, token,
+                attentionFocus
               );
               await commitReviewState(() => {
                 allFindings.push(...reviewed.findings);
@@ -1458,10 +1603,10 @@ async function executeReviewJobInternal(
       throw err;
     }
     if (err instanceof SubrequestBudgetExceededError) {
-      // Budget checkpoint: the stage event stays open on purpose — the next
-      // delivery reuses it (attempt number bumps, unique index scopes to
-      // ended_at IS NULL) and resumes from the per-file Redis state. Not a
-      // failure, so don't failStage.
+      // Budget checkpoint: the stage event stays open until the next delivery
+      // starts the same stage, which supersedes it (attempt number bumps,
+      // unique index scopes to ended_at IS NULL) and resumes from the per-file
+      // Redis state. Not a failure, so don't failStage.
       console.warn(`[review] ${err.message} — checkpointing ${fullRepo}#${prNumber} for redelivery`);
       metricsOutcome = 'checkpoint';
       checkpointReason = 'subrequest_budget';

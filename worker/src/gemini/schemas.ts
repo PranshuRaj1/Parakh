@@ -184,3 +184,37 @@ export const priorityResponseSchema = {
   },
   required: ['priority'],
 };
+
+/**
+ * Review-start attention focus schema — one call per delivery, before the
+ * per-file review loop. The response is validated and bounded in code
+ * (review-focus.ts) before it can influence any prompt.
+ */
+export const reviewFocusResponseSchema = {
+  type: 'OBJECT' as SchemaType,
+  properties: {
+    summary: {
+      type: 'STRING' as SchemaType,
+      description: 'One or two sentences: what this PR changes and where the risk concentrates.',
+    },
+    files: {
+      type: 'ARRAY' as SchemaType,
+      description: 'Files that deserve extra scrutiny, at most 8, with one-line reasons.',
+      items: {
+        type: 'OBJECT' as SchemaType,
+        properties: {
+          path: {
+            type: 'STRING' as SchemaType,
+            description: 'File path from the diff.',
+          },
+          reason: {
+            type: 'STRING' as SchemaType,
+            description: 'One-line reason why this file needs extra scrutiny.',
+          },
+        },
+        required: ['path', 'reason'],
+      },
+    },
+  },
+  required: ['summary', 'files'],
+};

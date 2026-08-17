@@ -69,7 +69,7 @@ describe('handleCreateRule', () => {
 
     expect(mockClassifyPriority).not.toHaveBeenCalled();
     expect(mocked.insertRule).toHaveBeenCalledWith(
-      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'ACTIVE', priority: 'high' }),
+      expect.objectContaining({ repo: 'acme/app', body: 'Never store secrets', status: 'PENDING', priority: 'high' }),
       env
     );
   });
@@ -131,6 +131,28 @@ describe('handleCreateRule', () => {
     const result = await handleCreateRule({ repo: 'acme/app', body: 'x' }, env);
     expect(mocked.executeContradictionJob).not.toHaveBeenCalled();
     expect(result.contradictionCheckEnqueued).toBe(true);
+  });
+
+  it('rejects a non-actionable body through the shared quality gate', async () => {
+    for (const body of [
+      'we use hex coding so remember that',
+      'remember this — not true as stated, the handler never runs on that path',
+      'look at the actual scope (queue-handler.ts:22-52) before flagging',
+      'verify before reporting findings',
+    ]) {
+      await expect(handleCreateRule({ repo: 'acme/app', body }, env)).rejects.toThrow(
+        'not an actionable coding standard'
+      );
+      expect(mocked.insertRule).not.toHaveBeenCalled();
+    }
+  });
+
+  it('always lands dashboard rules as PENDING pending admin approval', async () => {
+    await handleCreateRule({ repo: 'acme/app', body: 'Always validate untrusted input before using it' }, env, makeCtx());
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'PENDING' }),
+      env
+    );
   });
 });
 

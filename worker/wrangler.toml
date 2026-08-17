@@ -19,7 +19,7 @@ max_batch_size = 1
 # GEMINI_API_KEY
 # GEMINI_API_KEYS (comma-separated failover pool)
 # GROQ_API_KEY / GROQ_API_KEYS (comma-separated fallback pool, optional)
-# GROQ_GENERATION_MODEL (optional, default llama-3.3-70b-versatile)
+# GROQ_GENERATION_MODEL (optional, default openai/gpt-oss-120b)
 # CF_ACCOUNT_ID (optional — enables Cloudflare Workers AI tertiary fallback)
 # CF_API_TOKEN (optional secret, Workers AI access — enables CF AI fallback)
 # OPENROUTER_API_KEY (optional secret — enables OpenRouter quaternary fallback)
@@ -45,7 +45,8 @@ GEMINI_GENERATION_MODEL = "gemini-3-flash-preview"
 # per PR by setting REASONING_CAPTURE_ENABLED="true" here or as a secret.
 REASONING_CAPTURE_ENABLED = "false"
 # Groq fallback model + provider routing (keys themselves are secrets).
-GROQ_GENERATION_MODEL = "llama-3.3-70b-versatile"
+# llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16.
+GROQ_GENERATION_MODEL = "openai/gpt-oss-120b"
 # Provider routing: primary → fallback → (configured) cfai → (configured)
 # openrouter. LLM_PRIMARY/LLM_FALLBACK pick the first two; the others are
 # appended automatically when their credentials are present as secrets.
@@ -64,6 +65,15 @@ STALENESS_CHECK_ENABLED = "false"
 DETERMINISTIC_ANALYSIS_ENABLED = "false"
 INCREMENTAL_REVIEW_ENABLED = "false"
 INCREMENTAL_REVIEW_SHADOW = "true"
+# Review-quality rollout (issue #30) — staged flags, on for the comparison run.
+# Full-file grounding + post-hoc finding verification (fabrication rejection).
+REVIEW_FILE_CONTEXT_ENABLED = "true"
+# Deterministic attention focus for per-file prompts (PR summary + prior findings).
+ATTENTION_FOCUS_ENABLED = "true"
+# Cap oversized per-file diffs before they reach the model.
+BOUNDED_RAW_DIFFS_ENABLED = "true"
+# One LLM call at review start reads the execution diff and shapes the focus.
+REVIEW_START_FOCUS_ENABLED = "true"
 # Optional tertiary/quaternary generation models (no secrets on the vars side).
 CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"

@@ -6,6 +6,7 @@
  */
 
 import type { JobPayload } from '@parakh/shared';
+import { isDbConnectFailure } from '../db/db-retry.js';
 import { executeReviewJob } from './review.js';
 import { executeCommentResponseJob } from './comment-response.js';
 import { executeContradictionJob } from './contradiction.js';
@@ -78,6 +79,15 @@ export async function handleQueueBatch(
         `[queue] Job failed (type ${payload?.type}, attempt ${message.attempts}): ${describeError(err)}`
       );
       const delaySeconds = getUnexpectedRetryDelaySeconds(message.attempts);
+      if (delaySeconds === null && isDbConnectFailure(err)) {
+        // DB infrastructure outage (e.g. Neon connect aborted): never ACK the
+        // job — the queue's own max_retries (wrangler.toml) bounds retries.
+        console.error(
+          `[queue] DB infrastructure failure (type ${payload?.type}, attempt ${message.attempts}); keeping delivery for retry`
+        );
+        message.retry({ delaySeconds: 300 });
+        continue;
+      }
       if (delaySeconds === null) {
         console.error(`[queue] Retry limit reached for ${payload?.type}; acknowledging delivery`);
         message.ack();

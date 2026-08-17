@@ -16,6 +16,21 @@ export interface FeatureFlags {
   deterministicAnalysis: boolean;
   incrementalReview: boolean;
   incrementalReviewShadow: boolean;
+  /** Fetch the full file at head SHA and inject it as verification context for the review prompt. */
+  reviewFileContext: boolean;
+  /**
+   * Inject a deterministic attention-focus block into review prompts: anchor
+   * files that carried prior findings (incremental), falling back to the raw
+   * PR title/description when no prior findings exist (first-time reviews).
+   */
+  attentionFocus: boolean;
+  /** Cap per-file raw diffs before they reach the model (large-codebase viability). */
+  boundedRawDiffs: boolean;
+  /**
+   * Phase 4: one LLM review-start call reads the execution diff and produces
+   * the attention focus (validated + bounded, deterministic fallback on failure).
+   */
+  reviewStartFocus: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -27,6 +42,10 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   deterministicAnalysis: false,
   incrementalReview: false,
   incrementalReviewShadow: true,
+  reviewFileContext: false,
+  attentionFocus: false,
+  boundedRawDiffs: false,
+  reviewStartFocus: false,
 });
 
 function parseBooleanFlag(
@@ -88,6 +107,26 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'INCREMENTAL_REVIEW_SHADOW',
       env.INCREMENTAL_REVIEW_SHADOW,
       DEFAULT_FEATURE_FLAGS.incrementalReviewShadow
+    ),
+    reviewFileContext: parseBooleanFlag(
+      'REVIEW_FILE_CONTEXT_ENABLED',
+      env.REVIEW_FILE_CONTEXT_ENABLED,
+      DEFAULT_FEATURE_FLAGS.reviewFileContext
+    ),
+    attentionFocus: parseBooleanFlag(
+      'ATTENTION_FOCUS_ENABLED',
+      env.ATTENTION_FOCUS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.attentionFocus
+    ),
+    boundedRawDiffs: parseBooleanFlag(
+      'BOUNDED_RAW_DIFFS_ENABLED',
+      env.BOUNDED_RAW_DIFFS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.boundedRawDiffs
+    ),
+    reviewStartFocus: parseBooleanFlag(
+      'REVIEW_START_FOCUS_ENABLED',
+      env.REVIEW_START_FOCUS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.reviewStartFocus
     ),
   };
 

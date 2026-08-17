@@ -20,8 +20,10 @@ export const DEFAULT_OPERATION_TIMEOUT_MS = 90_000;
 const PROVIDER_TRANSITION_RESERVE_MS = 250;
 
 export interface LLMProvider {
-  reviewDiff(fileName: string, diff: string, activeRules: Rule[], context?: LLMRequestContext): Promise<ReviewResult>;
-  reviewIncrementalDiff(fileName: string, diff: string, activeRules: Rule[], priorFindings: Finding[], context?: LLMRequestContext): Promise<IncrementalReviewResult>;
+  reviewDiff(fileName: string, diff: string, activeRules: Rule[], context?: LLMRequestContext, referenceFileContent?: string, attentionFocus?: string): Promise<ReviewResult>;
+  reviewIncrementalDiff(fileName: string, diff: string, activeRules: Rule[], priorFindings: Finding[], context?: LLMRequestContext, referenceFileContent?: string, attentionFocus?: string): Promise<IncrementalReviewResult>;
+  /** One review-start call per delivery — produces the attention focus. */
+  reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown>;
   classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis>;
   classifyRelationship(newRule: { body: string }, existingRule: { body: string }, context?: LLMRequestContext): Promise<Relationship>;
   classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority>;
@@ -157,9 +159,9 @@ export class LLMClient {
     console.log(`[llm-latency] ${JSON.stringify({ provider: provider.providerName, model: provider.modelName, operation, outcome, durationMs: Date.now() - startedAt, timeoutMs, status })}`);
   }
 
-  reviewDiff(fileName: string, diff: string, rules: Rule[], signal?: AbortSignal): Promise<ReviewResult> {
+  reviewDiff(fileName: string, diff: string, rules: Rule[], signal?: AbortSignal, referenceFileContent?: string, attentionFocus?: string): Promise<ReviewResult> {
     return this.route('review', this.providers, async (provider, context) => {
-      const result = await provider.reviewDiff(fileName, diff, rules, context);
+      const result = await provider.reviewDiff(fileName, diff, rules, context, referenceFileContent, attentionFocus);
       if (!Array.isArray(result.genericFindings) || !Array.isArray(result.ruleFindings)) {
         throw new ProviderResponseError(provider.providerName, `${provider.providerName} returned malformed review findings`);
       }
@@ -167,9 +169,9 @@ export class LLMClient {
     }, signal);
   }
 
-  reviewIncrementalDiff(fileName: string, diff: string, rules: Rule[], findings: Finding[], signal?: AbortSignal): Promise<IncrementalReviewResult> {
+  reviewIncrementalDiff(fileName: string, diff: string, rules: Rule[], findings: Finding[], signal?: AbortSignal, referenceFileContent?: string, attentionFocus?: string): Promise<IncrementalReviewResult> {
     return this.route('incremental_review', this.providers, async (provider, context) => {
-      const result = await provider.reviewIncrementalDiff(fileName, diff, rules, findings, context);
+      const result = await provider.reviewIncrementalDiff(fileName, diff, rules, findings, context, referenceFileContent, attentionFocus);
       if (!Array.isArray(result.genericFindings) || !Array.isArray(result.ruleFindings)) {
         throw new ProviderResponseError(provider.providerName, `${provider.providerName} returned malformed incremental findings`);
       }
@@ -182,6 +184,12 @@ export class LLMClient {
         );
       }
       return result;
+    }, signal);
+  }
+
+  reviewFocus(diff: string, signal?: AbortSignal): Promise<unknown> {
+    return this.route('review_focus', this.providers, async (provider, context) => {
+      return provider.reviewFocus(diff, context);
     }, signal);
   }
 

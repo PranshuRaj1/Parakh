@@ -1,4 +1,4 @@
-export type LLMOperation = 'review' | 'incremental_review' | 'intent' | 'relationship' | 'priority' | 'reply' | 'embedding';
+export type LLMOperation = 'review' | 'incremental_review' | 'review_focus' | 'intent' | 'relationship' | 'priority' | 'reply' | 'embedding';
 
 export interface LLMRequestContext {
   signal?: AbortSignal;
@@ -98,9 +98,10 @@ export function classifyFetchFailure(provider: string, error: unknown, timeoutMs
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function classifyHttpFailure(provider: string, status: number): Error {
+export function classifyHttpFailure(provider: string, status: number, detail?: string): Error {
+  const detailText = detail ? `: ${detail}` : '';
   if (status === 408 || status === 413 || status === 429 || status === 524 || status >= 500) {
-    return new ProviderHealthError(provider, status, `${provider} returned retryable HTTP ${status}`);
+    return new ProviderHealthError(provider, status, `${provider} returned retryable HTTP ${status}${detailText}`);
   }
-  return new Error(`${provider} returned HTTP ${status}`);
+  return new Error(`${provider} returned HTTP ${status}${detailText}`);
 }

@@ -29,6 +29,7 @@ import {
   intentResponseSchema,
   relationshipResponseSchema,
   priorityResponseSchema,
+  reviewFocusResponseSchema,
 } from './schemas.js';
 import {
   buildReviewPrompt,
@@ -37,6 +38,7 @@ import {
   buildRelationshipPrompt,
   buildPriorityPrompt,
   buildReplyPrompt,
+  buildReviewFocusPrompt,
 } from './prompts.js';
 import { getKeyPool, isRateLimitError, isModelUnavailableError, isDailyQuotaError, AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_COOLDOWN_MS } from './keyPool.js';
 import { MemoryCooldownStore, type CooldownStore } from './cooldown-store.js';
@@ -318,11 +320,13 @@ export class GeminiClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const prompt = buildReviewPrompt(fileName, diff, activeRules);
+      const prompt = buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus);
 
       const generationConfig: Record<string, unknown> = {
         temperature: 0,
@@ -358,7 +362,9 @@ export class GeminiClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     priorFindings: Finding[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -375,7 +381,7 @@ export class GeminiClient implements LLMProvider {
         generationConfig: generationConfig as never,
       });
       const result = await model.generateContent(
-        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus),
         { signal: context?.signal, timeout: context?.timeoutMs }
       );
       const { jsonText, thinking } = extractResponseWithThinking(
@@ -391,8 +397,33 @@ export class GeminiClient implements LLMProvider {
     });
   }
 
-  // ── Intent Classification ────────────────────────────────────────────
+  // ── Review-Start Attention Focus ─────────────────────────────────────
 
+  /**
+   * One call per delivery — read the whole execution diff and return the
+   * attention focus. Raw response; callers validate and bound it in code.
+   */
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    return this.withKeyRotation(async (apiKey) => {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const prompt = buildReviewFocusPrompt(diff);
+      const model = genAI.getGenerativeModel({
+        model: this.generationModel,
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseSchema: reviewFocusResponseSchema as never,
+        },
+      });
+      const result = await model.generateContent(prompt, {
+        signal: context?.signal,
+        timeout: context?.timeoutMs,
+      });
+      return JSON.parse(result.response.text());
+    });
+  }
+
+  // ── Intent Classification ────────────────────────────────────────────
   /**
    * Classify the intent of a reply to a bot comment and (when CORRECTION)
    * extract the distinct corrective standards from it — one folded call.

@@ -52,6 +52,31 @@ export function isTransientDbError(error: unknown): boolean {
 }
 
 /**
+ * True when the failure (or its `cause` chain) is a DATABASE CONNECT failure:
+ * the Neon HTTP driver timed out establishing the request, e.g.
+ *   NeonDbError: Error connecting to database: The operation was aborted due to timeout
+ *
+ * This is an infrastructure outage, not a review-specific failure: retrying it
+ * is always safe and the queue must NOT drop the job while the DB is down.
+ */
+export function isDbConnectFailure(error: unknown): boolean {
+  let current: unknown = error;
+  const seen = new Set<Error>();
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const msg = current.message.toLowerCase();
+    if (
+      msg.includes('error connecting to database') ||
+      msg.includes('the operation was aborted due to timeout')
+    ) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
+/**
  * Execute an async operation with exponential backoff retry.
  * Returns the result on success, or throws the last error after all retries fail.
  */

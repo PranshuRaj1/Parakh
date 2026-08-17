@@ -10,10 +10,15 @@
  * outside the diff's new side, and one such rejection must not block the rest.
  * Every successfully posted comment is mapped in Redis (comment id → finding)
  * so a follow-up reply in the thread can be routed with finding context.
+ *
+ * Posting is idempotent across redeliveries: each comment body carries a
+ * stable marker (`<!-- parakh-anchor:... -->`) and existing markers are
+ * checked before posting, so a delivery that dies after POSTING_COMMENT and
+ * gets redelivered never posts the same finding twice.
  */
 
 import { MAX_FINDINGS_AS_COMMENTS } from '@parakh/shared';
-import { postReviewComment } from '../github/api.js';
+import { postReviewComment, listReviewComments } from '../github/api.js';
 import { createRedisSet } from '../redis.js';
 import type { Env } from '../index.js';
 import type { LedgerFinding } from '../review/incremental/ledger.js';
@@ -27,9 +32,21 @@ export function findingMappingKey(commentId: number): string {
 }
 
 /**
+ * Stable per-finding marker embedded in the anchored comment body. Keyed on
+ * the finding's identity (file + line + finding_id) so the same finding from
+ * an earlier delivery matches, while two distinct findings on the same line
+ * stay distinct.
+ */
+export function findingAnchorMarker(reviewId: string, finding: LedgerFinding): string {
+  return `<!-- parakh-anchor:${reviewId}:${finding.file}:${finding.line}:${finding.finding_id} -->`;
+}
+
+/**
  * Post the review's NEW findings (first seen at this head sha) as anchored
  * diff comments, capped at MAX_FINDINGS_AS_COMMENTS per review.
- * Returns the number of comments posted.
+ * Findings already posted by an earlier delivery (marker present in an
+ * existing PR review comment) are skipped. Returns the number of comments
+ * posted.
  */
 export async function postAnchoredFindings(
   reviewId: string,
@@ -47,11 +64,29 @@ export async function postAnchoredFindings(
 
   if (newFindings.length === 0) return 0;
 
+  // Pre-existing anchored markers from earlier deliveries (best-effort: a
+  // failure here degrades to posting without dedupe, never to skipping posts).
+  let existingMarkers = new Set<string>();
+  try {
+    const comments = await listReviewComments(owner, repo, prNumber, token);
+    existingMarkers = new Set(
+      comments
+        .flatMap((comment) => comment.body?.match(/<!-- parakh-anchor:[^>]+ -->/g) ?? [])
+    );
+  } catch (err) {
+    console.warn('[review] Failed to list existing review comments for anchored-finding dedupe:', err);
+  }
+
   const redisSet = createRedisSet(env);
   const results = await Promise.allSettled(
     newFindings.map(async (finding) => {
+      const marker = findingAnchorMarker(reviewId, finding);
+      if (existingMarkers.has(marker)) {
+        console.log(`[review] Skipping already-posted anchored finding (review ${reviewId}): ${finding.file}:${finding.line}`);
+        return null;
+      }
       const comment = await postReviewComment(
-        owner, repo, prNumber, headSha, finding.file, finding.line, finding.body, token
+        owner, repo, prNumber, headSha, finding.file, finding.line, `${finding.body}\n\n${marker}`, token
       );
       await redisSet(
         findingMappingKey(comment.id),
@@ -67,13 +102,14 @@ export async function postAnchoredFindings(
     })
   );
 
-  const posted = results.filter((r) => r.status === 'fulfilled').length;
+  const posted = results.filter((r) => r.status === 'fulfilled' && r.value !== null).length;
+  const skipped = results.filter((r) => r.status === 'fulfilled' && r.value === null).length;
   const failed = results.filter((r) => r.status === 'rejected').length;
   if (failed > 0) {
     console.warn(
       `[review] ${failed}/${newFindings.length} anchored finding comments failed (lines outside the diff are expected)`
     );
   }
-  console.log(`[review] Posted ${posted}/${newFindings.length} anchored finding comments (review ${reviewId})`);
+  console.log(`[review] Posted ${posted}/${newFindings.length} anchored finding comments (${skipped} already posted) (review ${reviewId})`);
   return posted;
 }

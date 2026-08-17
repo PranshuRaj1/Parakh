@@ -20,6 +20,15 @@ export interface ReviewBaselineSnapshot extends ReviewInputMeasurement {
   logicalReviewCalls: number;
   rawFindings: number;
   acceptedFindings: number;
+  suppressedFindings: number;
+  cosmeticDemotions: number;
+  unverifiedFindings: number;
+  contradictedFindings: number;
+  reviewFileContextUsed: boolean;
+  /** Number of per-file diffs truncated by the bounded-diff cap before reaching the model. */
+  truncatedDiffs: number;
+  /** Successful review-start focus calls whose validated result shaped the prompts. */
+  reviewFocusCalls: number;
   rawScore: number | null;
   displayedScore: number | null;
   elapsedMs: number;
@@ -57,6 +66,13 @@ export class ReviewBaselineCollector {
   private logicalReviewCalls = 0;
   private rawFindings = 0;
   private acceptedFindings = 0;
+  private suppressedFindings = 0;
+  private cosmeticDemotions = 0;
+  private unverifiedFindings = 0;
+  private contradictedFindings = 0;
+  private reviewFileContextUsed = false;
+  private truncatedDiffs = 0;
+  private reviewFocusCalls = 0;
   private rawScore: number | null = null;
   private displayedScore: number | null = null;
 
@@ -90,9 +106,34 @@ export class ReviewBaselineCollector {
     this.logicalReviewCalls++;
   }
 
-  recordFindings(raw: number, accepted: number): void {
+  recordFindings(
+    raw: number,
+    accepted: number,
+    extras?: { suppressed?: number; cosmeticDemotions?: number }
+  ): void {
     this.rawFindings += raw;
     this.acceptedFindings += accepted;
+    if (extras) {
+      this.suppressedFindings += extras.suppressed ?? 0;
+      this.cosmeticDemotions += extras.cosmeticDemotions ?? 0;
+    }
+  }
+
+  recordVerification(unverified: number, contradicted: number): void {
+    this.unverifiedFindings += unverified;
+    this.contradictedFindings += contradicted;
+  }
+
+  recordFileContextUsed(): void {
+    this.reviewFileContextUsed = true;
+  }
+
+  recordTruncatedDiff(): void {
+    this.truncatedDiffs++;
+  }
+
+  recordReviewFocus(): void {
+    this.reviewFocusCalls++;
   }
 
   recordScore(raw: number, displayed: number): void {
@@ -113,6 +154,13 @@ export class ReviewBaselineCollector {
       logicalReviewCalls: this.logicalReviewCalls,
       rawFindings: this.rawFindings,
       acceptedFindings: this.acceptedFindings,
+      suppressedFindings: this.suppressedFindings,
+      cosmeticDemotions: this.cosmeticDemotions,
+      unverifiedFindings: this.unverifiedFindings,
+      contradictedFindings: this.contradictedFindings,
+      reviewFileContextUsed: this.reviewFileContextUsed ? '1' : '0',
+      truncatedDiffs: this.truncatedDiffs,
+      reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
       displayedScore: this.displayedScore,
     };
@@ -135,6 +183,13 @@ export class ReviewBaselineCollector {
       logicalReviewCalls: this.logicalReviewCalls,
       rawFindings: this.rawFindings,
       acceptedFindings: this.acceptedFindings,
+      suppressedFindings: this.suppressedFindings,
+      cosmeticDemotions: this.cosmeticDemotions,
+      unverifiedFindings: this.unverifiedFindings,
+      contradictedFindings: this.contradictedFindings,
+      reviewFileContextUsed: this.reviewFileContextUsed,
+      truncatedDiffs: this.truncatedDiffs,
+      reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
       displayedScore: this.displayedScore,
       elapsedMs: Math.max(0, this.now() - this.startedAt),

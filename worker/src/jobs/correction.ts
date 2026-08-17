@@ -20,34 +20,11 @@ import { createLLMClients } from '../llm/factory.js';
 import { isRepoCollaborator } from '../github/api.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
+import { assessRuleBody, isInstructionRule } from './rule-quality.js';
 
-/**
- * Phrasing that marks a correction as a SUPPRESSION directive rather than an
- * enforceable standard. If present, the rule is stored as kind='instruction':
- * excluded from the enforce list, rendered as a prompt suppression, and matched
- * deterministically to drop findings.
- */
-const INSTRUCTION_HINTS = [
-  'stop flagging',
-  'stop raising',
-  'stop reporting',
-  'stop flag',
-  'never flag',
-  'never raise',
-  "don't flag",
-  'dont flag',
-  'do not flag',
-  "don't raise",
-  'dont raise',
-  'do not raise',
-  'in any future review',
-  'in future reviews',
-];
-
-export function isInstructionRule(ruleBody: string): boolean {
-  const lower = ruleBody.toLowerCase();
-  return INSTRUCTION_HINTS.some((hint) => lower.includes(hint));
-}
+// Re-exported so existing import sites (`from './correction.js'`) keep working
+// while the single source of truth lives in rule-quality.js.
+export { isInstructionRule };
 
 /**
  * Attempts to override, extract, or reveal the bot's own instructions/secrets
@@ -113,6 +90,17 @@ ruleBody: string;
     throw new CorrectionRejectedError('Correction body looks like a prompt-injection attempt');
   }
 
+  // Quality gate: rebuttals, chat text, code blocks, and bot-directed
+  // meta-instructions must never become stored rules. Callers (comment-response)
+  // pre-filter per-rule so a single bad candidate doesn't abort a batch; this
+  // check is the defense-in-depth backstop for direct callers.
+  const assessment = assessRuleBody(ruleBody);
+  if (!assessment.ok) {
+    throw new CorrectionRejectedError(
+      `Correction is not an actionable standard (${assessment.reason}): rejected`
+    );
+  }
+
   // Only repo collaborators may teach rules. Fail closed: missing identity
   // (e.g. queue message from before commenterLogin shipped) is a rejection.
   if (!input.commenterLogin) {
@@ -127,8 +115,12 @@ ruleBody: string;
 
   const { llm } = createLLMClients(env);
 
+  // The gate strips command prefixes/filler; the stored rule body is the
+  // assessed (clean) body so the memory bank never holds "@parakh ..." text.
+  const storedBody = assessment.body;
+
   // Generate embedding for similarity search
-  const embedding = await llm.generateEmbedding(ruleBody);
+  const embedding = await llm.generateEmbedding(storedBody);
 
   // Priority comes from the folded intent+extraction call; fail-open to
   // 'normal' on absence (a classification miss must never block rule creation).
@@ -136,13 +128,13 @@ ruleBody: string;
 
   // Suppression directives ("stop flagging X") are stored as 'instruction' rules,
   // never enforced as standards.
-  const kind: RuleKind = isInstructionRule(ruleBody) ? 'instruction' : 'standard';
+  const kind: RuleKind = isInstructionRule(storedBody) ? 'instruction' : 'standard';
 
   // Insert rule as ACTIVE or PENDING — auto-activate for OWNER/MEMBER, PENDING for COLLABORATOR
   const rule = await insertRule(
     {
       repo: fullRepo,
-      body: ruleBody,
+      body: storedBody,
       embedding,
       status: input.initialStatus ?? 'ACTIVE',
       priority,
@@ -163,7 +155,7 @@ ruleBody: string;
     repo: input.repo,
     prNumber: input.prNumber,
     ruleId: rule.id,
-    ruleBody,
+    ruleBody: storedBody,
     embedding: Array.from(embedding),
   };
 

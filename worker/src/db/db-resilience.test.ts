@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { withDbRetry, isTransientDbError } from './db-retry.js';
+import { withDbRetry, isTransientDbError, isDbConnectFailure } from './db-retry.js';
 
 // ─── isTransientDbError classification ──────────────────────────────────────
 
@@ -47,6 +47,34 @@ describe('isTransientDbError', () => {
     expect(isTransientDbError('string error')).toBe(false);
     expect(isTransientDbError(null)).toBe(false);
     expect(isTransientDbError(undefined)).toBe(false);
+  });
+});
+
+// ─── isDbConnectFailure classification ─────────────────────────────────────
+
+describe('isDbConnectFailure', () => {
+  it('matches the exact production Neon connect timeout', () => {
+    const err = new Error('Error connecting to database: The operation was aborted due to timeout');
+    err.name = 'NeonDbError';
+    expect(isDbConnectFailure(err)).toBe(true);
+  });
+
+  it('matches when the connect failure is wrapped deeper in the cause chain', () => {
+    const cause = new Error('The operation was aborted due to timeout');
+    const wrapper = new Error(
+      'Review failed with "provider request failed" and failure persistence also failed with "Error connecting to database"',
+      { cause }
+    );
+    wrapper.name = 'ReviewFailurePersistenceError';
+    expect(isDbConnectFailure(wrapper)).toBe(true);
+  });
+
+  it('does not match ordinary or review-specific failures', () => {
+    expect(isDbConnectFailure(new Error('database unavailable'))).toBe(false);
+    expect(isDbConnectFailure(new Error('Syntax error at line 1'))).toBe(false);
+    expect(isDbConnectFailure(new Error('provider request failed'))).toBe(false);
+    expect(isDbConnectFailure('string')).toBe(false);
+    expect(isDbConnectFailure(null)).toBe(false);
   });
 });
 

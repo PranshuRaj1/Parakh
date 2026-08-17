@@ -223,6 +223,22 @@ export async function postCommentOnce(
 }
 
 /**
+ * List review (diff) comments on a PR, newest first.
+ * Used for idempotent anchored-finding posting: each anchored comment embeds
+ * a marker in its body, so a redelivered finalize pass can detect which
+ * findings were already posted and skip re-posting them.
+ */
+export async function listReviewComments(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string
+): Promise<Array<{ id: number; body: string | null }>> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=100&sort=created&direction=desc`;
+  return githubFetch<Array<{ id: number; body: string | null }>>(url, token);
+}
+
+/**
  * Post a review comment on a specific line in a PR diff.
  */
 export async function postReviewComment(
@@ -430,6 +446,16 @@ export async function removeCommentReaction(
   }
 }
 
+export interface PRDetails {
+  head: { sha: string };
+  base: { sha: string };
+  user: { login: string };
+  /** PR title — used as background context for the attention-focus fallback. */
+  title?: string | null;
+  /** PR description — same use; truncated by the focus builder. */
+  body?: string | null;
+}
+
 /**
  * Get PR details (for head SHA, etc.).
  */
@@ -438,7 +464,7 @@ export async function getPRDetails(
   repo: string,
   prNumber: number,
   token: string
-): Promise<{ head: { sha: string }; base: { sha: string }; user: { login: string } }> {
+): Promise<PRDetails> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}`;
-  return githubFetch<{ head: { sha: string }; base: { sha: string }; user: { login: string } }>(url, token);
+  return githubFetch<PRDetails>(url, token);
 }

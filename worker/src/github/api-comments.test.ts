@@ -1,8 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { postCommentOnce, resolveReviewCommentRoot } from './api.js';
+import { postCommentOnce, listReviewComments, resolveReviewCommentRoot } from './api.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('listReviewComments', () => {
+  it('lists PR review comments newest-first and returns bodies for marker matching', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(
+        JSON.stringify([{ id: 200, body: 'finding\n\n<!-- parakh-anchor:r1:a.ts:5 -->' }, { id: 199, body: null }]),
+        { status: 200 }
+      ));
+
+    const comments = await listReviewComments('acme', 'app', 7, 'token');
+
+    expect(comments).toHaveLength(2);
+    expect(fetchMock.mock.calls[0][0]).toContain('/pulls/7/comments?per_page=100');
+    expect(comments[0].body).toContain('parakh-anchor');
+    expect(comments[1].body).toBeNull();
+  });
 });
 
 describe('postCommentOnce', () => {

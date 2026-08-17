@@ -95,7 +95,7 @@ export class OpenRouterClient implements LLMProvider {
       return new AllKeysExhaustedError(err);
     }
     if (status === 408 || status === 524 || status >= 500) {
-      return classifyHttpFailure('openrouter', status);
+      return classifyHttpFailure('openrouter', status, text.slice(0, 300));
     }
     return new Error(`[openrouter] ${status}: ${text.slice(0, 300)}`);
   }
@@ -169,10 +169,12 @@ export class OpenRouterClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules), {
+    const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus), {
       json: true,
     }, context);
     const parsed = parseJson<{
@@ -191,11 +193,13 @@ export class OpenRouterClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     priorFindings: Finding[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(
-      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus),
       { json: true }, context
     );
     const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
@@ -205,6 +209,12 @@ export class OpenRouterClient implements LLMProvider {
       priorFindingResolutions: parsed.priorFindingResolutions ?? null,
       thinking: null,
     };
+  }
+
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.chat(buildReviewFocusPrompt(diff), { json: true }, context);
+    return parseJson(raw);
   }
 
   async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {

@@ -169,6 +169,35 @@ it('keeps the extracted rule body verbatim (no @parakh stripping — the LLM ext
     expect(mocked.insertRule).not.toHaveBeenCalled();
   });
 
+  it('rejects rebuttals, chat text, and bot-directed meta-instructions through the quality gate', async () => {
+    for (const body of [
+      'we use hex coding so remember that',
+      'not true as stated — the handler never runs on that path',
+      'look at the actual scope (queue-handler.ts:22-52) before flagging',
+      'verify before reporting findings',
+      'remember this is not a real issue, the timeout is global',
+    ]) {
+      await expect(saveCorrectionAsRule(makeInput({ ruleBody: body }), env, TOKEN)).rejects.toThrow(
+        CorrectionRejectedError
+      );
+      expect(mocked.insertRule).not.toHaveBeenCalled();
+      expect(mockGenerateEmbedding).not.toHaveBeenCalled();
+    }
+  });
+
+  it('stores the gate-cleaned body (command prefixes stripped)', async () => {
+    await saveCorrectionAsRule(
+      makeInput({ ruleBody: '@parakh verify: Please stop flagging "No newline at the end of the file"' }),
+      env,
+      TOKEN
+    );
+
+    expect(mocked.insertRule).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'stop flagging "No newline at the end of the file"' }),
+      env
+    );
+  });
+
   it('stores forward-looking suppression directives as instruction rules', async () => {
     await saveCorrectionAsRule(
       makeInput({ ruleBody: 'stop flagging "No newline at the end of the file" in any future review' }),

@@ -34,8 +34,11 @@ import { classifyHttpFailure, type LLMRequestContext } from '../llm/errors.js';
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 
-/** Default Groq generation model. Env override: GROQ_GENERATION_MODEL. */
-export const DEFAULT_GROQ_GENERATION_MODEL = 'llama-3.3-70b-versatile';
+/**
+ * Default Groq generation model. Env override: GROQ_GENERATION_MODEL.
+ * llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16.
+ */
+export const DEFAULT_GROQ_GENERATION_MODEL = 'openai/gpt-oss-120b';
 
 /** Serialize an object for the payload without silently dropping fields. */
 function jsonStringify(value: unknown): string {
@@ -214,8 +217,8 @@ export class GroqClient implements LLMProvider {
     });
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw classifyHttpFailure('groq', response.status);
+      const errorBody = await response.text().catch(() => '');
+      throw classifyHttpFailure('groq', response.status, errorBody ? errorBody.slice(0, 300) : undefined);
     }
 
     const data = (await response.json()) as {
@@ -239,11 +242,13 @@ export class GroqClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     // Build the same prompt the Gemini path uses so review semantics match.
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
-    const prompt = buildReviewPrompt(fileName, diff, activeRules);
+    const prompt = buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus);
 
     return this.withKeyRotation(async (apiKey) => {
       const raw = await this.chat(apiKey, prompt, { json: true });
@@ -265,10 +270,12 @@ export class GroqClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     priorFindings: Finding[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
-    const prompt = buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings);
+    const prompt = buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus);
     return this.withKeyRotation(async (apiKey) => {
       const raw = await this.chat(apiKey, prompt, { json: true }, context);
       const parsed = this.parseJson<Partial<IncrementalReviewResult>>(raw);
@@ -278,6 +285,14 @@ export class GroqClient implements LLMProvider {
         priorFindingResolutions: parsed.priorFindingResolutions ?? null,
         thinking: null,
       };
+    });
+  }
+
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    return this.withKeyRotation(async (apiKey) => {
+      const raw = await this.chat(apiKey, buildReviewFocusPrompt(diff), { json: true }, context);
+      return this.parseJson(raw);
     });
   }
 

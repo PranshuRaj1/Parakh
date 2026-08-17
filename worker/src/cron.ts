@@ -3,6 +3,7 @@
  */
 
 import { dbSweepStalledReviews, dbTimeoutStage, getReview, pruneExpiredReasoning, dbFindResumableDailyQuotaReviews } from './db/reviews.js';
+import { withDbRetry, isTransientDbError } from './db/db-retry.js';
 import { triggerReview } from './jobs/review.js';
 import { getCachedToken } from './github/auth.js';
 import { postComment } from './github/api.js';
@@ -18,11 +19,22 @@ import type { Env } from './index.js';
 // above both (12 min) — the cron is a last-resort backstop, not the first judge.
 const STALL_TIMEOUT_SECONDS = 12 * 60; // 12 minutes
 
+// The watchdog must outlast a Neon cold start / brief connection blip.
+// Short backoffs: the 45s per-request DB budget (db/client.ts) dominates;
+// the retry exists only to ride out a resume that lands between attempts.
+const CRON_DB_RETRY_OPTS = {
+  maxAttempts: 3,
+  baseDelayMs: 250,
+  maxDelayMs: 2000,
+  isRetryable: isTransientDbError,
+  label: 'cron-db',
+};
+
 export async function handleCronTrigger(env: Env): Promise<void> {
   // Prune captured reasoning past its retention window (keeps storage ~zero).
   // Cheap indexed DELETE — only writes when there is something to remove.
   try {
-    const pruned = await pruneExpiredReasoning(env);
+    const pruned = await withDbRetry(() => pruneExpiredReasoning(env), CRON_DB_RETRY_OPTS);
     if (pruned > 0) {
       console.log(`[cron] Pruned ${pruned} expired reasoning row(s)`);
     }
@@ -32,7 +44,7 @@ export async function handleCronTrigger(env: Env): Promise<void> {
 
   // Auto-expire PENDING rules older than 7 days (unapproved collaborator rules).
   try {
-    const expired = await expirePendingRules(env);
+    const expired = await withDbRetry(() => expirePendingRules(env), CRON_DB_RETRY_OPTS);
     if (expired > 0) {
       console.log(`[cron] Expired ${expired} unapproved PENDING rule(s)`);
     }
@@ -43,7 +55,7 @@ export async function handleCronTrigger(env: Env): Promise<void> {
   // Auto-resume reviews paused for DAILY quota once their resume window has
   // elapsed. Re-enqueuing a REVIEW job picks up from the per-file Redis state.
   try {
-    const paused = await dbFindResumableDailyQuotaReviews(env);
+    const paused = await withDbRetry(() => dbFindResumableDailyQuotaReviews(env), CRON_DB_RETRY_OPTS);
     for (const review of paused) {
       const [owner, repo] = review.repo.split('/');
       if (!owner || !repo || !review.installation_id) {
@@ -70,15 +82,15 @@ export async function handleCronTrigger(env: Env): Promise<void> {
     console.error(`[cron] Failed to find daily-quota resumes:`, err);
   }
 
-  const stalled = await dbSweepStalledReviews(STALL_TIMEOUT_SECONDS, env);
+  const stalled = await withDbRetry(() => dbSweepStalledReviews(STALL_TIMEOUT_SECONDS, env), CRON_DB_RETRY_OPTS);
 
   for (const record of stalled) {
     const { reviewId, stage, attempt } = record;
     
     // Mark as TIMED_OUT in db
-    await dbTimeoutStage(reviewId, stage, attempt, env);
+    await withDbRetry(() => dbTimeoutStage(reviewId, stage, attempt, env), CRON_DB_RETRY_OPTS);
 
-    const review = await getReview(reviewId, env);
+    const review = await withDbRetry(() => getReview(reviewId, env), CRON_DB_RETRY_OPTS);
     if (!review) continue;
 
     const [owner, repo] = review.repo.split('/');

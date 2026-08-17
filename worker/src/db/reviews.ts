@@ -510,6 +510,20 @@ export async function dbStartStage(
   await withDbRetry(async () => {
     const sql = getDb(env.DATABASE_URL);
     await sql.transaction([
+      // Close any open event from an earlier attempt of this stage. A crashed
+      // or budget-checkpointed delivery leaves its row open; without this, a
+      // redelivery bumps the attempt number and the old row stays open
+      // forever — accumulating phantom "stuck" stages. The newer attempt
+      // supersedes it by definition.
+      sql`
+        UPDATE review_step_events
+        SET ended_at = now(),
+            duration_ms = EXTRACT(EPOCH FROM now() - started_at) * 1000,
+            outcome = 'TIMED_OUT',
+            error_code = 'SUPERSEDED_BY_REDELIVERY'
+        WHERE review_id = ${reviewId} AND stage = ${stage}
+          AND attempt_number < ${attempt} AND ended_at IS NULL
+      `,
       sql`
         INSERT INTO review_step_events (review_id, stage, attempt_number, detail)
         VALUES (${reviewId}, ${stage}, ${attempt}, ${detail ? JSON.stringify(detail) : null}::jsonb)

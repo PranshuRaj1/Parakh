@@ -99,7 +99,7 @@ export class CfaAiClient implements LLMProvider {
       return new AllKeysExhaustedError(err);
     }
     if (status === 408 || status === 524 || status >= 500) {
-      return classifyHttpFailure('cfai', status);
+      return classifyHttpFailure('cfai', status, text.slice(0, 300));
     }
     return new Error(`[cfai] ${status}: ${text}`);
   }
@@ -159,17 +159,20 @@ export class CfaAiClient implements LLMProvider {
 
   // ── LLMProvider ───────────────────────────────────────────────────────
 
-  async reviewDiff(
+async reviewDiff(
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
-      buildReviewPrompt(fileName, diff, activeRules),
-      true
+      buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus),
+      true,
+      context
     );
     const parsed = parseJson<{
       genericFindings?: ReviewResult['genericFindings'];
@@ -187,12 +190,14 @@ export class CfaAiClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     priorFindings: Finding[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
-      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus),
       true,
       context
     );
@@ -203,6 +208,12 @@ export class CfaAiClient implements LLMProvider {
       priorFindingResolutions: parsed.priorFindingResolutions ?? null,
       thinking: null,
     };
+  }
+
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.run(this.generationModel, buildReviewFocusPrompt(diff), true, context);
+    return parseJson(raw);
   }
 
   async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
