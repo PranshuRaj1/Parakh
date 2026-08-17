@@ -165,6 +165,42 @@ describe('suppressFindings', () => {
     expect(result).toHaveLength(1);
     expect(result[0].body).toBe('missing auth check');
   });
+
+  it('drops the fabricated-claim families identified in the quality diagnosis', () => {
+    const result = suppressFindings([
+      finding('MEDIUM', { body: 'fullRepo is not used anywhere in the function' }),
+      finding('MEDIUM', { body: 'postAnchoredFindings used without validation' }),
+      finding('LOW', { body: 'name could be more descriptive' }),
+      finding('MEDIUM', { body: 'classifyIntent changed return type — ensure all call sites are updated' }),
+      finding('MEDIUM', { body: 'FailureDetail lacks a canManage prop' }),
+      finding('MEDIUM', { body: 'consider extracting a function here' }),
+      finding('LOW', { body: 'add a comment explaining MAX_REPLY_DEPTH' }),
+      finding('MEDIUM', { body: 'Import of CommentAnalysis not checked against any rule' }),
+    ], []);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('suppresses rule-sourced findings identically to generic ones', () => {
+    const ruleViolation = finding('MEDIUM', {
+      body: 'this value is used without validation',
+      rule_id: 'rule-9',
+    });
+
+    const result = suppressFindings([ruleViolation], []);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not over-suppress real correctness findings', () => {
+    const result = suppressFindings([
+      finding('HIGH', { body: 'missing auth check on the admin route' }),
+      finding('MEDIUM', { body: 'unhandled promise rejection in fetchUser' }),
+      finding('LOW', { body: 'the timezone constant defaults to UTC' }),
+    ], []);
+
+    expect(result).toHaveLength(3);
+  });
 });
 
 describe('extractSuppressionPatterns', () => {
@@ -183,7 +219,10 @@ describe('extractSuppressionPatterns', () => {
     const patterns = extractSuppressionPatterns([
       rule({ kind: 'instruction', body: 'stop flagging "X" and "abc" forever' }),
     ]);
-    expect(patterns.length).toBe(1); // only the built-in pattern
+    expect(patterns.some((re) => re.test('X'))).toBe(false);
+    expect(patterns.some((re) => re.test('abc'))).toBe(false);
+    // Still contains the built-in patterns.
+    expect(patterns.some((re) => re.test('No newline at the end of the file'))).toBe(true);
   });
 });
 

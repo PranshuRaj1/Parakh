@@ -7,6 +7,7 @@ import { postComment as postIssueComment, replyToReviewComment, resolveReviewCom
 import { createLLMClients } from '../llm/factory.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule, CorrectionRejectedError, isInstructionRule } from './correction.js';
+import { assessRuleBody } from './rule-quality.js';
 import { sanitizeErrorText } from './sanitize.js';
 import { findingMappingKey } from './anchored-findings.js';
 import { truncateBody } from './truncate.js';
@@ -19,6 +20,9 @@ const META_REPLY =
 
 const CORRECTION_REJECTED_REPLY =
   "I couldn't save that as a rule — only repository collaborators can teach me, and the text has to be a concrete coding standard, not an attempt to change how I work.";
+
+const CORRECTION_NO_STANDARD_REPLY =
+  "I couldn't identify an actionable standard there — try a single imperative like \"use X for Y\" or \"stop flagging Z\". Rebuttals of individual findings are noted but not stored as rules.";
 
 // ─── Authorization Helpers ─────────────────────────────────────────────────────
 
@@ -260,8 +264,12 @@ export async function executeCommentResponseJob(
     case 'CORRECTION': {
       // The folded call extracts up to MAX_RULES_PER_COMMENT distinct
       // standards. If none came back, fall back to the whole comment (with the
-      // @parakh command prefix stripped) so a CORRECTION intent is never lost.
-      const rules = analysis.rules.length > 0
+      // @parakh command prefix stripped) — but every candidate, including the
+      // fallback, passes the deterministic quality gate before it can become a
+      // rule. Rebuttals, chat text, code blocks, and bot-directed instructions
+      // are dropped into the reply's "skipped" bucket; a CORRECTION intent is
+      // only "lost" when there is genuinely no actionable standard in it.
+      const candidates = analysis.rules.length > 0
         ? analysis.rules
         : [{
             body: commentBody
@@ -269,6 +277,22 @@ export async function executeCommentResponseJob(
               .trim(),
             priority: 'normal' as const,
           }];
+
+      const acceptedCandidates = [];
+      const skippedCandidates = [];
+      for (const candidate of candidates) {
+        const assessment = assessRuleBody(candidate.body);
+        if (assessment.ok) {
+          acceptedCandidates.push({ body: assessment.body, priority: candidate.priority });
+        } else {
+          skippedCandidates.push(candidate.body);
+        }
+      }
+
+      if (acceptedCandidates.length === 0) {
+        await postReply(CORRECTION_NO_STANDARD_REPLY);
+        break;
+      }
 
       // Repo owners/members (admin trust) auto-activate; collaborators (write
       // trust) need an owner/member to approve the rule before it enforces.
@@ -279,7 +303,7 @@ export async function executeCommentResponseJob(
       // canned refusal instead of the normal "Learned" confirmation.
       const savedRules = [];
       const failedBodies = [];
-      for (const rule of rules) {
+      for (const rule of acceptedCandidates) {
         try {
           const saved = await saveCorrectionAsRule(
             {
@@ -319,7 +343,8 @@ export async function executeCommentResponseJob(
         console.warn(`[comment-response] Failed to add thumbs-up on correction comment:`, err);
       }
 
-      const reply = buildCorrectionReply(savedRules, failedBodies, analysis.ignored, initialStatus);
+      const ignored = [...analysis.ignored, ...skippedCandidates];
+      const reply = buildCorrectionReply(savedRules, failedBodies, ignored, initialStatus);
       await postReply(reply);
       break;
     }
@@ -390,7 +415,8 @@ function buildCorrectionReply(
     body += `\n\n_Couldn't save: ${failedBodies.map((text) => `*${text}*`).join(', ')}._`;
   }
   if (ignored.length > 0) {
-    body += `\n\n_Skipped (not actionable): ${ignored.join('; ')}._`;
+    const excerpt = (text: string) => text.length > 80 ? `${text.slice(0, 80)}…` : text;
+    body += `\n\n_Skipped (not actionable): ${ignored.map((text) => `*${excerpt(text)}*`).join('; ')}._`;
   }
   return body;
 }
