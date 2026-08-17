@@ -171,6 +171,7 @@ Main tables:
 | `review_step_events` | Append-only log of every pipeline stage: start/end, duration, outcome, error, and reason transitions. This is what makes failures observable. |
 | `review_reasoning` | Captured model "thinking" text, auto-pruned after a retention window. |
 | `review_file_events` | Per-file telemetry: which file, provider, model, and error when a file review fails. |
+| `provider_installations` | Connected code-host accounts (provider, owner) and the repos the app can see — written by `installation` webhooks, read by the dashboard Connect page. |
 | `schema_migrations` | Tracks which migration files have already run. |
 
 Two pieces worth calling out:
@@ -209,7 +210,7 @@ cd worker
 wrangler dev
 ```
 
-Secrets live in `worker/.dev.vars` (gitignored). The full list of expected secrets is documented in `worker/wrangler.toml`. Minimum set: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_BOT_USER_ID`, `DATABASE_URL`, `UPSTASH_REDIS_URL`, `UPSTASH_REDIS_TOKEN`, `GEMINI_API_KEY`, `WORKER_API_SECRET`.
+Secrets live in `worker/.dev.vars` (gitignored). The full list of expected secrets is documented in `worker/wrangler.toml`. Minimum set: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_BOT_USER_ID`, `DATABASE_URL`, `UPSTASH_REDIS_URL`, `UPSTASH_REDIS_TOKEN`, `GEMINI_API_KEY`, `WORKER_API_SECRET`. Optional: `GITHUB_APP_SLUG` (public app slug used to build the dashboard "Connect" link; defaults to `parakh-bot`).
 
 The dashboard runs with `next dev` from `dashboard/` and reads the same `DATABASE_URL`.
 

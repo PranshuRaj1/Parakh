@@ -33,6 +33,7 @@ max_batch_size = 1
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN
 # WORKER_API_SECRET
+# GITHUB_APP_SLUG (optional — public GitHub App slug used to build the dashboard connect link; default "parakh-bot")
 
 [vars]
 # Generation model for the Gemini pool. Must be a model EVERY key in
