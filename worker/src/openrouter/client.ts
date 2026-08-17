@@ -95,7 +95,7 @@ export class OpenRouterClient implements LLMProvider {
       return new AllKeysExhaustedError(err);
     }
     if (status === 408 || status === 524 || status >= 500) {
-      return classifyHttpFailure('openrouter', status);
+      return classifyHttpFailure('openrouter', status, text.slice(0, 300));
     }
     return new Error(`[openrouter] ${status}: ${text.slice(0, 300)}`);
   }

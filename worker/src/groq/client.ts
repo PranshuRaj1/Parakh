@@ -217,8 +217,8 @@ export class GroqClient implements LLMProvider {
     });
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw classifyHttpFailure('groq', response.status);
+      const errorBody = await response.text().catch(() => '');
+      throw classifyHttpFailure('groq', response.status, errorBody ? errorBody.slice(0, 300) : undefined);
     }
 
     const data = (await response.json()) as {

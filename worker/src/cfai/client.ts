@@ -99,7 +99,7 @@ export class CfaAiClient implements LLMProvider {
       return new AllKeysExhaustedError(err);
     }
     if (status === 408 || status === 524 || status >= 500) {
-      return classifyHttpFailure('cfai', status);
+      return classifyHttpFailure('cfai', status, text.slice(0, 300));
     }
     return new Error(`[cfai] ${status}: ${text}`);
   }
