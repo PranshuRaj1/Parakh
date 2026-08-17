@@ -24,6 +24,8 @@ export interface FeatureFlags {
    * PR title/description when no prior findings exist (first-time reviews).
    */
   attentionFocus: boolean;
+  /** Cap per-file raw diffs before they reach the model (large-codebase viability). */
+  boundedRawDiffs: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -37,6 +39,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   incrementalReviewShadow: true,
   reviewFileContext: false,
   attentionFocus: false,
+  boundedRawDiffs: false,
 });
 
 function parseBooleanFlag(
@@ -108,6 +111,11 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'ATTENTION_FOCUS_ENABLED',
       env.ATTENTION_FOCUS_ENABLED,
       DEFAULT_FEATURE_FLAGS.attentionFocus
+    ),
+    boundedRawDiffs: parseBooleanFlag(
+      'BOUNDED_RAW_DIFFS_ENABLED',
+      env.BOUNDED_RAW_DIFFS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.boundedRawDiffs
     ),
   };
 

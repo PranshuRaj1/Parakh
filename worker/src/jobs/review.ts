@@ -124,6 +124,7 @@ import {
 } from '../review/baseline/metrics.js';
 import { verifyFindings } from '../review/finding-verification.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
+import { boundDiff } from '../review/diff-bounding.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -578,6 +579,19 @@ async function reviewSingleFile(
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
 
+  // Bounded raw diffs: when the cap is enabled, oversized per-file diffs are
+  // trimmed (head hunks preserved + explicit truncation marker) before they
+  // reach the model. The ledger, reconciliation, and scoring always use the
+  // FULL diff — bounding only affects the LLM-facing text.
+  let reviewDiffText = fileDiff;
+  if (featureFlags.boundedRawDiffs) {
+    const bounded = boundDiff(fileDiff);
+    if (bounded.truncated) {
+      reviewDiffText = bounded.diff;
+      metrics.recordTruncatedDiff();
+    }
+  }
+
   const applicableRules = activeRules.filter(r =>
     matchesScope(fileName, r.scope as Record<string, unknown>)
   );
@@ -622,8 +636,8 @@ async function reviewSingleFile(
     }
 
     result = priorFindings === null
-      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined)
-      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined);
+      ? await llm.reviewDiff(fileName, reviewDiffText, applicableRules, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined)
+      : await llm.reviewIncrementalDiff(fileName, reviewDiffText, applicableRules, priorFindings, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;

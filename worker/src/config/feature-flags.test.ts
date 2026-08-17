@@ -24,6 +24,7 @@ describe('getFeatureFlags', () => {
       INCREMENTAL_REVIEW_SHADOW: 'false',
       REVIEW_FILE_CONTEXT_ENABLED: 'TRUE',
       ATTENTION_FOCUS_ENABLED: 'true',
+      BOUNDED_RAW_DIFFS_ENABLED: 'TRUE',
     }));
 
     expect(flags).toEqual({
@@ -37,6 +38,7 @@ describe('getFeatureFlags', () => {
       incrementalReviewShadow: false,
       reviewFileContext: true,
       attentionFocus: true,
+      boundedRawDiffs: true,
     });
   });
 
