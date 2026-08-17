@@ -125,6 +125,7 @@ import {
 import { verifyFindings } from '../review/finding-verification.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
+import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1258,6 +1259,23 @@ async function executeReviewJobInternal(
     // is attached so every REAL key attempt (incl. rotation retries + fallback)
     // counts against the guard — the key to not undercounting during storms.
     const { llm } = createLLMClients(env, activeBudget);
+
+    // Phase 4: review-start attention focus — one LLM call over the execution
+    // diff, before the per-file loop. The raw response is validated and
+    // bounded in code; any failure falls back to the deterministic focus (or
+    // none) without failing the delivery. LLM attempts are budget-accounted
+    // inside route().
+    if (featureFlags.reviewStartFocus && activeBudget.hasRoomFor(1)) {
+      try {
+        const focus = validateFocusResponse(await llm.reviewFocus(executionDiff));
+        if (focus) {
+          attentionFocus = renderFocusBlock(focus);
+          metrics.recordReviewFocus();
+        }
+      } catch (err) {
+        console.warn('[review] Review-start focus call failed — using deterministic focus:', err);
+      }
+    }
     const allFindings = [...state.accumulatedFindings];
     const filesToProcess = [...remainingFiles];
 

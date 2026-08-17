@@ -1,4 +1,4 @@
-export type LLMOperation = 'review' | 'incremental_review' | 'intent' | 'relationship' | 'priority' | 'reply' | 'embedding';
+export type LLMOperation = 'review' | 'incremental_review' | 'review_focus' | 'intent' | 'relationship' | 'priority' | 'reply' | 'embedding';
 
 export interface LLMRequestContext {
   signal?: AbortSignal;

@@ -210,6 +210,12 @@ async reviewDiff(
     };
   }
 
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.run(this.generationModel, buildReviewFocusPrompt(diff), true, context);
+    return parseJson(raw);
+  }
+
   async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
     const { normalizeAnalysis } = await import('../llm/analysis.js');

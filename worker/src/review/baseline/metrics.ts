@@ -27,6 +27,8 @@ export interface ReviewBaselineSnapshot extends ReviewInputMeasurement {
   reviewFileContextUsed: boolean;
   /** Number of per-file diffs truncated by the bounded-diff cap before reaching the model. */
   truncatedDiffs: number;
+  /** Successful review-start focus calls whose validated result shaped the prompts. */
+  reviewFocusCalls: number;
   rawScore: number | null;
   displayedScore: number | null;
   elapsedMs: number;
@@ -70,6 +72,7 @@ export class ReviewBaselineCollector {
   private contradictedFindings = 0;
   private reviewFileContextUsed = false;
   private truncatedDiffs = 0;
+  private reviewFocusCalls = 0;
   private rawScore: number | null = null;
   private displayedScore: number | null = null;
 
@@ -129,6 +132,10 @@ export class ReviewBaselineCollector {
     this.truncatedDiffs++;
   }
 
+  recordReviewFocus(): void {
+    this.reviewFocusCalls++;
+  }
+
   recordScore(raw: number, displayed: number): void {
     this.rawScore = raw;
     this.displayedScore = displayed;
@@ -153,6 +160,7 @@ export class ReviewBaselineCollector {
       contradictedFindings: this.contradictedFindings,
       reviewFileContextUsed: this.reviewFileContextUsed ? '1' : '0',
       truncatedDiffs: this.truncatedDiffs,
+      reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
       displayedScore: this.displayedScore,
     };
@@ -181,6 +189,7 @@ export class ReviewBaselineCollector {
       contradictedFindings: this.contradictedFindings,
       reviewFileContextUsed: this.reviewFileContextUsed,
       truncatedDiffs: this.truncatedDiffs,
+      reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
       displayedScore: this.displayedScore,
       elapsedMs: Math.max(0, this.now() - this.startedAt),

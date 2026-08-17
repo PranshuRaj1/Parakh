@@ -24,6 +24,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 2.5,
         "displayedScore": 2.5,
         "elapsedMs": 0,
@@ -41,7 +42,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -94,6 +96,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -111,7 +114,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -144,6 +148,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -161,7 +166,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -195,6 +201,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -212,7 +219,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [],
@@ -243,6 +251,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -260,7 +269,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -293,6 +303,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -310,7 +321,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [],
@@ -341,6 +353,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -358,7 +371,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -391,6 +405,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -408,7 +423,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -441,6 +457,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -458,7 +475,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -491,6 +509,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -508,7 +527,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -546,6 +566,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -563,7 +584,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -596,6 +618,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -613,7 +636,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -647,6 +671,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -664,7 +689,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -697,6 +723,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 4.668201174607107,
         "displayedScore": 4.7,
         "elapsedMs": 0,
@@ -714,7 +741,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -756,6 +784,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -773,7 +802,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -806,6 +836,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -823,7 +854,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -856,6 +888,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -873,7 +906,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -906,6 +940,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -923,7 +958,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [
@@ -956,6 +992,7 @@
         "contradictedFindings": 0,
         "reviewFileContextUsed": false,
         "truncatedDiffs": 0,
+        "reviewFocusCalls": 0,
         "rawScore": 5,
         "displayedScore": 5,
         "elapsedMs": 0,
@@ -973,7 +1010,8 @@
           "incrementalReviewShadow": true,
           "reviewFileContext": false,
           "attentionFocus": false,
-          "boundedRawDiffs": false
+          "boundedRawDiffs": false,
+          "reviewStartFocus": false
         }
       },
       "callFiles": [

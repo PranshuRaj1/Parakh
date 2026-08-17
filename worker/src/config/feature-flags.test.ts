@@ -25,6 +25,7 @@ describe('getFeatureFlags', () => {
       REVIEW_FILE_CONTEXT_ENABLED: 'TRUE',
       ATTENTION_FOCUS_ENABLED: 'true',
       BOUNDED_RAW_DIFFS_ENABLED: 'TRUE',
+      REVIEW_START_FOCUS_ENABLED: 'true',
     }));
 
     expect(flags).toEqual({
@@ -39,6 +40,7 @@ describe('getFeatureFlags', () => {
       reviewFileContext: true,
       attentionFocus: true,
       boundedRawDiffs: true,
+      reviewStartFocus: true,
     });
   });
 

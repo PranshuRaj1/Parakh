@@ -285,6 +285,14 @@ export class GroqClient implements LLMProvider {
     });
   }
 
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    return this.withKeyRotation(async (apiKey) => {
+      const raw = await this.chat(apiKey, buildReviewFocusPrompt(diff), { json: true }, context);
+      return this.parseJson(raw);
+    });
+  }
+
   async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
     const { normalizeAnalysis } = await import('../llm/analysis.js');

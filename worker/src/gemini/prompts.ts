@@ -163,6 +163,43 @@ ${JSON.stringify(priorFindings.map((finding) => ({
 Add a third output array named priorFindingResolutions alongside genericFindings and ruleFindings.`;
 }
 
+// ─── Review-Start Attention Focus Prompt ─────────────────────────────────────
+
+/**
+ * Build the prompt for the single review-start focus call. The model reads the
+ * whole execution diff once and returns where attention belongs; code
+ * validates and bounds the response before it reaches any per-file prompt.
+ */
+export function buildReviewFocusPrompt(diff: string): string {
+  return `You are preparing an automated code review. Below is the complete unified diff for a
+pull request.
+
+## Task
+
+Read the diff and produce a short attention focus to guide the per-file review. Return JSON
+with exactly two fields:
+
+1. **summary**: one or two sentences describing what this change does and where the risk
+   concentrates (e.g. refactors touching shared modules, auth paths, transaction handling).
+2. **files**: at most 8 files from the diff that deserve extra scrutiny, each with a one-line
+   reason. Prefer files where the diff is large, where control flow or shared contracts
+   change, or where bugs would be expensive. Do not list more than 8 files.
+
+## Constraints
+
+- Only reference files that appear in the diff below.
+- Keep every reason to a single sentence. Do not give advice or instructions — state what
+  the file is and why it matters, nothing more.
+- If the diff is trivial or empty, return an empty \`files\` array and a one-sentence summary.
+
+## Diff
+
+\`\`\`diff
+${diff}
+\`\`\`
+`;
+}
+
 // ─── Intent Classification Prompt ────────────────────────────────────────────
 
 /**

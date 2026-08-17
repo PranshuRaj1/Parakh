@@ -22,6 +22,8 @@ const PROVIDER_TRANSITION_RESERVE_MS = 250;
 export interface LLMProvider {
   reviewDiff(fileName: string, diff: string, activeRules: Rule[], context?: LLMRequestContext, referenceFileContent?: string, attentionFocus?: string): Promise<ReviewResult>;
   reviewIncrementalDiff(fileName: string, diff: string, activeRules: Rule[], priorFindings: Finding[], context?: LLMRequestContext, referenceFileContent?: string, attentionFocus?: string): Promise<IncrementalReviewResult>;
+  /** One review-start call per delivery — produces the attention focus. */
+  reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown>;
   classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis>;
   classifyRelationship(newRule: { body: string }, existingRule: { body: string }, context?: LLMRequestContext): Promise<Relationship>;
   classifyPriority(ruleBody: string, context?: LLMRequestContext): Promise<RulePriority>;
@@ -182,6 +184,12 @@ export class LLMClient {
         );
       }
       return result;
+    }, signal);
+  }
+
+  reviewFocus(diff: string, signal?: AbortSignal): Promise<unknown> {
+    return this.route('review_focus', this.providers, async (provider, context) => {
+      return provider.reviewFocus(diff, context);
     }, signal);
   }
 

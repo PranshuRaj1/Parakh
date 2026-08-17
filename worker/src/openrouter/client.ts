@@ -211,6 +211,12 @@ export class OpenRouterClient implements LLMProvider {
     };
   }
 
+  async reviewFocus(diff: string, context?: LLMRequestContext): Promise<unknown> {
+    const { buildReviewFocusPrompt } = await import('../gemini/prompts.js');
+    const raw = await this.chat(buildReviewFocusPrompt(diff), { json: true }, context);
+    return parseJson(raw);
+  }
+
   async classifyIntent(comment: string, parentBotComment: string, context?: LLMRequestContext): Promise<CommentAnalysis> {
     const { buildIntentPrompt } = await import('../gemini/prompts.js');
     const { normalizeAnalysis } = await import('../llm/analysis.js');

@@ -26,6 +26,11 @@ export interface FeatureFlags {
   attentionFocus: boolean;
   /** Cap per-file raw diffs before they reach the model (large-codebase viability). */
   boundedRawDiffs: boolean;
+  /**
+   * Phase 4: one LLM review-start call reads the execution diff and produces
+   * the attention focus (validated + bounded, deterministic fallback on failure).
+   */
+  reviewStartFocus: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -40,6 +45,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   reviewFileContext: false,
   attentionFocus: false,
   boundedRawDiffs: false,
+  reviewStartFocus: false,
 });
 
 function parseBooleanFlag(
@@ -116,6 +122,11 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'BOUNDED_RAW_DIFFS_ENABLED',
       env.BOUNDED_RAW_DIFFS_ENABLED,
       DEFAULT_FEATURE_FLAGS.boundedRawDiffs
+    ),
+    reviewStartFocus: parseBooleanFlag(
+      'REVIEW_START_FOCUS_ENABLED',
+      env.REVIEW_START_FOCUS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.reviewStartFocus
     ),
   };
 
