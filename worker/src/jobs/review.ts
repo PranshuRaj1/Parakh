@@ -123,6 +123,7 @@ import {
   type ReviewBaselineOutcome,
 } from '../review/baseline/metrics.js';
 import { verifyFindings } from '../review/finding-verification.js';
+import { buildAttentionFocus } from '../review/attention-focus.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -571,7 +572,8 @@ async function reviewSingleFile(
   featureFlags: FeatureFlags,
   owner: string,
   repo: string,
-  token: string
+  token: string,
+  attentionFocus: string | null
 ): Promise<ReviewedFileResult> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
@@ -620,8 +622,8 @@ async function reviewSingleFile(
     }
 
     result = priorFindings === null
-      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal, referenceFileContent ?? undefined)
-      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal, referenceFileContent ?? undefined);
+      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined)
+      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal, referenceFileContent ?? undefined, attentionFocus ?? undefined);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;
@@ -1126,6 +1128,12 @@ async function executeReviewJobInternal(
       (path) => !isIgnoredLockfile(path)
     );
     const priorFindingsByFile = preparedLedger.priorFindingsByFile;
+
+    // Deterministic attention focus (flag-gated): anchor files that carried
+    // prior findings (incremental), else fall back to the raw PR summary for
+    // first-time reviews. Computed below once the subrequest budget exists;
+    // the PR-details fetch is only needed for the fallback path.
+    let attentionFocus: string | null = null;
     const finalizeOutput: FinalizeReviewOutput = {
       rangeStartSha: effectiveMode === 'incremental' ? parent?.head_sha ?? null : baseSha,
       fallbackReason: planningFallbackReason,
@@ -1208,6 +1216,29 @@ async function executeReviewJobInternal(
     // happens before the loop — conservative estimate so the loop doesn't
     // exceed the real cap even if our counting misses an edge.
     activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE);
+
+    if (featureFlags.attentionFocus) {
+      try {
+        let prTitle: string | null = null;
+        let prBody: string | null = null;
+        const hasPriorFindings = priorFindingsByFile.size > 0;
+        if (!hasPriorFindings && activeBudget.hasRoomFor(1)) {
+          activeBudget.spend(1);
+          const details = await getPRDetails(owner, repo, prNumber, token);
+          prTitle = details.title ?? null;
+          prBody = details.body ?? null;
+        }
+        attentionFocus = buildAttentionFocus({
+          priorFindingsByFile,
+          deltaFiles: Array.from(fileChunks.keys()).filter((file) => !isIgnoredLockfile(file)),
+          prTitle,
+          prBody,
+        });
+      } catch (err) {
+        console.warn('[review] Attention focus unavailable — continuing without it:', err);
+        attentionFocus = null;
+      }
+    }
 
     // Provider stack: Gemini primary, Groq fallback (configurable). The budget
     // is attached so every REAL key attempt (incl. rotation retries + fallback)
@@ -1306,7 +1337,8 @@ async function executeReviewJobInternal(
                 captureReasoning, retentionDays, reasoningBuffer, activeBudget, metrics,
                 effectiveMode === 'incremental' ? (priorFindingsByFile.get(fileName) ?? []) : null,
                 headSha ?? 'unknown',
-                featureFlags, owner, repo, token
+                featureFlags, owner, repo, token,
+                attentionFocus
               );
               await commitReviewState(() => {
                 allFindings.push(...reviewed.findings);

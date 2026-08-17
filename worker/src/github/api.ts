@@ -430,6 +430,16 @@ export async function removeCommentReaction(
   }
 }
 
+export interface PRDetails {
+  head: { sha: string };
+  base: { sha: string };
+  user: { login: string };
+  /** PR title — used as background context for the attention-focus fallback. */
+  title?: string | null;
+  /** PR description — same use; truncated by the focus builder. */
+  body?: string | null;
+}
+
 /**
  * Get PR details (for head SHA, etc.).
  */
@@ -438,7 +448,7 @@ export async function getPRDetails(
   repo: string,
   prNumber: number,
   token: string
-): Promise<{ head: { sha: string }; base: { sha: string }; user: { login: string } }> {
+): Promise<PRDetails> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}`;
-  return githubFetch<{ head: { sha: string }; base: { sha: string }; user: { login: string } }>(url, token);
+  return githubFetch<PRDetails>(url, token);
 }

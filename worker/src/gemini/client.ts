@@ -319,11 +319,12 @@ export class GeminiClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     context?: LLMRequestContext,
-    referenceFileContent?: string
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const prompt = buildReviewPrompt(fileName, diff, activeRules, referenceFileContent);
+      const prompt = buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus);
 
       const generationConfig: Record<string, unknown> = {
         temperature: 0,
@@ -360,7 +361,8 @@ export class GeminiClient implements LLMProvider {
     activeRules: Rule[],
     priorFindings: Finding[],
     context?: LLMRequestContext,
-    referenceFileContent?: string
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -377,7 +379,7 @@ export class GeminiClient implements LLMProvider {
         generationConfig: generationConfig as never,
       });
       const result = await model.generateContent(
-        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent),
+        buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus),
         { signal: context?.signal, timeout: context?.timeoutMs }
       );
       const { jsonText, thinking } = extractResponseWithThinking(

@@ -170,10 +170,11 @@ export class OpenRouterClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     context?: LLMRequestContext,
-    referenceFileContent?: string
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
-    const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules, referenceFileContent), {
+    const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus), {
       json: true,
     }, context);
     const parsed = parseJson<{
@@ -193,11 +194,12 @@ export class OpenRouterClient implements LLMProvider {
     activeRules: Rule[],
     priorFindings: Finding[],
     context?: LLMRequestContext,
-    referenceFileContent?: string
+    referenceFileContent?: string,
+    attentionFocus?: string
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.chat(
-      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent),
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent, attentionFocus),
       { json: true }, context
     );
     const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);

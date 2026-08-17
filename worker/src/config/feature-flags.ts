@@ -18,6 +18,12 @@ export interface FeatureFlags {
   incrementalReviewShadow: boolean;
   /** Fetch the full file at head SHA and inject it as verification context for the review prompt. */
   reviewFileContext: boolean;
+  /**
+   * Inject a deterministic attention-focus block into review prompts: anchor
+   * files that carried prior findings (incremental), falling back to the raw
+   * PR title/description when no prior findings exist (first-time reviews).
+   */
+  attentionFocus: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -30,6 +36,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   incrementalReview: false,
   incrementalReviewShadow: true,
   reviewFileContext: false,
+  attentionFocus: false,
 });
 
 function parseBooleanFlag(
@@ -96,6 +103,11 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'REVIEW_FILE_CONTEXT_ENABLED',
       env.REVIEW_FILE_CONTEXT_ENABLED,
       DEFAULT_FEATURE_FLAGS.reviewFileContext
+    ),
+    attentionFocus: parseBooleanFlag(
+      'ATTENTION_FOCUS_ENABLED',
+      env.ATTENTION_FOCUS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.attentionFocus
     ),
   };
 
