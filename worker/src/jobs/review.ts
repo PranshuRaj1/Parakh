@@ -26,6 +26,7 @@ import {
   REVIEW_STATE_TTL_SECONDS,
   REVIEW_LOCK_TTL_SECONDS,
 } from '@parakh/shared';
+import { capCosmeticSeverity } from './finding-quality.js';
 import { getCachedToken } from '../github/auth.js';
 import { postAnchoredFindings } from './anchored-findings.js';
 import {
@@ -33,6 +34,7 @@ import {
   fetchDiffPinned,
   getCompareStatus,
   getPRDetails,
+  getFileContent,
   postComment,
   postCommentOnce,
   addReaction,
@@ -101,7 +103,7 @@ import {
 import { hashResumeValidationDiff, type ResumeValidationHash } from '../review/resume-validation-hash.js';
 import { hashActiveRules, REVIEW_PIPELINE_VERSION } from '../review/compatibility.js';
 import { OUTBOUND_REQUEST_TIMEOUT_MS } from '../request-timeout.js';
-import { getFeatureFlags } from '../config/feature-flags.js';
+import { getFeatureFlags, type FeatureFlags } from '../config/feature-flags.js';
 import { planIncrementalReview } from '../review/incremental/planner.js';
 import { buildShadowObservation } from '../review/incremental/shadow.js';
 import { parseDiffChanges, prepareIncrementalLedger } from '../review/incremental/changes.js';
@@ -120,10 +122,19 @@ import {
   ReviewBaselineCollector,
   type ReviewBaselineOutcome,
 } from '../review/baseline/metrics.js';
+import { verifyFindings } from '../review/finding-verification.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
+
+/**
+ * Cap for the full-file reference fed to the model. Grounding must never
+ * balloon the prompt past a bounded size, so oversized files are truncated
+ * (head of file — declaration/import regions survive, which is the bulk of
+ * what verification needs).
+ */
+const REVIEW_FILE_CONTEXT_MAX_CHARS = 60_000;
 
 /** Concurrent files reviewed within a batch (env FILE_CONCURRENCY overrides). */
 const DEFAULT_FILE_CONCURRENCY = 2;
@@ -183,10 +194,28 @@ export function matchesScope(filePath: string, scope: Record<string, unknown>): 
 
 /**
  * Junk patterns Parakh never raises, regardless of LLM behavior. The EOF-newline
- * check is the canonical one the project explicitly considers useless.
+ * check is the canonical one the project explicitly considers useless. The rest
+ * are fabricated-claim families identified in the Aug 2026 review-quality
+ * diagnosis: whole-file/cross-file assertions the model cannot verify from a
+ * 3-line diff hunk ("not used anywhere", "call sites not updated", "lacks a
+ * prop") and cosmetic nits ("could be more descriptive", "consider extracting").
  */
 const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
   /newline at (the )?end of (the )?file/i,
+  // Fabricated / unverifiable whole-file or cross-file claims.
+  /used without (?:prior )?validation/i,
+  /without (?:prior )?validation/i,
+  /could be more descriptive/i,
+  /consider extracting/i,
+  /extract (?:a|this into a|the) function/i,
+  /add a comment explaining/i,
+  /comment explaining/i,
+  /(?:is|was|isn'?t|are|were) not used (?:anywhere|elsewhere)/i,
+  /(?:is|was) never used in (?:this|the) (?:function|file)/i,
+  /ensure (?:all )?call sites? (?:are|is|were) (?:updated|migrated)/i,
+  /call sites? (?:were|are|was) not updated/i,
+  /lacks a .{0,40}prop/i,
+  /import of [^.,;]+ (?:was )?not (?:checked|validated)/i,
 ];
 
 function escapeRegExp(text: string): string {
@@ -221,6 +250,8 @@ export function suppressFindings(findings: Finding[], instructions: Rule[]): Fin
 export interface ResolvedReviewResult {
   rawFindingCount: number;
   findings: Finding[];
+  /** Number of generic findings demoted to LOW by the cosmetic-family cap. */
+  cosmeticDemotions: number;
   /** Stored rules whose evidence counters should be incremented. */
   matchedRuleIds: string[];
 }
@@ -261,9 +292,15 @@ export function resolveReviewResult(
     if (rule) matchedRuleIds.push(rule.id);
   }
 
+  // Cosmetic families ("consider extracting", "add a comment explaining")
+  // must never score above LOW, no matter what severity the model assigned.
+  // Rule-sourced findings are untouched — their severity is deterministic.
+  const { findings: cappedFindings, demoted } = capCosmeticSeverity(findings);
+
   return {
     rawFindingCount: result.genericFindings.length + result.ruleFindings.length,
-    findings: findings.filter((finding) => !suppressPatterns.some((pattern) => pattern.test(finding.body))),
+    findings: cappedFindings.filter((finding) => !suppressPatterns.some((pattern) => pattern.test(finding.body))),
+    cosmeticDemotions: demoted,
     matchedRuleIds,
   };
 }
@@ -530,7 +567,11 @@ async function reviewSingleFile(
   budget: SubrequestBudget,
   metrics: ReviewBaselineCollector,
   priorFindings: LedgerFinding[] | null,
-  headSha: string
+  headSha: string,
+  featureFlags: FeatureFlags,
+  owner: string,
+  repo: string,
+  token: string
 ): Promise<ReviewedFileResult> {
   const fileDiff = fileChunks.get(fileName);
   if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
@@ -553,13 +594,34 @@ async function reviewSingleFile(
   }
 
   let result: ReviewResult | IncrementalReviewResult;
+  // Full-file grounding: fetch the file at head so the model can cross-check
+  // diff-implied claims (and a bounded post-hoc verifier can reject flat
+  // fabrication). Best-effort — a failed fetch degrades to diff-only review.
+  let referenceFileContent: string | null = null;
   try {
     // The real Gemini/Groq calls happen inside the provider's key rotation,
     // which spends from the budget per actual attempt — so no spend here.
     metrics.recordReviewCall();
+
+    if (featureFlags.reviewFileContext && budget.hasRoomFor(1)) {
+      try {
+        budget.spend(1);
+        const content = await getFileContent(owner, repo, fileName, headSha, token);
+        if (content.length > REVIEW_FILE_CONTEXT_MAX_CHARS) {
+          referenceFileContent = content.slice(0, REVIEW_FILE_CONTEXT_MAX_CHARS);
+        } else {
+          referenceFileContent = content;
+        }
+        metrics.recordFileContextUsed();
+      } catch (err) {
+        console.warn(`[review] Failed to fetch full-file context for ${fileName} — diff-only review:`, err);
+        referenceFileContent = null;
+      }
+    }
+
     result = priorFindings === null
-      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal)
-      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal);
+      ? await llm.reviewDiff(fileName, fileDiff, applicableRules, signal, referenceFileContent ?? undefined)
+      : await llm.reviewIncrementalDiff(fileName, fileDiff, applicableRules, priorFindings, signal, referenceFileContent ?? undefined);
   } catch (err) {
     if (err instanceof AllKeysExhaustedError || err instanceof AllProvidersFailedError) throw err;
     if (err instanceof SubrequestBudgetExceededError) throw err;
@@ -604,7 +666,25 @@ async function reviewSingleFile(
   }
 
   const resolved = resolveReviewResult(result, fileName, applicableRules, suppressPatterns);
-  metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
+
+  // Post-hoc factual verification against the full-file reference: drop flat
+  // fabrication (missing identifiers / out-of-range lines), keep unverifiable
+  // findings untouched, and count everything for telemetry.
+  let finalFindings = resolved.findings;
+  let unverifiedCount = 0;
+  let contradictedCount = 0;
+  if (referenceFileContent) {
+    const outcome = verifyFindings(resolved.findings, referenceFileContent, fileName);
+    finalFindings = outcome.verified;
+    unverifiedCount = outcome.unverifiedCount;
+    contradictedCount = outcome.contradictedCount;
+  }
+  metrics.recordFindings(
+    resolved.rawFindingCount,
+    finalFindings.length,
+    { cosmeticDemotions: resolved.cosmeticDemotions }
+  );
+  metrics.recordVerification(unverifiedCount, contradictedCount);
   const telemetry = {
     findingsCount: result.genericFindings.length + result.ruleFindings.length,
     matchedRuleIds: resolved.matchedRuleIds,
@@ -616,7 +696,7 @@ async function reviewSingleFile(
     const incremental = result as IncrementalReviewResult;
     const reconciled = await reconcileFileFindings(
       priorFindings,
-      resolved.findings,
+      finalFindings,
       incremental.priorFindingResolutions,
       headSha
     );
@@ -624,7 +704,7 @@ async function reviewSingleFile(
   }
 
   return {
-    findings: resolved.findings,
+    findings: finalFindings,
     outcomes: [],
     summary: emptyReconciliationSummary(),
     telemetry,
@@ -1225,7 +1305,8 @@ async function executeReviewJobInternal(
                 reviewId, state!.completedFiles.length + 1, state!.allFiles.length,
                 captureReasoning, retentionDays, reasoningBuffer, activeBudget, metrics,
                 effectiveMode === 'incremental' ? (priorFindingsByFile.get(fileName) ?? []) : null,
-                headSha ?? 'unknown'
+                headSha ?? 'unknown',
+                featureFlags, owner, repo, token
               );
               await commitReviewState(() => {
                 allFindings.push(...reviewed.findings);

@@ -163,12 +163,13 @@ export class CfaAiClient implements LLMProvider {
     fileName: string,
     diff: string,
     activeRules: Rule[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string
   ): Promise<ReviewResult> {
     const { buildReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
-      buildReviewPrompt(fileName, diff, activeRules),
+      buildReviewPrompt(fileName, diff, activeRules, referenceFileContent),
       true
     );
     const parsed = parseJson<{
@@ -187,12 +188,13 @@ export class CfaAiClient implements LLMProvider {
     diff: string,
     activeRules: Rule[],
     priorFindings: Finding[],
-    context?: LLMRequestContext
+    context?: LLMRequestContext,
+    referenceFileContent?: string
   ): Promise<IncrementalReviewResult> {
     const { buildIncrementalReviewPrompt } = await import('../gemini/prompts.js');
     const raw = await this.run(
       this.generationModel,
-      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings),
+      buildIncrementalReviewPrompt(fileName, diff, activeRules, priorFindings, referenceFileContent),
       true,
       context
     );

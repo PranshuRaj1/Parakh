@@ -63,7 +63,10 @@ describe('buildIntentPrompt', () => {
     expect(prompt).toContain('in any future review');
     expect(prompt).toContain('stop flagging X');
     expect(prompt).toContain('never raise X');
-    expect(prompt).toContain('Forward-looking standards always win');
+    expect(prompt).toContain('Forward-looking standards win');
+    expect(prompt).toContain('A rebuttal is never a CORRECTION');
+    expect(prompt).toContain('remember this');
+    expect(prompt).toContain('verify before reporting');
   });
 
   it('keeps bare dismissals as DISMISSAL (no corrective standard)', () => {

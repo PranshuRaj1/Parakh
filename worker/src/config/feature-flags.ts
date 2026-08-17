@@ -16,6 +16,8 @@ export interface FeatureFlags {
   deterministicAnalysis: boolean;
   incrementalReview: boolean;
   incrementalReviewShadow: boolean;
+  /** Fetch the full file at head SHA and inject it as verification context for the review prompt. */
+  reviewFileContext: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -27,6 +29,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   deterministicAnalysis: false,
   incrementalReview: false,
   incrementalReviewShadow: true,
+  reviewFileContext: false,
 });
 
 function parseBooleanFlag(
@@ -88,6 +91,11 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'INCREMENTAL_REVIEW_SHADOW',
       env.INCREMENTAL_REVIEW_SHADOW,
       DEFAULT_FEATURE_FLAGS.incrementalReviewShadow
+    ),
+    reviewFileContext: parseBooleanFlag(
+      'REVIEW_FILE_CONTEXT_ENABLED',
+      env.REVIEW_FILE_CONTEXT_ENABLED,
+      DEFAULT_FEATURE_FLAGS.reviewFileContext
     ),
   };
 

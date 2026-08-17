@@ -22,6 +22,7 @@ describe('getFeatureFlags', () => {
       DETERMINISTIC_ANALYSIS_ENABLED: 'false',
       INCREMENTAL_REVIEW_ENABLED: 'TRUE',
       INCREMENTAL_REVIEW_SHADOW: 'false',
+      REVIEW_FILE_CONTEXT_ENABLED: 'TRUE',
     }));
 
     expect(flags).toEqual({
@@ -33,6 +34,7 @@ describe('getFeatureFlags', () => {
       deterministicAnalysis: false,
       incrementalReview: true,
       incrementalReviewShadow: false,
+      reviewFileContext: true,
     });
   });
 
