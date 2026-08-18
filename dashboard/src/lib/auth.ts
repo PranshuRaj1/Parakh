@@ -16,9 +16,7 @@ export const authOptions: NextAuthOptions = {
     GithubProvider({
       clientId,
       clientSecret,
-      authorization: {
-        params: { scope: 'read:user user:email repo' },
-      },
+      authorization: { params: {} },
     }),
   ],
   callbacks: {
