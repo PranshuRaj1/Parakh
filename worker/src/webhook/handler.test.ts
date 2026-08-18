@@ -20,6 +20,11 @@ vi.mock('../db/reviews.js', () => ({
   updateReviewReactions: vi.fn(),
 }));
 
+vi.mock('../db/installations.js', () => ({
+  upsertInstallation: vi.fn(),
+  markInstallationRemoved: vi.fn(),
+}));
+
 vi.mock('../redis.js', () => ({
   createRedisGet: vi.fn(),
   createRedisSet: vi.fn(),
@@ -29,6 +34,7 @@ vi.mock('../redis.js', () => ({
 import { addReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview } from '../db/reviews.js';
+import { upsertInstallation, markInstallationRemoved } from '../db/installations.js';
 import { createRedisDel } from '../redis.js';
 
 const mocked = {
@@ -36,6 +42,8 @@ const mocked = {
   postComment: vi.mocked(postComment),
   getCachedToken: vi.mocked(getCachedToken),
   insertReview: vi.mocked(insertReview),
+  upsertInstallation: vi.mocked(upsertInstallation),
+  markInstallationRemoved: vi.mocked(markInstallationRemoved),
   createRedisDel: vi.mocked(createRedisDel),
 };
 
@@ -73,6 +81,8 @@ beforeEach(() => {
   mocked.addReaction.mockReset().mockResolvedValue(42);
   mocked.postComment.mockReset().mockResolvedValue({ id: 1 });
   mocked.insertReview.mockReset().mockResolvedValue({ id: 'review-1' });
+  mocked.upsertInstallation.mockReset().mockResolvedValue({ id: 'inst-1' } as never);
+  mocked.markInstallationRemoved.mockReset().mockResolvedValue(undefined);
   mocked.createRedisDel.mockReset().mockReturnValue(vi.fn().mockResolvedValue(undefined));
 });
 
@@ -93,6 +103,54 @@ describe('routing', () => {
       expect(result.status).toBe(200);
       expect(result.body).toBe('ok');
     }
+  });
+
+  it('tracks a github app installation with the repos it can see', async () => {
+    const env = { ...BASE_ENV };
+    const payload = {
+      action: 'created',
+      installation: { id: 42, account: { login: 'acme' } },
+      repositories: [{ full_name: 'acme/app' }, { full_name: 'acme/lib' }],
+      sender: { login: 'dev' },
+    };
+    const result = await handleWebhookEvent(payload, 'installation', 'del-i1', env);
+    expect(result.status).toBe(200);
+    expect(mocked.upsertInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'github',
+        owner: 'acme',
+        installationId: 42,
+        repos: ['acme/app', 'acme/lib'],
+        installedBy: 'dev',
+      }),
+      env
+    );
+    expect(mocked.markInstallationRemoved).not.toHaveBeenCalled();
+  });
+
+  it('marks the installation removed on uninstall', async () => {
+    const env = { ...BASE_ENV };
+    const payload = {
+      action: 'deleted',
+      installation: { id: 42, account: { login: 'acme' } },
+    };
+    const result = await handleWebhookEvent(payload, 'installation', 'del-i2', env);
+    expect(result.status).toBe(200);
+    expect(mocked.markInstallationRemoved).toHaveBeenCalledWith('github', 'acme', env);
+    expect(mocked.upsertInstallation).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when tracking fails so GitHub redelivers the delivery', async () => {
+    mocked.upsertInstallation.mockRejectedValueOnce(new Error('db down'));
+    const env = { ...BASE_ENV };
+    const payload = {
+      action: 'created',
+      installation: { id: 42, account: { login: 'acme' } },
+      repositories: [],
+    };
+    const result = await handleWebhookEvent(payload, 'installation', 'del-i3', env);
+    expect(result.status).toBe(500);
+    expect(result.body).toBe('installation tracking failed');
   });
 });
 

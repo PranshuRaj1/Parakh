@@ -14,6 +14,8 @@ import { handleQueueBatch } from './jobs/queue-handler.js';
 import { handleCreateRule, handleApproveRule, handleRejectRule } from './jobs/rule-api.js';
 import { handleRetryReview } from './jobs/retry-api.js';
 import { handleCronTrigger } from './cron.js';
+import { listInstallations, markInstallationRemoved } from './db/installations.js';
+import { providers, getProvider } from './providers/registry.js';
 import type { JobPayload } from '@parakh/shared';
 
 // ─── Environment Bindings ────────────────────────────────────────────────────
@@ -24,6 +26,8 @@ export interface Env {
   GITHUB_APP_PRIVATE_KEY: string;
   GITHUB_WEBHOOK_SECRET: string;
   GITHUB_APP_BOT_USER_ID: string;
+  // Public app slug used to build the connect/install deep link.
+  GITHUB_APP_SLUG?: string;
 
   // Gemini
   GEMINI_API_KEY?: string;
@@ -137,6 +141,18 @@ export default {
     const rejectMatch = url.pathname.match(/^\/api\/rules\/([^\/]+)\/reject$/);
     if (rejectMatch && request.method === 'POST') {
       return handleRuleApprovalRequest(request, rejectMatch[1], 'INACTIVE', env, _ctx);
+    }
+
+    // ── Dashboard connect API ───────────────────────────────────────
+    if (url.pathname === '/api/connect' && request.method === 'GET') {
+      return handleConnectListRequest(request, env);
+    }
+    if (url.pathname === '/api/connect/url' && request.method === 'GET') {
+      return handleConnectUrlRequest(request, env);
+    }
+    const removeMatch = url.pathname.match(/^\/api\/connect\/([^\/]+)\/([^\/]+)\/remove$/);
+    if (removeMatch && request.method === 'POST') {
+      return handleConnectRemoveRequest(request, removeMatch[1], removeMatch[2], env);
     }
 
     // ── Health check ──────────────────────────────────────────────────
@@ -264,5 +280,55 @@ async function handleRuleApprovalRequest(
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+}
+
+// ─── Connect API (dashboard → worker) ───────────────────────────────────────
+
+function bearerOk(request: Request, env: Env): boolean {
+  return (request.headers.get('Authorization') || '') === `Bearer ${env.WORKER_API_SECRET}`;
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+/** GET /api/connect — list every connected provider account and its repos. */
+async function handleConnectListRequest(request: Request, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  try {
+    return json({
+      providers: providers.map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        url: p.getInstallUrl(env),
+      })),
+      installations: await listInstallations(env),
+    });
+  } catch (err) {
+    console.error('[worker] Connect list error:', err);
+    return json({ error: 'Failed to load installations' }, 500);
+  }
+}
+
+/** GET /api/connect/url?provider=github — the install deep link for a provider. */
+async function handleConnectUrlRequest(request: Request, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  const providerId = new URL(request.url).searchParams.get('provider') ?? 'github';
+  const provider = getProvider(providerId);
+  if (!provider) return json({ error: `Unknown provider: ${providerId}` }, 404);
+  return json({ provider: provider.id, displayName: provider.displayName, url: provider.getInstallUrl(env) });
+}
+
+/** POST /api/connect/:provider/:owner/remove — disconnect an account. */
+async function handleConnectRemoveRequest(request: Request, providerId: string, owner: string, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  if (!getProvider(providerId)) return json({ error: `Unknown provider: ${providerId}` }, 404);
+  try {
+    await markInstallationRemoved(providerId, owner, env);
+    return json({ provider: providerId, owner, status: 'removed' });
+  } catch (err) {
+    console.error('[worker] Connect remove error:', err);
+    return json({ error: 'Failed to disconnect' }, 500);
   }
 }

@@ -11,6 +11,8 @@ import type { ReviewJobPayload, CommentJobPayload, GitHubAuthorAssociation } fro
 import { addReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
+import { upsertInstallation, markInstallationRemoved } from '../db/installations.js';
+import { getProviderByEvent } from '../providers/registry.js';
 import type { Env } from '../index.js';
 import { createRedisGet, createRedisSet, createRedisDel } from '../redis.js';
 
@@ -72,9 +74,34 @@ export async function handleWebhookEvent(
       return handleReviewComment(event, deliveryId, env, _ctx);
 
     case 'installation':
-    case 'installation_repositories':
+    case 'installation_repositories': {
+      // Provider-agnostic: the matching provider adapter normalizes the
+      // payload; the DB row is written so the dashboard connect page can
+      // show connected accounts/repos. A tracking failure returns 500 so
+      // GitHub redelivers; the upsert is idempotent (PK = provider+owner).
+      const provider = getProviderByEvent(eventType);
+      if (provider) {
+        try {
+          const install = provider.parseEvent(eventType, event);
+          if (install) {
+            if (install.status === 'removed') {
+              await markInstallationRemoved(install.provider, install.owner, env);
+              console.log(`[webhook] ${provider.displayName} uninstalled for ${install.owner}`);
+            } else {
+              await upsertInstallation(install, env);
+              console.log(
+                `[webhook] ${provider.displayName} connected ${install.owner} (${install.repos.length} repos)`
+              );
+            }
+          }
+        } catch (err) {
+          console.error(`[webhook] Failed to track ${provider.displayName} installation:`, err);
+          return { status: 500, body: 'installation tracking failed' };
+        }
+      }
       console.log(`[webhook] ${eventType}: ${event.action}`);
       return { status: 200, body: 'ok' };
+    }
 
     default:
       return { status: 200, body: `ignored event type: ${eventType}` };
