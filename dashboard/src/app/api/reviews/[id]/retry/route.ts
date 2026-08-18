@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getApprovedSession } from '@/lib/access';
 import { requireRepoPermission } from '@/lib/repo-auth';
 import { getReview } from '@/lib/db';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions);
+  const session = await getApprovedSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -42,13 +41,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      return NextResponse.json(data, { status: response.status });
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.toLowerCase().includes('application/json')) {
+        return NextResponse.json(await response.json(), { status: response.status });
+      }
+      const message = await response.text();
+      return NextResponse.json(
+        { error: message || 'Worker request failed' },
+        { status: response.status }
+      );
     }
 
-    return NextResponse.json(data, { status: 202 });
+    return NextResponse.json(await response.json(), { status: 202 });
   } catch (error) {
     console.error('Error proxying retry to worker:', error);
     return NextResponse.json({ error: 'Failed to trigger retry' }, { status: 500 });

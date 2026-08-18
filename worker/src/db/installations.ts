@@ -88,10 +88,12 @@ export async function upsertInstallation(
 }
 
 /** List all provider installations, newest first. */
-export async function listInstallations(env: EnvWithDB): Promise<ProviderInstallation[]> {
+export async function listInstallations(env: EnvWithDB, installedBy?: string): Promise<ProviderInstallation[]> {
   const sql = getDb(env.DATABASE_URL);
   const rows = await withDbRetry(
-    () => sql`SELECT * FROM provider_installations ORDER BY updated_at DESC`,
+    () => installedBy
+      ? sql`SELECT * FROM provider_installations WHERE installed_by = ${installedBy} ORDER BY updated_at DESC`
+      : sql`SELECT * FROM provider_installations ORDER BY updated_at DESC`,
     DB_RETRY_OPTS
   );
   return (rows as unknown as InstallationRow[]).map(rowToInstallation);
@@ -101,7 +103,8 @@ export async function listInstallations(env: EnvWithDB): Promise<ProviderInstall
 export async function markInstallationRemoved(
   provider: string,
   owner: string,
-  env: EnvWithDB
+  env: EnvWithDB,
+  installedBy?: string
 ): Promise<void> {
   const sql = getDb(env.DATABASE_URL);
   await withDbRetry(
@@ -109,6 +112,7 @@ export async function markInstallationRemoved(
       UPDATE provider_installations
       SET status = 'removed', updated_at = now()
       WHERE provider = ${provider} AND owner = ${owner}
+        AND (${installedBy ?? null} IS NULL OR installed_by = ${installedBy ?? null})
     `,
     DB_RETRY_OPTS
   );

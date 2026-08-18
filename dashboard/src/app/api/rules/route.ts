@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getApprovedSession } from '@/lib/access';
 import { requireRepoPermission } from '@/lib/repo-auth';
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getApprovedSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -45,7 +44,7 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: response.status });
     }
 
-    return NextResponse.json(data, { status: 201 });
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error('Error proxying to worker:', error);
     return NextResponse.json({ error: 'Failed to create rule' }, { status: 500 });

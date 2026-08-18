@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from 'next-auth';
 import GithubProvider from 'next-auth/providers/github';
+import { getDashboardUser, upsertDashboardUser } from '@/lib/dashboard-users';
 
 const clientId = process.env.GITHUB_CLIENT_ID;
 const clientSecret = process.env.GITHUB_CLIENT_SECRET;
@@ -22,19 +23,33 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async signIn({ profile }) {
-      const allowlist = process.env.DASHBOARD_ALLOWED_LOGINS;
-      if (!allowlist) {
-        console.error(
-          '[auth] DASHBOARD_ALLOWED_LOGINS is not set — rejecting all sign-ins (fail closed)'
-        );
+      const githubProfile = profile as Record<string, unknown> | undefined;
+      const login = githubProfile?.login;
+      const githubId = githubProfile?.id;
+      const parsedGithubId = typeof githubId === 'number' ? githubId : Number(githubId);
+      if (typeof login !== 'string' || !Number.isSafeInteger(parsedGithubId) || parsedGithubId <= 0) {
         return false;
       }
-      const login = (profile as Record<string, unknown> | undefined)?.login;
-      return typeof login === 'string' && allowlist.split(',').map((s) => s.trim()).includes(login);
+      try {
+        await upsertDashboardUser({
+          githubId: parsedGithubId,
+          githubLogin: login,
+          email: typeof githubProfile?.email === 'string' ? githubProfile.email : null,
+        });
+      } catch (error) {
+        console.error('[auth] failed to register dashboard user:', error);
+        return false;
+      }
+      return true;
     },
     async session({ session, token }) {
       if (session.user) {
         (session.user as Record<string, unknown>).login = token.login;
+        (session.user as Record<string, unknown>).githubId = token.githubId;
+        const login = typeof token.login === 'string' ? token.login : null;
+        const user = login ? await getDashboardUser(login) : null;
+        (session.user as Record<string, unknown>).approvalStatus = user?.status ?? 'pending';
+        (session.user as Record<string, unknown>).isAdmin = isAdminLogin(login);
       }
       session.accessToken = (token.accessToken as string | undefined) ?? null;
       return session;
@@ -42,7 +57,15 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, account, profile }) {
       if (account) {
         token.accessToken = account.access_token;
-        token.login = (profile as Record<string, unknown> | undefined)?.login;
+        const githubProfile = profile as Record<string, unknown> | undefined;
+        token.login = typeof githubProfile?.login === 'string' ? githubProfile.login : null;
+        const githubId = githubProfile?.id;
+        const parsedGithubId = typeof githubId === 'number' ? githubId : Number(githubId);
+        if (Number.isSafeInteger(parsedGithubId) && parsedGithubId > 0) {
+          token.githubId = parsedGithubId;
+        } else {
+          delete token.githubId;
+        }
       }
       return token;
     },
@@ -51,3 +74,12 @@ export const authOptions: NextAuthOptions = {
     signIn: '/',
   },
 };
+
+function isAdminLogin(login: string | null): boolean {
+  if (!login) return false;
+  return (process.env.DASHBOARD_ADMIN_LOGINS ?? '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(login.toLowerCase());
+}

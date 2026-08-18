@@ -33,7 +33,7 @@ export default function Navbar() {
               <Logo className="h-8 w-auto text-white" />
             </Link>
           </div>
-          {session && (
+          {session?.user.approvalStatus === 'approved' && (
             <div className="hidden sm:ml-8 sm:flex sm:space-x-8">
               <NavLink href="/memory" active={pathname === '/memory'}>
                 <BrainCircuit className="w-4 h-4 mr-2" />
@@ -53,6 +53,7 @@ export default function Navbar() {
         <div className="flex items-center">
           {status === 'loading' ? null : session ? (
             <div className="flex items-center gap-4">
+              {session.user.isAdmin && <Link href="/admin" className="text-sm text-[#c5c0ff] hover:text-white">Admin</Link>}
               <span className="text-sm technical-data text-gray-400">
                 {session.user.login || session.user.name}
               </span>

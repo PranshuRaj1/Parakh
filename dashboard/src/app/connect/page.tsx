@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import ConnectCard from '@/components/ConnectCard';
+import { requireApprovedSession } from '@/lib/access';
 
 export const metadata = {
   title: 'Connect — Parakh',
@@ -23,7 +24,8 @@ const STEPS = [
   },
 ];
 
-export default function ConnectPage() {
+export default async function ConnectPage() {
+  await requireApprovedSession();
   return (
     <main className="w-full flex flex-col pt-8 pb-16 px-6">
       <div className="max-w-[1000px] mx-auto w-full flex flex-col">
