@@ -2,23 +2,17 @@ import type { NextAuthOptions } from 'next-auth';
 import GithubProvider from 'next-auth/providers/github';
 import { getDashboardUser, upsertDashboardUser } from '@/lib/dashboard-users';
 
-const clientId = process.env.GITHUB_CLIENT_ID;
-const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+const githubClientId = process.env.GITHUB_CLIENT_ID;
+const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
 
-if (!clientId || !clientSecret) {
+if (!githubClientId || !githubClientSecret) {
   throw new Error(
     'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set to enable dashboard sign-in'
   );
 }
 
 export const authOptions: NextAuthOptions = {
-  providers: [
-    GithubProvider({
-      clientId,
-      clientSecret,
-      authorization: { params: {} },
-    }),
-  ],
+  providers: [githubAppProvider(githubClientId, githubClientSecret)],
   callbacks: {
     async signIn({ profile }) {
       const githubProfile = profile as Record<string, unknown> | undefined;
@@ -72,6 +66,18 @@ export const authOptions: NextAuthOptions = {
     signIn: '/',
   },
 };
+
+function githubAppProvider(clientId: string, clientSecret: string) {
+  const provider = GithubProvider({
+    clientId,
+    clientSecret,
+  });
+  provider.authorization = {
+    url: 'https://github.com/login/oauth/authorize',
+    params: {},
+  };
+  return provider;
+}
 
 function isAdminLogin(login: string | null): boolean {
   if (!login) return false;
