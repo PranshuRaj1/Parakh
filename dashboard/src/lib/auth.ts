@@ -74,7 +74,7 @@ function githubAppProvider(clientId: string, clientSecret: string) {
   });
   provider.authorization = {
     url: 'https://github.com/login/oauth/authorize',
-    params: {},
+    params: { scope: null as unknown as string },
   };
   return provider;
 }
