@@ -43,27 +43,27 @@ describe('githubProvider.parseEvent', () => {
     expect(event.repos).toEqual([]);
   });
 
-  it('tracks repo adds/removes on installation_repositories', () => {
-    const event = githubProvider.parseEvent('installation_repositories', {
-      action: 'added',
-      installation: { id: 42, account: { login: 'acme' } },
-      repositories: [{ full_name: 'acme/app' }, { full_name: 'acme/lib' }],
-      repositories_added: [{ full_name: 'acme/lib' }],
-      repositories_removed: [{ full_name: 'acme/tool' }],
-    })!;
-    expect(event.repos).toEqual(['acme/app', 'acme/lib']);
-    expect(event.status).toBe('active');
-  });
-
-  it('falls back to all the repositories (repo selection = all) on added events', () => {
+  it('uses the authoritative full repo list on installation_repositories (no added/removed reconciliation)', () => {
     const event = githubProvider.parseEvent('installation_repositories', {
       action: 'added',
       installation: { id: 42, account: { login: 'acme' } },
       repositories: [{ full_name: 'acme/app' }],
-      repositories_added: [],
-      repositories_removed: [],
+      repositories_added: [{ full_name: 'acme/tool' }], // ignored: payload already carries the full list
+      repositories_removed: [{ full_name: 'acme/old' }],
     })!;
     expect(event.repos).toEqual(['acme/app']);
+    expect(event.status).toBe('active');
+  });
+
+  it('treats an empty repository list on installation_repositories as authoritative', () => {
+    const event = githubProvider.parseEvent('installation_repositories', {
+      action: 'removed',
+      installation: { id: 42, account: { login: 'acme' } },
+      repositories: [],
+      repositories_removed: [{ full_name: 'acme/app' }],
+    })!;
+    expect(event.repos).toEqual([]);
+    expect(event.status).toBe('active');
   });
 });
 

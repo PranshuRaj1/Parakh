@@ -139,6 +139,19 @@ describe('routing', () => {
     expect(mocked.markInstallationRemoved).toHaveBeenCalledWith('github', 'acme', env);
     expect(mocked.upsertInstallation).not.toHaveBeenCalled();
   });
+
+  it('returns 500 when tracking fails so GitHub redelivers the delivery', async () => {
+    mocked.upsertInstallation.mockRejectedValueOnce(new Error('db down'));
+    const env = { ...BASE_ENV };
+    const payload = {
+      action: 'created',
+      installation: { id: 42, account: { login: 'acme' } },
+      repositories: [],
+    };
+    const result = await handleWebhookEvent(payload, 'installation', 'del-i3', env);
+    expect(result.status).toBe(500);
+    expect(result.body).toBe('installation tracking failed');
+  });
 });
 
 // ─── pull_request ────────────────────────────────────────────────────────────

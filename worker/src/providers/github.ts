@@ -23,8 +23,6 @@ interface InstallationPayload {
     suspended_at?: string | null;
   };
   repositories?: Array<{ full_name?: string }>;
-  repositories_added?: Array<{ full_name?: string }>;
-  repositories_removed?: Array<{ full_name?: string }>;
   sender?: { login?: string };
 }
 
@@ -62,14 +60,12 @@ export const githubProvider: CodeHostProvider = {
       // 'created': full list. 'deleted': no repos.
       repos = event.action === 'created' ? (event.repositories ?? []).map((r) => repoName(r.full_name)) : [];
     } else {
-      // installation_repositories: previous list + added - removed.
-      const base = (event.repositories ?? []).map((r) => repoName(r.full_name));
-      const removed = new Set((event.repositories_removed ?? []).map((r) => repoName(r.full_name)));
-      const added = (event.repositories_added ?? []).map((r) => repoName(r.full_name));
-      repos = [...new Set([...base.filter((name) => !removed.has(name)), ...added])].filter(Boolean);
+      // installation_repositories: GitHub already sends the authoritative,
+      // post-change list — no added/removed reconciliation needed.
+      repos = (event.repositories ?? []).map((r) => repoName(r.full_name));
     }
 
-    if (event.action === 'deleted' || event.action === 'removed') {
+    if (event.action === 'deleted') {
       return {
         provider: 'github',
         owner: accountLogin,

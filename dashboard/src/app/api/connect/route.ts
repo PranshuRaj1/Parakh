@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { fetchWorkerJson, WorkerError } from '@/lib/worker-proxy';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,26 +12,12 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const workerUrl = process.env.WORKER_API_URL;
-  const workerSecret = process.env.WORKER_API_SECRET;
-
-  if (!workerUrl || !workerSecret) {
-    console.error('Missing WORKER_API_URL or WORKER_API_SECRET');
-    return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-  }
-
   try {
-    const response = await fetch(`${workerUrl}/api/connect`, {
-      headers: { Authorization: `Bearer ${workerSecret}` },
-      cache: 'no-store',
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      return NextResponse.json(data, { status: response.status });
-    }
+    const data = await fetchWorkerJson('/api/connect');
     return NextResponse.json(data);
   } catch (error) {
     console.error('Error proxying connect list to worker:', error);
-    return NextResponse.json({ error: 'Failed to load connections' }, { status: 500 });
+    const status = error instanceof WorkerError ? error.status : 500;
+    return NextResponse.json({ error: 'Failed to load connections' }, { status });
   }
 }

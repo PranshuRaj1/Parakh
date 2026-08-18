@@ -77,7 +77,8 @@ export async function handleWebhookEvent(
     case 'installation_repositories': {
       // Provider-agnostic: the matching provider adapter normalizes the
       // payload; the DB row is written so the dashboard connect page can
-      // show connected accounts/repos. Failures are logged, never fatal.
+      // show connected accounts/repos. A tracking failure returns 500 so
+      // GitHub redelivers; the upsert is idempotent (PK = provider+owner).
       const provider = getProviderByEvent(eventType);
       if (provider) {
         try {
@@ -95,6 +96,7 @@ export async function handleWebhookEvent(
           }
         } catch (err) {
           console.error(`[webhook] Failed to track ${provider.displayName} installation:`, err);
+          return { status: 500, body: 'installation tracking failed' };
         }
       }
       console.log(`[webhook] ${eventType}: ${event.action}`);

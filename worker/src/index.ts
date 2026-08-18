@@ -297,7 +297,14 @@ function json(data: unknown, status = 200): Response {
 async function handleConnectListRequest(request: Request, env: Env): Promise<Response> {
   if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
   try {
-    return json({ providers: providers.map((p) => ({ id: p.id, displayName: p.displayName })), installations: await listInstallations(env) });
+    return json({
+      providers: providers.map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        url: p.getInstallUrl(env),
+      })),
+      installations: await listInstallations(env),
+    });
   } catch (err) {
     console.error('[worker] Connect list error:', err);
     return json({ error: 'Failed to load installations' }, 500);

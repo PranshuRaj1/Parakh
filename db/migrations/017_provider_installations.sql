@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS provider_installations (
   provider TEXT NOT NULL DEFAULT 'github',
   owner TEXT NOT NULL,
   installation_id BIGINT NOT NULL,
-  repos JSONB NOT NULL DEFAULT '[]',
+  repos JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT NOT NULL DEFAULT 'active',
   installed_by TEXT,
   installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -32,15 +32,13 @@ export default function ConnectCard() {
     setLoading(true);
     setError(null);
     try {
-      const [listRes, providerRes] = await Promise.all([
-        fetch('/api/connect'),
-        fetch('/api/connect/url'),
-      ]);
+      const listRes = await fetch('/api/connect');
       if (!listRes.ok) throw new Error('Failed to load connections');
+      // providers come with their install url from the worker, so the list
+      // is the single source of truth for the "Connect" buttons.
       const list = await listRes.json();
-      const provider = providerRes.ok ? await providerRes.json() : null;
       setInstallations(list.installations ?? []);
-      setConnections([...(provider ? [provider] : []), ...(provider ? [] : list.providers ?? [])]);
+      setConnections(list.providers ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
