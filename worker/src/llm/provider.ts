@@ -137,7 +137,11 @@ export class LLMClient {
             ? normalized.status
             : null;
           this.logLatency(provider, operation, retryable ? 'fallback' : 'failed', startedAt, sliceMs, status);
-          if (!retryable) throw normalized;
+          // A failed provider never aborts the chain while another provider
+          // remains untried. Even non-retryable errors (e.g. Groq HTTP 400
+          // json_validate failures) fall through so cfai/openrouter get a
+          // chance as last-resort providers; the last error surfaces via
+          // AllProvidersFailedError if the entire chain fails.
           lastError = normalized instanceof Error ? normalized : new Error(String(normalized));
           if (normalized instanceof ProviderResponseError) responseError = normalized;
         } finally {

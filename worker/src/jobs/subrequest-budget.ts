@@ -27,8 +27,12 @@
  */
 export const SUBREQUEST_BUDGET_LIMIT = 44;
 
-/** Estimated subrequests finalizeReview needs (~7 stage writes + GitHub posts). */
-export const FINALIZE_BUDGET_RESERVE = 15;
+/**
+ * Estimated subrequests finalizeReview needs (~7 stage writes + GitHub posts).
+ * Retried DB writes (withDbRetry, up to 3 attempts each) cover the extra
+ * attempts when Neon throws transient 5xx/520s, so keep headroom for them.
+ */
+export const FINALIZE_BUDGET_RESERVE = 20;
 
 export class SubrequestBudgetExceededError extends Error {
   constructor(limit: number) {

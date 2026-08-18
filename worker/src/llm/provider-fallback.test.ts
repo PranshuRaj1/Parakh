@@ -182,7 +182,7 @@ describe('provider fallback: Groq cooldown store load failure', () => {
 // ─── Scenario: Provider returns non-retryable error ─────────────────────────
 
 describe('provider fallback: non-retryable provider error', () => {
-  it('does NOT fall through on non-retryable errors (throws immediately)', async () => {
+  it('falls through to the next provider even on non-retryable errors', async () => {
     const badGemini = makeProvider('gemini', 'gemini-2.0-flash', { reviewDiff: 'boom' });
     const goodGroq = makeProvider('groq', 'llama-3.3-70b-versatile', { reviewDiff: 'ok' });
 
@@ -191,8 +191,31 @@ describe('provider fallback: non-retryable provider error', () => {
       operationMs: 500,
     });
 
-    // Generic errors are NOT retryable by the LLM client - it throws immediately.
-    // Only AllKeysExhaustedError, DailyQuotaExhaustedError, and HTTP 429/5xx are retryable.
-    await expect(client.reviewDiff('test.ts', 'diff', [])).rejects.toThrow('gemini unexpected failure');
+    // Generic provider errors (e.g. Groq HTTP 400 json_validate failures) are
+    // NOT retryable on the same provider, but the chain still falls through so
+    // the last-resort providers get a chance. Only an all-provider failure
+    // throws, with the last provider's error attached.
+    const result = await client.reviewDiff('test.ts', 'diff', []);
+    expect(result.genericFindings[0].file).toBe('groq-file.ts');
+    expect(client.servedProvider).toBe('groq');
+  });
+
+  it('throws the last provider error when the whole chain fails', async () => {
+    const badGemini = makeProvider('gemini', 'gemini-2.0-flash', { reviewDiff: 'boom' });
+    const badGroq = makeProvider('groq', 'llama-3.3-70b-versatile', { reviewDiff: 'boom' });
+
+    const client = new LLMClient([badGemini, badGroq], {
+      providerMs: 100,
+      operationMs: 500,
+    });
+
+    try {
+      await client.reviewDiff('test.ts', 'diff', []);
+      throw new Error('expected chain failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AllProvidersFailedError);
+      const failure = error as AllProvidersFailedError;
+      expect(failure.lastError?.message).toContain('groq unexpected failure');
+    }
   });
 });

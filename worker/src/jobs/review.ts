@@ -66,6 +66,7 @@ import {
 } from '../db/reviews.js';
 import { getActiveRules, incrementEvidenceCount } from '../db/rules.js';
 import { saveReviewReasonings } from '../db/reviews.js';
+import { withDbRetry } from '../db/db-retry.js';
 import { type ReviewResult } from '../gemini/client.js';
 import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTER_MS } from '../gemini/keyPool.js';
 import type { LLMClient } from '../llm/provider.js';
@@ -1680,6 +1681,19 @@ interface FinalizeReviewOutput {
   previousScore: number | null;
 }
 
+/**
+ * Retry options for the finalize-block DB writes. Neon throws sporadic 520s
+ * under load (the exact failure seen at updateReviewResults during storms),
+ * and a single transient blip must not kill an already-scored review. These
+ * writes are single statements (no sql.transaction), so retrying is safe.
+ */
+const FINALIZE_DB_RETRY_OPTS = {
+  maxAttempts: 3,
+  baseDelayMs: 300,
+  maxDelayMs: 4000,
+  label: 'review-finalize-db',
+};
+
 async function finalizeIncompleteReview(
   reviewId: string,
   findings: Finding[],
@@ -1784,8 +1798,14 @@ async function finalizeReview(
     output.previousScore
   );
   metrics.recordScore(rawScore, score);
-  await updateReviewResults(reviewId, score, ledgerFindings, env);
-  await saveReviewReconciliation(reviewId, reconciliationOutcomes, persistedSummary, env);
+  await withDbRetry(
+    () => updateReviewResults(reviewId, score, ledgerFindings, env),
+    FINALIZE_DB_RETRY_OPTS
+  );
+  await withDbRetry(
+    () => saveReviewReconciliation(reviewId, reconciliationOutcomes, persistedSummary, env),
+    FINALIZE_DB_RETRY_OPTS
+  );
   await completeStage(reviewId, 'SCORING', stageAttempt, env, metrics.stageDetail());
 
   const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
@@ -1852,7 +1872,10 @@ async function finalizeReview(
   }
 
   if (verdictReactionId !== null) {
-    await updateReviewReactions(reviewId, env, undefined, verdictReactionId);
+    await withDbRetry(
+      () => updateReviewReactions(reviewId, env, undefined, verdictReactionId),
+      FINALIZE_DB_RETRY_OPTS
+    );
   }
 
   // Comment-triggered reviews (manual_mention): swap 👀 → 👍/👎 on the trigger
@@ -1871,7 +1894,10 @@ async function finalizeReview(
     console.warn(`[review] Failed to update trigger-comment reaction/reply:`, err);
   }
 
-  await updateReviewStatus(reviewId, 'COMPLETED', env);
+  await withDbRetry(
+    () => updateReviewStatus(reviewId, 'COMPLETED', env),
+    FINALIZE_DB_RETRY_OPTS
+  );
 
   console.log(`[review] Completed review for ${fullRepo}#${prNumber}: ${score}/5`);
 }

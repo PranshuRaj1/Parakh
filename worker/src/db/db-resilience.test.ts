@@ -37,6 +37,18 @@ describe('isTransientDbError', () => {
     expect(isTransientDbError(new Error('504 Gateway Timeout'))).toBe(true);
   });
 
+  it('returns true for Neon 520 server errors', () => {
+    const err = new Error('NeonDbError: Server error (HTTP status 520): error code: 520');
+    err.name = 'NeonDbError';
+    expect(isTransientDbError(err)).toBe(true);
+    expect(isTransientDbError(new Error('520 Server Error'))).toBe(true);
+  });
+
+  it('returns true for other HTTP status 5xx phrasings', () => {
+    expect(isTransientDbError(new Error('NeonDbError: Server error (HTTP status 521): error code: 521'))).toBe(true);
+    expect(isTransientDbError(new Error('HTTP status 599'))).toBe(true);
+  });
+
   it('returns false for non-transient errors', () => {
     expect(isTransientDbError(new Error('Syntax error at line 1'))).toBe(false);
     expect(isTransientDbError(new Error('relation "users" does not exist'))).toBe(false);

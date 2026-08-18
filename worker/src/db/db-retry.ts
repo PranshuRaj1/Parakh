@@ -45,8 +45,12 @@ export function isTransientDbError(error: unknown): boolean {
   // Neon-specific
   if (msg.includes('neondberror') && msg.includes('timeout')) return true;
 
-  // HTTP 5xx (sometimes surfaced as status in error)
+  // NEON HTTP 5xx — the `500`-style status can surface as "HTTP status 520",
+  // "error code: 520", or bare "502"/"503"/"504". 520 is Neon's generic
+  // server-side fault (proxy/host glitch) and is always safe to retry.
+  if (msg.includes('520')) return true;
   if (msg.includes('502') || msg.includes('503') || msg.includes('504')) return true;
+  if (/\bhttp status 5\d\d\b/.test(msg) || /\berror code: 5\d\d\b/.test(msg)) return true;
 
   return false;
 }

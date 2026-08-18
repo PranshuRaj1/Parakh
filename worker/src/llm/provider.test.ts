@@ -139,12 +139,26 @@ describe('LLMClient chain routing', () => {
     expect(groqCalls).toBe(1);
   });
 
-  it('propagates non-exhaustion errors without trying further providers', async () => {
+  it('falls through non-exhaustion errors to the next provider', async () => {
     const broken = makeProvider('gemini', 'g', 'boom');
     const fine = makeProvider('groq', 'q', 'ok');
     const client = new LLMClient([broken, fine]);
-    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toThrow('gemini boom');
-    expect(client.modelName).toBe('g');
+    await expect(client.reviewDiff('f.ts', 'd', [])).resolves.toBeDefined();
+    expect(client.servedProvider).toBe('groq');
+  });
+
+  it('throws the last provider error when every provider in the chain fails', async () => {
+    const a = makeProvider('gemini', 'g', 'boom');
+    const b = makeProvider('groq', 'q', 'boom');
+    const client = new LLMClient([a, b]);
+    try {
+      await client.reviewDiff('f.ts', 'd', []);
+      throw new Error('expected chain failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AllProvidersFailedError);
+      const failure = error as AllProvidersFailedError;
+      expect(failure.lastError?.message).toContain('groq boom');
+    }
   });
 
   it('throws an aggregate failure when every provider is exhausted', async () => {
@@ -217,11 +231,10 @@ describe('LLMClient chain routing', () => {
     expect(Date.now() - started).toBeLessThan(250);
   });
 
-  it('does not fall through to the next provider for non-exhaustion Gemini failures', async () => {
+  it('single failing provider surfaces its error as the chain failure', async () => {
     const boom = makeProvider('gemini', 'g', 'boom');
-    const ok = makeProvider('groq', 'q', 'ok');
-    const client = new LLMClient([boom, ok]);
-    await Promise.allSettled([client.reviewDiff('f.ts', 'd', [])]);
+    const client = new LLMClient([boom]);
+    await expect(client.reviewDiff('f.ts', 'd', [])).rejects.toBeInstanceOf(AllProvidersFailedError);
   });
 });
 
@@ -247,12 +260,14 @@ describe('LLMClient generateEmbedding chain', () => {
     expect(client.servedProvider).toBe('groq');
   });
 
-  it('propagates non-exhaustion embedding errors without trying further providers', async () => {
+  it('falls through non-exhaustion embedding errors to the next embed-capable provider', async () => {
     const broken = makeEmbeddingProvider('gemini', 'g', 'boom');
     const fine = makeEmbeddingProvider('groq', 'q', 'ok');
     const client = new LLMClient([broken, fine]);
 
-    await expect(client.generateEmbedding('x')).rejects.toThrow('gemini embedding boom');
+    const vector = await client.generateEmbedding('x');
+    expect(vector).toHaveLength(768);
+    expect(client.servedProvider).toBe('groq');
   });
 
   it('throws the last exhaustion when no configured provider can embed', async () => {
