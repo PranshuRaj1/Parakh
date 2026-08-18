@@ -17,6 +17,7 @@
 
 import type { CreateRuleRequest, CreateRuleResponse, ContradictionJobPayload, RuleStatus } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 import { executeContradictionJob } from './contradiction.js';
 import { insertRule } from '../db/rules.js';
 import { getDb } from '../db/client.js';
@@ -55,7 +56,17 @@ export async function handleCreateRule(
   // chain: Gemini first, then Cloudflare Workers AI for embeddings if Gemini
   // is exhausted. (Groq/OpenRouter have no embeddings API — the chain skips
   // providers that don't implement generateEmbedding.)
-  const { llm } = createLLMClients(env);
+  // BYO-keys: rule creation bills against the keys of the user who installed
+  // Parakh on the repo owner. No keys → the rule cannot be embedded at all.
+  const [owner] = request.repo.split('/');
+  const userCreds = await resolveUserCreds(owner, env);
+  if (!userCreds) {
+    throw new Error(
+      `No LLM API keys are configured for the account that installed Parakh on ${owner}. ` +
+      'Add a Gemini key in the dashboard Settings page, then retry.'
+    );
+  }
+  const { llm } = createLLMClients(env, undefined, userCreds);
 
   // 3. Generate embedding (on the gate-cleaned body)
   const embedding = await llm.generateEmbedding(assessment.body);

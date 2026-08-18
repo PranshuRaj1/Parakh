@@ -20,6 +20,7 @@ import { OpenRouterClient, type OpenRouterEnv } from '../openrouter/client.js';
 import { LLMClient, type ProviderName, type LLMProvider } from './provider.js';
 import { MemoryCooldownStore, RedisCooldownStore, type CooldownStore } from '../gemini/cooldown-store.js';
 import { createRedisGet, createRedisSet } from '../redis.js';
+import type { UserLLMCreds } from './user-creds.js';
 
 export interface LLMClients {
   llm: LLMClient;
@@ -49,24 +50,43 @@ const GROQ_COOLDOWN_KEY = 'llm_key_cooldown:groq';
  * CF Workers AI and OpenRouter are per-account / per-key (no rotation pool), so
  * they don't need a cooldown store.
  */
-export function createLLMClients(env: Env, budget?: SubrequestBudget): LLMClients {
-  const gemini = new GeminiClient(env, makeCooldownStore(GEMINI_COOLDOWN_KEY, env, budget));
+/**
+ * Merge the shared worker env with a user's personal keys: user keys REPLACE
+ * the shared env keys for every provider they cover, and the shared single-key
+ * aliases are cleared so a user key is never accidentally skipped.
+ */
+function applyUserCredsToEnv(env: Env, creds: UserLLMCreds): Env {
+  return {
+    ...env,
+    GEMINI_API_KEYS: creds.geminiKeys.length > 0 ? creds.geminiKeys.join(',') : undefined,
+    GEMINI_API_KEY: undefined,
+    GROQ_API_KEYS: creds.groqKeys.length > 0 ? creds.groqKeys.join(',') : undefined,
+    GROQ_API_KEY: undefined,
+    CF_ACCOUNT_ID: creds.cfaiAccountId ?? undefined,
+    CF_API_TOKEN: creds.cfaiToken ?? undefined,
+    OPENROUTER_API_KEY: creds.openrouterKey ?? undefined,
+  };
+}
+
+export function createLLMClients(env: Env, budget?: SubrequestBudget, creds?: UserLLMCreds): LLMClients {
+  const effectiveEnv = creds ? applyUserCredsToEnv(env, creds) : env;
+  const gemini = new GeminiClient(effectiveEnv, makeCooldownStore(GEMINI_COOLDOWN_KEY, env, budget));
 
   // Gate every non-Gemini provider on having credentials: a provider with NO
   // key is "not configured" and must be absent from the chain — otherwise a
   // guaranteed 401/400 from it would abort the chain before reaching the next
   // configured fallback.
   const groq: GroqClient | null =
-    env.GROQ_API_KEY || env.GROQ_API_KEYS
-      ? new GroqClient(env, makeCooldownStore(GROQ_COOLDOWN_KEY, env, budget))
+    effectiveEnv.GROQ_API_KEY || effectiveEnv.GROQ_API_KEYS
+      ? new GroqClient(effectiveEnv, makeCooldownStore(GROQ_COOLDOWN_KEY, env, budget))
       : null;
   const cfai: CfaAiClient | null =
-    env.CF_ACCOUNT_ID && env.CF_API_TOKEN
-      ? new CfaAiClient(env as CfaAiEnv)
+    effectiveEnv.CF_ACCOUNT_ID && effectiveEnv.CF_API_TOKEN
+      ? new CfaAiClient(effectiveEnv as CfaAiEnv)
       : null;
   const openrouter: OpenRouterClient | null =
-    env.OPENROUTER_API_KEY
-      ? new OpenRouterClient(env as OpenRouterEnv)
+    effectiveEnv.OPENROUTER_API_KEY
+      ? new OpenRouterClient(effectiveEnv as OpenRouterEnv)
       : null;
 
   const providerMap: Partial<Record<ProviderName, LLMProvider>> = {

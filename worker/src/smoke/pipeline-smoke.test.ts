@@ -92,10 +92,11 @@ vi.mock('../redis.js', () => ({
   createRedisExpire: vi.fn(),
 }));
 
-const { classifyIntentMock, draftReplyMock, reviewDiffMock } = vi.hoisted(() => ({
+const { classifyIntentMock, draftReplyMock, reviewDiffMock, mockResolveUserCreds } = vi.hoisted(() => ({
   classifyIntentMock: vi.fn(),
   draftReplyMock: vi.fn(),
   reviewDiffMock: vi.fn(),
+  mockResolveUserCreds: vi.fn(),
 }));
 
 vi.mock('../llm/factory.js', () => ({
@@ -108,6 +109,11 @@ vi.mock('../llm/factory.js', () => ({
   }),
 }));
 
+// BYO-keys gate: stub the installer lookup to an installed user WITH keys.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
+}));
+
 // ─── Imports (real orchestration code) ──────────────────────────────────────
 
 import worker from '../index.js';
@@ -118,6 +124,7 @@ import { getCachedToken } from '../github/auth.js';
 import { postComment, addReaction, getPRDetails, addCommentReaction } from '../github/api.js';
 import { insertReview, getLatestReviewByPR, getResumableReview, getRepoSettings } from '../db/reviews.js';
 import { createRedisSetNX, createRedisDel, createRedisGet, createRedisSet, createRedisIncr, createRedisExpire } from '../redis.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
@@ -240,6 +247,14 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   for (const fn of Object.values(mocked)) fn.mockReset();
   for (const fn of [classifyIntentMock, draftReplyMock, reviewDiffMock]) fn.mockReset();
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   setupRedisMocks();
   setupReviewLeaves();
   mocked.getRepoSettings.mockResolvedValue({ repo: 'acme/app', reply_mode: 'all_comments', stuck_timeout_seconds: null } as never);

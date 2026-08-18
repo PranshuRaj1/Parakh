@@ -72,6 +72,7 @@ import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTE
 import type { LLMClient } from '../llm/provider.js';
 import { AllProvidersFailedError, ProviderResponseError } from '../llm/errors.js';
 import { createLLMClients } from '../llm/factory.js';
+import { resolveUserCreds, type UserLLMCreds } from '../llm/user-creds.js';
 import {
   SubrequestBudget,
   SubrequestBudgetExceededError,
@@ -934,6 +935,54 @@ export async function executeReviewJob(
   await executeReviewJobInternal(payload, env, token, attempts);
 }
 
+/** Marker embedded in gate comments so redeliveries never double-post. */
+const USER_KEYS_GATE_MARKER = '<!-- parakh-no-keys-gate -->';
+
+/**
+ * Hard gate: reviews bill against the LLM API keys of the user who installed
+ * Parakh on the repo (BYO-keys). When that user has no Gemini keys, the review
+ * never starts — we post one explanatory PR comment and mark the review FAILED
+ * so redeliveries skip it.
+ *
+ * Returns the resolved creds when the gate passes, null when it blocked the
+ * review (caller should return immediately).
+ */
+export async function applyUserKeysGate(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string,
+  reviewId: string,
+  env: Env
+): Promise<UserLLMCreds | null> {
+  const creds = await resolveUserCreds(owner, env);
+  if (creds && creds.geminiKeys.length > 0) return creds;
+
+  const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
+  const dashboardLink = base ? `[${base}/settings](${base}/settings)` : 'the dashboard Settings page';
+  const who = creds ? `**${creds.githubLogin}**` : 'the account that installed Parakh';
+  const body = [
+    '🚫 **Review skipped — no LLM API keys configured.**',
+    '',
+    'Reviews bill against the API keys of the user who installed Parakh on this repo, and ',
+    `\`${who}\` has no Gemini keys stored.`,
+    '',
+    `1. Sign in at ${dashboardLink}`,
+    '2. Go to **Settings → API Keys** and add at least one Gemini key',
+    '3. Retry the review',
+    '',
+  ].join('\n');
+
+  try {
+    await postCommentOnce(owner, repo, prNumber, body, USER_KEYS_GATE_MARKER, token);
+  } catch (err) {
+    console.error(`[review] Failed to post no-keys gate comment for ${owner}/${repo}#${prNumber}:`, err);
+  }
+  await updateReviewStatus(reviewId, 'FAILED', env);
+  console.warn(`[review] Review ${reviewId} blocked by user-keys gate (no Gemini keys for ${owner}/${repo})`);
+  return null;
+}
+
 async function executeReviewJobInternal(
   payload: ReviewJobPayload,
   env: Env,
@@ -974,6 +1023,11 @@ async function executeReviewJobInternal(
       console.log(`[review] Review ${reviewId} already FAILED — skipping redelivery`);
       return;
     }
+
+    // BYO-keys hard gate: reviews bill against the installing user's own LLM
+    // keys. No Gemini keys → explain + FAILED + skip (never uses shared env keys).
+    const userCreds = await applyUserKeysGate(owner, repo, prNumber, token, reviewId, env);
+    if (!userCreds) return;
     // attempt number = the queue delivery count (1 = first delivery, 2+ =
     // redelivery). Using it as the stage attempt gives each delivery its own
     // attempt_number in review_step_events, which the unique index
@@ -1256,10 +1310,11 @@ async function executeReviewJobInternal(
       }
     }
 
-    // Provider stack: Gemini primary, Groq fallback (configurable). The budget
-    // is attached so every REAL key attempt (incl. rotation retries + fallback)
+    // Provider stack: the installing user's keys (BYO-keys gate already passed
+    // above), Gemini primary, Groq fallback (configurable). The budget is
+    // attached so every REAL key attempt (incl. rotation retries + fallback)
     // counts against the guard — the key to not undercounting during storms.
-    const { llm } = createLLMClients(env, activeBudget);
+    const { llm } = createLLMClients(env, activeBudget, userCreds);
 
     // Phase 4: review-start attention focus — one LLM call over the execution
     // diff, before the per-file loop. The raw response is validated and

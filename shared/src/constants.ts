@@ -111,3 +111,17 @@ export const GITHUB_APP_BOT_SUFFIX = '[bot]';
 
 /** Installation token cache TTL buffer — cache expires this many seconds before actual expiry. */
 export const TOKEN_CACHE_BUFFER_SECONDS = 300;
+
+// ─── BYO-Key Capacity Estimates ──────────────────────────────────────────────
+
+/**
+ * Estimated requests-per-minute served by a SINGLE API key on each provider
+ * (conservative; Gemini matches the free-tier constant above). Reviews bill
+ * against the installing user's own keys, so total capacity ≈ sum over keys.
+ */
+export const LLM_PROVIDER_RPM_ESTIMATES: Record<'gemini' | 'groq' | 'cfai' | 'openrouter', number> = {
+  gemini: 15,
+  groq: 30,
+  cfai: 50,
+  openrouter: 20,
+};

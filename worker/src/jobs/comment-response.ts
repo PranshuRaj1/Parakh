@@ -5,6 +5,7 @@ import { getCachedToken } from '../github/auth.js';
 import { getRepoSettings, getResumableReview } from '../db/reviews.js';
 import { postComment as postIssueComment, replyToReviewComment, resolveReviewCommentRoot, addCommentReaction } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 import { triggerReview } from './review.js';
 import { saveCorrectionAsRule, CorrectionRejectedError, isInstructionRule } from './correction.js';
 import { assessRuleBody } from './rule-quality.js';
@@ -150,7 +151,15 @@ export async function executeCommentResponseJob(
     }
   };
 
-  const { llm } = createLLMClients(env);
+  // BYO-keys: comment-triggered LLM work bills against the keys of the user
+  // who installed Parakh on the repo. No keys → skip (never shared-env keys).
+  const userCreds = await resolveUserCreds(owner, env);
+  if (!userCreds) {
+    console.log(`[comment-response] Skipped ${fullRepo}#${prNumber}: no user LLM keys configured (installer of ${owner}).`);
+    return;
+  }
+
+  const { llm } = createLLMClients(env, undefined, userCreds);
 
   // Diff-thread replies that land on one of our anchored finding comments get
   // the finding as bot-comment context, so intent classification and drafted
@@ -317,7 +326,7 @@ export async function executeCommentResponseJob(
             env,
             token
           );
-          savedRules.push(saved);
+          if (saved) savedRules.push(saved);
         } catch (err) {
           if (err instanceof CorrectionRejectedError) {
             console.log(`[comment-response] Correction rejected: ${err.message}`);

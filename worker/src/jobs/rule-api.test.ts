@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError, sqlImpl, getDbMock } = vi.hoisted(() => ({
+const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError, sqlImpl, getDbMock, mockResolveUserCreds } = vi.hoisted(() => ({
   mockGenerateEmbedding: vi.fn(),
   mockClassifyPriority: vi.fn(),
   mockConsoleError: vi.fn(),
   sqlImpl: vi.fn(),
   getDbMock: vi.fn(() => sqlImpl),
+  mockResolveUserCreds: vi.fn(),
+}));
+
+// BYO-keys: rule creation bills against the installing user's keys. Stubbed
+// to an installed user WITH keys; the no-keys rejection is covered by its own
+// test below.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
 }));
 
 // Stub the LLM factory so rule creation can run without a real model call:
@@ -56,6 +64,14 @@ beforeEach(() => {
   mocked.insertRule.mockReset().mockResolvedValue({ id: 'rule-1' } as never);
   mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
   mockClassifyPriority.mockReset().mockResolvedValue('normal');
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
 });
 
 describe('handleCreateRule', () => {
@@ -92,6 +108,16 @@ describe('handleCreateRule', () => {
       expect.stringContaining('Priority classification failed for "Never store secrets" (repo: acme/app)'),
       expect.objectContaining({ message: 'timeout' })
     );
+  });
+
+  it('rejects rule creation when the installing user has no keys (BYO-keys gate)', async () => {
+    mockResolveUserCreds.mockResolvedValue(null);
+
+    await expect(handleCreateRule({ repo: 'acme/app', body: 'Never store secrets' }, env, makeCtx()))
+      .rejects.toThrow('No LLM API keys are configured for the account that installed Parakh on acme');
+
+    expect(mockGenerateEmbedding).not.toHaveBeenCalled();
+    expect(mocked.insertRule).not.toHaveBeenCalled();
   });
 
   it('inserts the rule with the generated embedding and enqueues a contradiction check', async () => {

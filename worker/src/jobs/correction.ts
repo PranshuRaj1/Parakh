@@ -15,8 +15,9 @@
  * via PR comment" and "rule created via dashboard".
  */
 
-import type { ContradictionJobPayload, RuleKind, RulePriority } from '@parakh/shared';
+import type { ContradictionJobPayload, Rule, RuleKind, RulePriority } from '@parakh/shared';
 import { createLLMClients } from '../llm/factory.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 import { isRepoCollaborator } from '../github/api.js';
 import { insertRule } from '../db/rules.js';
 import type { Env } from '../index.js';
@@ -113,7 +114,16 @@ ruleBody: string;
     );
   }
 
-  const { llm } = createLLMClients(env);
+  // Embedding generation bills against the installing user's keys (BYO-keys).
+  // Without keys the rule cannot be embedded — skip loudly rather than use
+  // shared env keys.
+  const userCreds = await resolveUserCreds(input.owner, env);
+  if (!userCreds) {
+    console.log(`[correction] Skipped rule save for ${fullRepo}: no user LLM keys configured (installer of ${input.owner}).`);
+    return null;
+  }
+
+  const { llm } = createLLMClients(env, undefined, userCreds);
 
   // The gate strips command prefixes/filler; the stored rule body is the
   // assessed (clean) body so the memory bank never holds "@parakh ..." text.

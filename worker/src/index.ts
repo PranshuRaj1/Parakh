@@ -15,6 +15,8 @@ import { handleCreateRule, handleApproveRule, handleRejectRule } from './jobs/ru
 import { handleRetryReview } from './jobs/retry-api.js';
 import { handleCronTrigger } from './cron.js';
 import { listInstallations, markInstallationRemoved } from './db/installations.js';
+import { getStoredUserLLMKeysByLogin, getGithubIdByLogin, upsertUserLLMKeys } from './db/user-llm-keys.js';
+import { encryptKey, keyHint } from './llm/encryption.js';
 import { providers, getProvider } from './providers/registry.js';
 import type { JobPayload } from '@parakh/shared';
 
@@ -98,6 +100,10 @@ export interface Env {
   // Worker API auth (dashboard → worker)
   WORKER_API_SECRET: string;
 
+  // BYO-keys: secret used to derive the AES-256-GCM key that encrypts user
+  // LLM API keys at rest. Missing → key save/load endpoints fail closed.
+  LLM_KEY_ENCRYPTION_SECRET?: string;
+
   // Per-repo hourly cap on comment-triggered LLM calls (default 50).
   CHAT_LLM_BUDGET_PER_HOUR?: string;
 
@@ -153,6 +159,14 @@ export default {
     const removeMatch = url.pathname.match(/^\/api\/connect\/([^\/]+)\/([^\/]+)\/remove$/);
     if (removeMatch && request.method === 'POST') {
       return handleConnectRemoveRequest(request, removeMatch[1], removeMatch[2], env);
+    }
+
+    // ── User LLM keys API (BYO-keys) ────────────────────────────────
+    if (url.pathname === '/api/keys' && request.method === 'GET') {
+      return handleKeysGetRequest(request, env);
+    }
+    if (url.pathname === '/api/keys' && request.method === 'POST') {
+      return handleKeysPostRequest(request, env);
     }
 
     // ── Health check ──────────────────────────────────────────────────
@@ -332,5 +346,100 @@ async function handleConnectRemoveRequest(request: Request, providerId: string, 
   } catch (err) {
     console.error('[worker] Connect remove error:', err);
     return json({ error: 'Failed to disconnect' }, 500);
+  }
+}
+
+// ─── User LLM Keys API (BYO-keys) ─────────────────────────────────────────────
+
+interface SaveKeysRequest {
+  installedBy: string;
+  geminiKeys?: string[];
+  groqKeys?: string[];
+  cfaiKeys?: string[];
+  cfaiAccountId?: string | null;
+  openrouterKeys?: string[];
+}
+
+/** Masked-hint view of a user's stored keys, for the dashboard settings page. */
+function keysView(stored: import('./db/user-llm-keys.js').StoredUserLLMKeys): unknown {
+  return {
+    stored: true,
+    keys: {
+      geminiKeys: stored.geminiKeys.map((k) => k.hint),
+      groqKeys: stored.groqKeys.map((k) => k.hint),
+      cfaiKeys: stored.cfaiKeys.map((k) => k.hint),
+      cfaiAccountId: stored.cfaiAccountId,
+      openrouterKeys: stored.openrouterKeys.map((k) => k.hint),
+      updatedAt: stored.updatedAt,
+    },
+  };
+}
+
+/** GET /api/keys?installedBy=login — masked key hints for the settings page. */
+async function handleKeysGetRequest(request: Request, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  const installedBy = new URL(request.url).searchParams.get('installedBy')?.trim() || '';
+  if (!installedBy) return json({ error: 'Missing installedBy parameter' }, 400);
+  try {
+    const stored = await getStoredUserLLMKeysByLogin(installedBy, env);
+    if (!stored) return json({ stored: false, keys: null });
+    return json(keysView(stored));
+  } catch (err) {
+    console.error('[worker] Keys load error:', err);
+    return json({ error: 'Failed to load keys' }, 500);
+  }
+}
+
+/** POST /api/keys — full-replace a user's stored keys (encrypted at rest). */
+async function handleKeysPostRequest(request: Request, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  if (!env.LLM_KEY_ENCRYPTION_SECRET) {
+    return json({ error: 'LLM_KEY_ENCRYPTION_SECRET is not configured on the worker' }, 500);
+  }
+
+  let body: SaveKeysRequest;
+  try {
+    body = await request.json() as SaveKeysRequest;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const installedBy = body.installedBy?.trim();
+  if (!installedBy) return json({ error: 'Missing installedBy' }, 400);
+  const arrays: Array<{ name: string; values?: string[] }> = [
+    { name: 'geminiKeys', values: body.geminiKeys },
+    { name: 'groqKeys', values: body.groqKeys },
+    { name: 'cfaiKeys', values: body.cfaiKeys },
+    { name: 'openrouterKeys', values: body.openrouterKeys },
+  ];
+  for (const { name, values } of arrays) {
+    if (values && !Array.isArray(values)) return json({ error: `${name} must be an array of strings` }, 400);
+    if (values?.some((v) => typeof v !== 'string')) return json({ error: `${name} must be an array of strings` }, 400);
+  }
+
+  try {
+    const githubId = await getGithubIdByLogin(installedBy, env);
+    if (!githubId) return json({ error: `Unknown dashboard user: ${installedBy}` }, 404);
+
+    const encrypt = (keys?: string[]) => Promise.all(
+      (keys ?? []).map((k) => k.trim()).filter(Boolean).map(async (k) => ({
+        enc: await encryptKey(k, env.LLM_KEY_ENCRYPTION_SECRET as string),
+        hint: keyHint(k),
+      }))
+    );
+
+    const stored = await upsertUserLLMKeys({
+      githubId,
+      geminiKeys: await encrypt(body.geminiKeys),
+      groqKeys: await encrypt(body.groqKeys),
+      cfaiKeys: await encrypt(body.cfaiKeys),
+      cfaiAccountId: body.cfaiAccountId?.trim() || null,
+      openrouterKeys: await encrypt(body.openrouterKeys),
+    }, env);
+
+    return json(keysView(stored));
+  } catch (err) {
+    console.error('[worker] Keys save error:', err);
+    return json({ error: 'Failed to save keys' }, 500);
   }
 }
