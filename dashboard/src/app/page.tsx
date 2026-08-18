@@ -7,6 +7,22 @@ import type { Review } from '@parakh/shared';
 
 export default async function Home() {
   const session = await getServerSession(authOptions);
+  if (session && session.user.approvalStatus !== 'approved') {
+    return (
+      <main className="w-full px-6 pt-20 pb-16">
+        <section className="glass-card max-w-xl mx-auto rounded-2xl p-8 text-center">
+          <h1 className="font-anybody text-3xl font-bold text-white mb-3">
+            {session.user.approvalStatus === 'declined' ? 'Access not approved' : 'Approval pending'}
+          </h1>
+          <p className="font-dm-sans text-[#c0c9c0]">
+            {session.user.approvalStatus === 'declined'
+              ? 'Contact the Parakh administrator if you believe this was a mistake.'
+              : 'An administrator must approve your account before dashboard data is shown.'}
+          </p>
+        </section>
+      </main>
+    );
+  }
   const userName = session?.user?.name || session?.user?.email || 'there';
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';

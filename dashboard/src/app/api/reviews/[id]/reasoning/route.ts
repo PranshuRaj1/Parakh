@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getReview, getReviewReasoning } from '@/lib/db';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getApprovedSession } from '@/lib/access';
 import { requireRepoPermission } from '@/lib/repo-auth';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions);
+  const session = await getApprovedSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

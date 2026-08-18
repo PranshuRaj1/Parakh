@@ -293,17 +293,18 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** GET /api/connect — list every connected provider account and its repos. */
+/** GET /api/connect — list installations owned by the requesting dashboard user. */
 async function handleConnectListRequest(request: Request, env: Env): Promise<Response> {
   if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
   try {
+    const installedBy = new URL(request.url).searchParams.get('installedBy')?.trim() || undefined;
     return json({
       providers: providers.map((p) => ({
         id: p.id,
         displayName: p.displayName,
         url: p.getInstallUrl(env),
       })),
-      installations: await listInstallations(env),
+      installations: await listInstallations(env, installedBy),
     });
   } catch (err) {
     console.error('[worker] Connect list error:', err);
@@ -325,7 +326,8 @@ async function handleConnectRemoveRequest(request: Request, providerId: string, 
   if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
   if (!getProvider(providerId)) return json({ error: `Unknown provider: ${providerId}` }, 404);
   try {
-    await markInstallationRemoved(providerId, owner, env);
+    const installedBy = new URL(request.url).searchParams.get('installedBy')?.trim() || undefined;
+    await markInstallationRemoved(providerId, owner, env, installedBy);
     return json({ provider: providerId, owner, status: 'removed' });
   } catch (err) {
     console.error('[worker] Connect remove error:', err);

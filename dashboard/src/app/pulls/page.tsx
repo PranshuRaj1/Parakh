@@ -1,19 +1,17 @@
 import { getDashboardReviews } from '@/lib/db';
-import { getServerSession } from 'next-auth';
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import { CheckCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
 import type { Review } from '@parakh/shared';
-import { authOptions } from '@/lib/auth';
 import { getUserRepos } from '@/lib/repo-auth';
+import { requireApprovedSession } from '@/lib/access';
 
 export default async function PullsPage({
   searchParams,
 }: {
   searchParams: Promise<{ repo?: string }>
 }) {
-  const session = await getServerSession(authOptions);
-  if (!session) redirect('/');
+  const session = await requireApprovedSession();
 
   const repos = session.accessToken ? await getUserRepos(session.accessToken) : [];
   const params = await searchParams;

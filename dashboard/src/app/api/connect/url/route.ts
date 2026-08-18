@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getApprovedSession } from '@/lib/access';
 import { fetchWorkerJson, WorkerError } from '@/lib/worker-proxy';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/connect/url?provider=github — install/connect deep link.
 export async function GET(req: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getApprovedSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

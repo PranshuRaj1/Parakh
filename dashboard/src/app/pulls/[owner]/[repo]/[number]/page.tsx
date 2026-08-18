@@ -1,10 +1,9 @@
 import { getReviewByPr } from '@/lib/db';
-import { getServerSession } from 'next-auth';
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { ReviewStepper } from '@/components/ReviewStepper';
 import { FailureDetail } from '@/components/FailureDetail';
 import { ReasoningPanel } from '@/components/ReasoningPanel';
-import { authOptions } from '@/lib/auth';
+import { requireApprovedSession } from '@/lib/access';
 import { requireRepoPermission } from '@/lib/repo-auth';
 
 export default async function PullRequestPage({
@@ -12,8 +11,7 @@ export default async function PullRequestPage({
 }: {
   params: Promise<{ owner: string; repo: string; number: string }>
 }) {
-  const session = await getServerSession(authOptions);
-  if (!session) redirect('/');
+  const session = await requireApprovedSession();
 
   const resolvedParams = await params;
   const { owner, repo, number } = resolvedParams;

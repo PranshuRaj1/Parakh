@@ -1,18 +1,16 @@
 import { getDashboardRules, getDashboardRuleRelationships } from '@/lib/db';
-import { getServerSession } from 'next-auth';
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import CreateRuleForm from '@/components/CreateRuleForm';
 import type { Rule, RuleRelationshipRecord } from '@parakh/shared';
-import { authOptions } from '@/lib/auth';
 import { getUserRepos, requireRepoPermission } from '@/lib/repo-auth';
+import { requireApprovedSession } from '@/lib/access';
 
 export default async function MemoryPage({
   searchParams,
 }: {
   searchParams: Promise<{ repo?: string }>
 }) {
-  const session = await getServerSession(authOptions);
-  if (!session) redirect('/');
+  const session = await requireApprovedSession();
 
   let repos: string[] = [];
   let reposFailed = false;

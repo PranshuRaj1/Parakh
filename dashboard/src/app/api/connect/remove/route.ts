@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getApprovedSession } from '@/lib/access';
 import { fetchWorkerJson, WorkerError } from '@/lib/worker-proxy';
 
 export const dynamic = 'force-dynamic';
 
 // POST /api/connect/remove — body: { provider, owner }. Disconnects an account.
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getApprovedSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -25,7 +24,7 @@ export async function POST(req: Request) {
 
   try {
     const data = await fetchWorkerJson(
-      `/api/connect/${encodeURIComponent(body.provider)}/${encodeURIComponent(body.owner)}/remove`,
+      `/api/connect/${encodeURIComponent(body.provider)}/${encodeURIComponent(body.owner)}/remove?installedBy=${encodeURIComponent(session.user.login ?? '')}`,
       { method: 'POST' }
     );
     return NextResponse.json(data);

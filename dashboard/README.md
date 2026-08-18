@@ -31,6 +31,23 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
+The dashboard uses an approval gate for GitHub users. Apply the next database migration before deploying, then set these Vercel Production variables:
+
+```text
+GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET
+NEXTAUTH_URL=https://your-dashboard-domain.example
+NEXTAUTH_SECRET
+DATABASE_URL
+WORKER_API_URL
+WORKER_API_SECRET
+DASHBOARD_ADMIN_LOGINS=your-github-login
+```
+
+Users can sign in without an allowlist, but remain on `/pending` until an admin approves them at `/admin`. The old `DASHBOARD_ALLOWED_LOGINS` variable is no longer used.
+
+The admin page is kept under its own `/admin` route and uses the same database and auth session, so it can be moved into a separate Vercel project later without changing the approval data model.
+
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
