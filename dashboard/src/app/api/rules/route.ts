@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: response.status });
     }
 
-    return NextResponse.json(data, { status: 201 });
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error('Error proxying to worker:', error);
     return NextResponse.json({ error: 'Failed to create rule' }, { status: 500 });

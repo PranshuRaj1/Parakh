@@ -18,11 +18,15 @@ function getSql() {
 }
 
 function toDashboardUser(row: Record<string, unknown>): DashboardUser {
+  const status = row.status;
+  if (status !== 'pending' && status !== 'approved' && status !== 'declined') {
+    throw new Error('Invalid dashboard user status');
+  }
   return {
     githubId: Number(row.github_id),
     githubLogin: String(row.github_login),
     email: (row.email as string | null) ?? null,
-    status: row.status as DashboardUserStatus,
+    status,
     requestedAt: String(row.requested_at),
     reviewedAt: (row.reviewed_at as string | null) ?? null,
     reviewedBy: (row.reviewed_by as string | null) ?? null,

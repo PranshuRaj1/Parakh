@@ -13,7 +13,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ login: 
   }
 
   const { login } = await params;
-  const user = await setDashboardUserStatus(login, body.status, session.user.login);
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
-  return NextResponse.json(user);
+  try {
+    const user = await setDashboardUserStatus(login, body.status, session.user.login);
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    return NextResponse.json(user);
+  } catch (error) {
+    console.error('[admin] failed to update dashboard user:', error);
+    return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
+  }
 }

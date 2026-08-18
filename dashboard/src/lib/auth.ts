@@ -26,14 +26,20 @@ export const authOptions: NextAuthOptions = {
       const githubProfile = profile as Record<string, unknown> | undefined;
       const login = githubProfile?.login;
       const githubId = githubProfile?.id;
-      if (typeof login !== 'string' || (typeof githubId !== 'number' && typeof githubId !== 'string')) {
+      const parsedGithubId = typeof githubId === 'number' ? githubId : Number(githubId);
+      if (typeof login !== 'string' || !Number.isSafeInteger(parsedGithubId) || parsedGithubId <= 0) {
         return false;
       }
-      await upsertDashboardUser({
-        githubId: Number(githubId),
-        githubLogin: login,
-        email: typeof githubProfile?.email === 'string' ? githubProfile.email : null,
-      });
+      try {
+        await upsertDashboardUser({
+          githubId: parsedGithubId,
+          githubLogin: login,
+          email: typeof githubProfile?.email === 'string' ? githubProfile.email : null,
+        });
+      } catch (error) {
+        console.error('[auth] failed to register dashboard user:', error);
+        return false;
+      }
       return true;
     },
     async session({ session, token }) {
@@ -54,7 +60,12 @@ export const authOptions: NextAuthOptions = {
         const githubProfile = profile as Record<string, unknown> | undefined;
         token.login = typeof githubProfile?.login === 'string' ? githubProfile.login : null;
         const githubId = githubProfile?.id;
-        token.githubId = typeof githubId === 'number' ? githubId : Number(githubId);
+        const parsedGithubId = typeof githubId === 'number' ? githubId : Number(githubId);
+        if (Number.isSafeInteger(parsedGithubId) && parsedGithubId > 0) {
+          token.githubId = parsedGithubId;
+        } else {
+          delete token.githubId;
+        }
       }
       return token;
     },

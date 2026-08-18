@@ -8,5 +8,10 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session?.user.isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  return NextResponse.json(await listDashboardUsers());
+  try {
+    return NextResponse.json(await listDashboardUsers());
+  } catch (error) {
+    console.error('[admin] failed to list dashboard users:', error);
+    return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });
+  }
 }

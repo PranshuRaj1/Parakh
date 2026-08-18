@@ -6,10 +6,10 @@ import type { DashboardUser } from '@/lib/dashboard-users';
 export default function AdminUsers({ initialUsers }: { initialUsers: DashboardUser[] }) {
   const [users, setUsers] = useState(initialUsers);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<string | null>(null);
+  const [saving, setSaving] = useState<Set<string>>(new Set());
 
   async function updateStatus(login: string, status: 'approved' | 'declined') {
-    setSaving(login);
+    setSaving((current) => new Set(current).add(login));
     setError(null);
     try {
       const response = await fetch(`/api/admin/users/${encodeURIComponent(login)}`, {
@@ -23,7 +23,11 @@ export default function AdminUsers({ initialUsers }: { initialUsers: DashboardUs
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to update this request');
     } finally {
-      setSaving(null);
+      setSaving((current) => {
+        const next = new Set(current);
+        next.delete(login);
+        return next;
+      });
     }
   }
 
@@ -45,13 +49,13 @@ export default function AdminUsers({ initialUsers }: { initialUsers: DashboardUs
             <p className="font-dm-sans text-[#c0c9c0]">No pending requests.</p>
           ) : (
             <div className="space-y-3">
-              {pending.map((user) => <UserRow key={user.githubId} user={user} saving={saving === user.githubLogin} onUpdate={updateStatus} />)}
+              {pending.map((user) => <UserRow key={user.githubId} user={user} saving={saving.has(user.githubLogin)} onUpdate={updateStatus} />)}
             </div>
           )}
         </section>
         <section className="glass-card rounded-2xl p-6">
           <h2 className="font-anybody text-xl font-bold text-white mb-4">Reviewed ({reviewed.length})</h2>
-          {reviewed.length === 0 ? <p className="font-dm-sans text-[#c0c9c0]">No reviewed users yet.</p> : <div className="space-y-3">{reviewed.map((user) => <UserRow key={user.githubId} user={user} saving={saving === user.githubLogin} onUpdate={updateStatus} />)}</div>}
+          {reviewed.length === 0 ? <p className="font-dm-sans text-[#c0c9c0]">No reviewed users yet.</p> : <div className="space-y-3">{reviewed.map((user) => <UserRow key={user.githubId} user={user} saving={saving.has(user.githubLogin)} onUpdate={updateStatus} />)}</div>}
         </section>
       </div>
     </main>
