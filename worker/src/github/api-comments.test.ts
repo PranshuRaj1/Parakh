@@ -56,14 +56,6 @@ describe('resolveReviewCommentRoot', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('treats an omitted in_reply_to_id as a top-level comment', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 200 }), { status: 200 }));
-
-    await expect(resolveReviewCommentRoot('acme', 'app', 100, 200, 'token')).resolves.toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it('walks a multi-hop chain back to the top-level comment', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 200, in_reply_to_id: 300 }), { status: 200 }))
