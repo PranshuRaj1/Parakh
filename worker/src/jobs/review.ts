@@ -124,6 +124,7 @@ import {
   type ReviewBaselineOutcome,
 } from '../review/baseline/metrics.js';
 import { verifyFindings } from '../review/finding-verification.js';
+import { buildFileContext } from '../review/file-context.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
 import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
@@ -131,14 +132,6 @@ import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_REASONING_RETENTION_DAYS = 14;
-
-/**
- * Cap for the full-file reference fed to the model. Grounding must never
- * balloon the prompt past a bounded size, so oversized files are truncated
- * (head of file — declaration/import regions survive, which is the bulk of
- * what verification needs).
- */
-const REVIEW_FILE_CONTEXT_MAX_CHARS = 60_000;
 
 /** Concurrent files reviewed within a batch (env FILE_CONCURRENCY overrides). */
 const DEFAULT_FILE_CONCURRENCY = 2;
@@ -554,7 +547,7 @@ interface ReviewedFileResult {
   };
 }
 
-async function reviewSingleFile(
+export async function reviewSingleFile(
   llm: LLMClient,
   fileName: string,
   fileChunks: Map<string, string>,
@@ -615,7 +608,9 @@ async function reviewSingleFile(
   // Full-file grounding: fetch the file at head so the model can cross-check
   // diff-implied claims (and a bounded post-hoc verifier can reject flat
   // fabrication). Best-effort — a failed fetch degrades to diff-only review.
+  // The prompt gets a bounded slice; verification always sees the full file.
   let referenceFileContent: string | null = null;
+  let verificationFileContent: string | null = null;
   try {
     // The real Gemini/Groq calls happen inside the provider's key rotation,
     // which spends from the budget per actual attempt — so no spend here.
@@ -623,17 +618,18 @@ async function reviewSingleFile(
 
     if (featureFlags.reviewFileContext && budget.hasRoomFor(1)) {
       try {
+        metrics.recordFileContextAttempt();
         budget.spend(1);
         const content = await getFileContent(owner, repo, fileName, headSha, token);
-        if (content.length > REVIEW_FILE_CONTEXT_MAX_CHARS) {
-          referenceFileContent = content.slice(0, REVIEW_FILE_CONTEXT_MAX_CHARS);
-        } else {
-          referenceFileContent = content;
-        }
-        metrics.recordFileContextUsed();
+        const context = buildFileContext(content);
+        referenceFileContent = context.bounded;
+        verificationFileContent = context.full;
+        metrics.recordFileContextSuccess(context.truncated);
       } catch (err) {
+        metrics.recordFileContextFailure();
         console.warn(`[review] Failed to fetch full-file context for ${fileName} — diff-only review:`, err);
         referenceFileContent = null;
+        verificationFileContent = null;
       }
     }
 
@@ -691,8 +687,8 @@ async function reviewSingleFile(
   let finalFindings = resolved.findings;
   let unverifiedCount = 0;
   let contradictedCount = 0;
-  if (referenceFileContent) {
-    const outcome = verifyFindings(resolved.findings, referenceFileContent, fileName);
+  if (verificationFileContent) {
+    const outcome = verifyFindings(resolved.findings, verificationFileContent, fileName);
     finalFindings = outcome.verified;
     unverifiedCount = outcome.unverifiedCount;
     contradictedCount = outcome.contradictedCount;

@@ -25,6 +25,14 @@ export interface ReviewBaselineSnapshot extends ReviewInputMeasurement {
   unverifiedFindings: number;
   contradictedFindings: number;
   reviewFileContextUsed: boolean;
+  /** Full-file context fetches attempted (flag on + budget room). */
+  reviewFileContextAttempts: number;
+  /** Fetches that returned content (truncation counted separately). */
+  reviewFileContextSuccesses: number;
+  /** Fetches that failed — review degraded to diff-only for that file. */
+  reviewFileContextFailures: number;
+  /** Successful fetches whose prompt slice hit the bounded cap. */
+  reviewFileContextTruncations: number;
   /** Number of per-file diffs truncated by the bounded-diff cap before reaching the model. */
   truncatedDiffs: number;
   /** Successful review-start focus calls whose validated result shaped the prompts. */
@@ -71,6 +79,10 @@ export class ReviewBaselineCollector {
   private unverifiedFindings = 0;
   private contradictedFindings = 0;
   private reviewFileContextUsed = false;
+  private reviewFileContextAttempts = 0;
+  private reviewFileContextSuccesses = 0;
+  private reviewFileContextFailures = 0;
+  private reviewFileContextTruncations = 0;
   private truncatedDiffs = 0;
   private reviewFocusCalls = 0;
   private rawScore: number | null = null;
@@ -128,6 +140,21 @@ export class ReviewBaselineCollector {
     this.reviewFileContextUsed = true;
   }
 
+  recordFileContextAttempt(): void {
+    this.reviewFileContextAttempts++;
+  }
+
+  /** Counters carry no source or prompt data — only outcomes. */
+  recordFileContextSuccess(truncated: boolean): void {
+    this.reviewFileContextUsed = true;
+    this.reviewFileContextSuccesses++;
+    if (truncated) this.reviewFileContextTruncations++;
+  }
+
+  recordFileContextFailure(): void {
+    this.reviewFileContextFailures++;
+  }
+
   recordTruncatedDiff(): void {
     this.truncatedDiffs++;
   }
@@ -159,6 +186,10 @@ export class ReviewBaselineCollector {
       unverifiedFindings: this.unverifiedFindings,
       contradictedFindings: this.contradictedFindings,
       reviewFileContextUsed: this.reviewFileContextUsed ? '1' : '0',
+      reviewFileContextAttempts: this.reviewFileContextAttempts,
+      reviewFileContextSuccesses: this.reviewFileContextSuccesses,
+      reviewFileContextFailures: this.reviewFileContextFailures,
+      reviewFileContextTruncations: this.reviewFileContextTruncations,
       truncatedDiffs: this.truncatedDiffs,
       reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
@@ -188,6 +219,10 @@ export class ReviewBaselineCollector {
       unverifiedFindings: this.unverifiedFindings,
       contradictedFindings: this.contradictedFindings,
       reviewFileContextUsed: this.reviewFileContextUsed,
+      reviewFileContextAttempts: this.reviewFileContextAttempts,
+      reviewFileContextSuccesses: this.reviewFileContextSuccesses,
+      reviewFileContextFailures: this.reviewFileContextFailures,
+      reviewFileContextTruncations: this.reviewFileContextTruncations,
       truncatedDiffs: this.truncatedDiffs,
       reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,

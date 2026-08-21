@@ -16,7 +16,7 @@ export interface FeatureFlags {
   deterministicAnalysis: boolean;
   incrementalReview: boolean;
   incrementalReviewShadow: boolean;
-  /** Fetch the full file at head SHA and inject it as verification context for the review prompt. */
+  /** Fetch the full file at head SHA and inject it as verification context for the review prompt. Default-on; REVIEW_FILE_CONTEXT_ENABLED=false is the kill switch. */
   reviewFileContext: boolean;
   /**
    * Inject a deterministic attention-focus block into review prompts: anchor
@@ -42,7 +42,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   deterministicAnalysis: false,
   incrementalReview: false,
   incrementalReviewShadow: true,
-  reviewFileContext: false,
+  reviewFileContext: true,
   attentionFocus: false,
   boundedRawDiffs: false,
   reviewStartFocus: false,
