@@ -172,6 +172,47 @@ describe('executeCommentResponseJob', () => {
     expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '@parakh this PR fixes above issue',
+    '@parakh fixed this',
+    '@parakh addressed the finding',
+    '@parakh resolved this issue',
+  ])('acknowledges a completed fix in the finding thread without LLM work: %s', async (commentBody) => {
+    mockResolveUserCreds.mockResolvedValue(null);
+    mocked.resolveReviewCommentRoot.mockResolvedValue(200);
+
+    await executeCommentResponseJob(payload({
+      commentBody,
+      commentType: 'pull_request_review_comment',
+      inReplyToCommentId: 150,
+    }), env);
+
+    expect(mocked.resolveReviewCommentRoot).toHaveBeenCalledWith('acme', 'app', 100, 150, 'token');
+    expect(mocked.replyToReviewComment).toHaveBeenCalledWith(
+      'acme', 'app', 7, 200, '👍 Got it. Thanks for addressing this finding.', 'token'
+    );
+    expect(classifyIntentMock).not.toHaveBeenCalled();
+    expect(incrMock).not.toHaveBeenCalled();
+    expect(expireMock).not.toHaveBeenCalled();
+    expect(mockResolveUserCreds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['@parakh will fix this', 'pull_request_review_comment', 150],
+    ['@parakh thanks', 'pull_request_review_comment', 150],
+    ['@parakh can you verify this fixes it?', 'pull_request_review_comment', 150],
+    ['@parakh fixed this', 'issue_comment', undefined],
+  ] as const)('leaves non-confirmations on the normal intent path: %s', async (commentBody, commentType, inReplyToCommentId) => {
+    classifyIntentMock.mockResolvedValue(analysis('GENERAL'));
+
+    await executeCommentResponseJob(payload({ commentBody, commentType, inReplyToCommentId }), env);
+
+    expect(classifyIntentMock).toHaveBeenCalled();
+    expect(incrMock).toHaveBeenCalled();
+    expect(mocked.replyToReviewComment).not.toHaveBeenCalled();
+    expect(mocked.postComment).not.toHaveBeenCalled();
+  });
+
   it('responds to any comment in all_comments mode (case-insensitive mention check)', async () => {
     classifyIntentMock.mockResolvedValue(analysis('GENERAL'));
 

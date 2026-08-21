@@ -25,7 +25,24 @@ const CORRECTION_REJECTED_REPLY =
 const CORRECTION_NO_STANDARD_REPLY =
   "I couldn't identify an actionable standard there — try a single imperative like \"use X for Y\" or \"stop flagging Z\". Rebuttals of individual findings are noted but not stored as rules.";
 
-// ─── Authorization Helpers ─────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+const FIX_CONFIRMATION_REPLY = '👍 Got it. Thanks for addressing this finding.';
+const COMPLETED_FIX = /\b(?:fixed|addressed|resolved)\b|\b(?:this|that|the)(?:\s+(?:pr|change|commit|patch|code))?\s+fixes\b|\bit\s+fixes\b/i;
+const QUESTION_PREFIX = /^\s*@parakh\b\s*(?:can|could|would|does|did|is|are|should|will|why|what|how)\b/i;
+
+function isFixConfirmation(
+  commentBody: string,
+  commentType: CommentJobPayload['commentType'],
+  inReplyToCommentId?: number
+): boolean {
+  return commentType === 'pull_request_review_comment'
+    && inReplyToCommentId !== undefined
+    && /@parakh\b/i.test(commentBody)
+    && !commentBody.includes('?')
+    && !QUESTION_PREFIX.test(commentBody)
+    && COMPLETED_FIX.test(commentBody);
+}
 
 type TrustLevel = 'admin' | 'write' | 'read' | 'none';
 
@@ -69,6 +86,24 @@ async function checkRateLimit(
   return { allowed: true, remaining: limit.max - current - 1 };
 }
 
+async function hasChatBudget(fullRepo: string, env: Env): Promise<boolean> {
+  try {
+    const budget = Number(env.CHAT_LLM_BUDGET_PER_HOUR) > 0 ? Number(env.CHAT_LLM_BUDGET_PER_HOUR) : 50;
+    const hourKey = `chat_budget:${fullRepo}:${Math.floor(Date.now() / 3_600_000)}`;
+    const usage = await createRedisIncr(env)(hourKey);
+    if (usage === 1) {
+      await createRedisExpire(env)(hourKey, 3600);
+    }
+    if (usage > budget) {
+      console.log(`[comment-response] Chat budget exceeded for ${fullRepo} (${usage}/${budget} this hour) — skipping.`);
+      return false;
+    }
+  } catch (err) {
+    console.warn(`[comment-response] Chat budget check failed — continuing without cap:`, err);
+  }
+  return true;
+}
+
 /**
  * Handle a comment-triggered job (REVIEW_REQUEST / CORRECTION / etc.).
  *
@@ -109,22 +144,10 @@ export async function executeCommentResponseJob(
     return;
   }
 
-  // Per-repo hourly cap on chat-triggered LLM spend (classify + reply + rule
-  // embedding etc). A Redis counter per rolling hour; fail-open if Redis is
-  // unavailable so a counter outage never blocks reviews.
-  try {
-    const budget = Number(env.CHAT_LLM_BUDGET_PER_HOUR) > 0 ? Number(env.CHAT_LLM_BUDGET_PER_HOUR) : 50;
-    const hourKey = `chat_budget:${fullRepo}:${Math.floor(Date.now() / 3_600_000)}`;
-    const usage = await createRedisIncr(env)(hourKey);
-    if (usage === 1) {
-      await createRedisExpire(env)(hourKey, 3600);
-    }
-    if (usage > budget) {
-      console.log(`[comment-response] Chat budget exceeded for ${fullRepo} (${usage}/${budget} this hour) — skipping.`);
-      return;
-    }
-  } catch (err) {
-    console.warn(`[comment-response] Chat budget check failed — continuing without cap:`, err);
+  const fixConfirmation = isFixConfirmation(commentBody, commentType, inReplyToCommentId);
+
+  if (!fixConfirmation && !(await hasChatBudget(fullRepo, env))) {
+    return;
   }
 
   // Get installation token
@@ -150,6 +173,11 @@ export async function executeCommentResponseJob(
       await postIssueComment(owner, repo, prNumber, safeBody, token);
     }
   };
+
+  if (fixConfirmation) {
+    await postReply(FIX_CONFIRMATION_REPLY);
+    return;
+  }
 
   // BYO-keys: comment-triggered LLM work bills against the keys of the user
   // who installed Parakh on the repo. No keys → skip (never shared-env keys).

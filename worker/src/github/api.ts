@@ -292,9 +292,9 @@ export async function getReviewComment(
   repo: string,
   commentId: number,
   token: string
-): Promise<{ id: number; in_reply_to_id: number | null }> {
+): Promise<{ id: number; in_reply_to_id?: number | null }> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/comments/${commentId}`;
-  return githubFetch<{ id: number; in_reply_to_id: number | null }>(url, token);
+  return githubFetch<{ id: number; in_reply_to_id?: number | null }>(url, token);
 }
 
 const MAX_REPLY_DEPTH = 3;
