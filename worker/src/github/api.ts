@@ -325,8 +325,12 @@ export async function resolveReviewCommentRoot(
   for (let depth = 0; depth < MAX_REPLY_DEPTH; depth += 1) {
     const parent = await getReviewComment(owner, repo, parentId, token);
     rootId = parentId;
-    if (parent.in_reply_to_id === null) return rootId;
-    parentId = parent.in_reply_to_id;
+    // GitHub OMITS `in_reply_to_id` on root comments (absent, not null), so a
+    // strict `=== null` check never fires and the chain walks into a fetch of
+    // /pulls/comments/undefined. Coerce absent → null.
+    const parentReplyTo = parent.in_reply_to_id ?? null;
+    if (parentReplyTo === null) return rootId;
+    parentId = parentReplyTo;
   }
   return rootId;
 }
