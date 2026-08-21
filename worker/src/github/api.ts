@@ -130,7 +130,11 @@ export async function getFileContent(
   const data = await githubFetch<{ content: string; encoding: string }>(url, token);
 
   if (data.encoding === 'base64') {
-    return atob(data.content.replace(/\n/g, ''));
+    // Decode via bytes + TextDecoder so multibyte UTF-8 survives; atob alone
+    // would mangle non-ASCII file content (emoji, CJK, accented identifiers).
+    const binary = atob(data.content.replace(/\n/g, ''));
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes);
   }
   return data.content;
 }

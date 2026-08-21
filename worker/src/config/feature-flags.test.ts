@@ -44,6 +44,11 @@ describe('getFeatureFlags', () => {
     });
   });
 
+  it('defaults reviewFileContext on and honors the explicit kill switch', () => {
+    expect(getFeatureFlags(env()).reviewFileContext).toBe(true);
+    expect(getFeatureFlags(env({ REVIEW_FILE_CONTEXT_ENABLED: 'false' })).reviewFileContext).toBe(false);
+  });
+
   it.each(['yes', 'no', '1', '0', 'enabled'])('fails closed for invalid value %j', (value) => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

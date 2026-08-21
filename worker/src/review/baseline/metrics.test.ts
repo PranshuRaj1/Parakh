@@ -91,6 +91,26 @@ describe('ReviewBaselineCollector', () => {
     expect(output).not.toContain('token');
   });
 
+  it('tracks file-context attempts, successes, failures, and truncations without source data', () => {
+    const collector = new ReviewBaselineCollector(
+      'review-1', 1, { ...DEFAULT_FEATURE_FLAGS }, () => 0
+    );
+    collector.recordFileContextAttempt();
+    collector.recordFileContextSuccess(false);
+    collector.recordFileContextAttempt();
+    collector.recordFileContextSuccess(true);
+    collector.recordFileContextAttempt();
+    collector.recordFileContextFailure();
+
+    expect(collector.snapshot('completed', 0)).toMatchObject({
+      reviewFileContextUsed: true,
+      reviewFileContextAttempts: 3,
+      reviewFileContextSuccesses: 2,
+      reviewFileContextFailures: 1,
+      reviewFileContextTruncations: 1,
+    });
+  });
+
   it('derives checkpoint count from delivery outcomes', () => {
     const collector = new ReviewBaselineCollector(
       'review-1', 1, { ...DEFAULT_FEATURE_FLAGS }, () => 0
