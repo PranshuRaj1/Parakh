@@ -292,9 +292,9 @@ export async function getReviewComment(
   repo: string,
   commentId: number,
   token: string
-): Promise<{ id: number; in_reply_to_id: number | null }> {
+): Promise<{ id: number; in_reply_to_id?: number | null }> {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/comments/${commentId}`;
-  return githubFetch<{ id: number; in_reply_to_id: number | null }>(url, token);
+  return githubFetch<{ id: number; in_reply_to_id?: number | null }>(url, token);
 }
 
 const MAX_REPLY_DEPTH = 3;
@@ -329,7 +329,7 @@ export async function resolveReviewCommentRoot(
   for (let depth = 0; depth < MAX_REPLY_DEPTH; depth += 1) {
     const parent = await getReviewComment(owner, repo, parentId, token);
     rootId = parentId;
-    if (parent.in_reply_to_id === null) return rootId;
+    if (parent.in_reply_to_id == null) return rootId;
     parentId = parent.in_reply_to_id;
   }
   return rootId;
