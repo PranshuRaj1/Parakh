@@ -115,6 +115,7 @@ const {
   generateEmbeddingMock,
   classifyPriorityMock,
   classifyRelationshipMock,
+  mockResolveUserCreds,
 } = vi.hoisted(() => ({
   classifyIntentMock: vi.fn(),
   draftReplyMock: vi.fn(),
@@ -122,6 +123,7 @@ const {
   generateEmbeddingMock: vi.fn(),
   classifyPriorityMock: vi.fn(),
   classifyRelationshipMock: vi.fn(),
+  mockResolveUserCreds: vi.fn(),
 }));
 
 vi.mock('../llm/factory.js', () => ({
@@ -135,6 +137,11 @@ vi.mock('../llm/factory.js', () => ({
       classifyRelationship: classifyRelationshipMock,
     },
   }),
+}));
+
+// BYO-keys gate: stub the installer lookup to an installed user WITH keys.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
 }));
 
 // ─── Imports (real orchestration code) ──────────────────────────────────────
@@ -306,6 +313,14 @@ beforeEach(() => {
     classifyIntentMock, draftReplyMock, reviewDiffMock,
     generateEmbeddingMock, classifyPriorityMock, classifyRelationshipMock,
   ]) fn.mockReset();
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   setupRedisMocks();
   setupLeaves();
   setupLLMMocks();

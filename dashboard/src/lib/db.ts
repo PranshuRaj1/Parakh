@@ -201,3 +201,33 @@ export async function getReviewReasoning(reviewId: string): Promise<ReviewReason
   `;
   return rows as unknown as ReviewReasoning[];
 }
+
+// ─── BYO-Key Usage Telemetry ─────────────────────────────────────────────────
+
+/**
+ * LLM call volume attributed to one user's own keys over the last `hours`:
+ * per-file review events joined through the installing user's repos. Both
+ * counts include attempts (a file event exists even for FAILED reviews).
+ */
+export async function getRecentFileReviewUsage(
+  login: string,
+  hours = 24
+): Promise<{ totalCalls: number; completedCalls: number }> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      COUNT(*)::int AS total_calls,
+      COUNT(*) FILTER (WHERE rfe.status = 'COMPLETED')::int AS completed_calls
+    FROM review_file_events rfe
+    JOIN reviews r ON r.id = rfe.review_id
+    JOIN provider_installations pi
+      ON pi.provider = 'github'
+     AND pi.owner = split_part(r.repo, '/', 1)
+     AND pi.installed_by = ${login}
+    WHERE rfe.started_at > now() - make_interval(hours => ${hours})
+  `;
+  return {
+    totalCalls: rows[0]?.total_calls ?? 0,
+    completedCalls: rows[0]?.completed_calls ?? 0,
+  };
+}

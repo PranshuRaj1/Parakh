@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { classifyRelationshipMock } = vi.hoisted(() => ({ classifyRelationshipMock: vi.fn() }));
+const { classifyRelationshipMock, mockResolveUserCreds } = vi.hoisted(() => ({
+  classifyRelationshipMock: vi.fn(),
+  mockResolveUserCreds: vi.fn(),
+}));
+
+// BYO-keys: the contradiction path resolves the installing user's keys before
+// building the client stack. Stubbed to an installed user WITH keys.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
+}));
 
 // Stub the LLM factory: only classifyRelationship drives the contradiction
 // paths under test. gemini/groq get full LLMProvider-shaped vi.fn()s so any
@@ -104,6 +113,14 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
 });
 
 describe('executeContradictionJob', () => {
@@ -114,6 +131,17 @@ describe('executeContradictionJob', () => {
     expect(mocked.findSimilarRules).toHaveBeenCalledWith(
       'acme/app', [1, 2, 3], 0.7, 5, env, 'new-rule'
     );
+    expect(mocked.updateRuleStatus).not.toHaveBeenCalled();
+    expect(mocked.insertRuleRelationship).not.toHaveBeenCalled();
+  });
+
+  it('skips the classification when the installing user has no keys (BYO-keys gate)', async () => {
+    mocked.findSimilarRules.mockResolvedValue([candidate('old-rule')]);
+    mockResolveUserCreds.mockResolvedValue(null);
+
+    await executeContradictionJob(payload(), env);
+
+    expect(classifyRelationshipMock).not.toHaveBeenCalled();
     expect(mocked.updateRuleStatus).not.toHaveBeenCalled();
     expect(mocked.insertRuleRelationship).not.toHaveBeenCalled();
   });

@@ -35,11 +35,18 @@ vi.mock('../redis.js', () => ({
   createRedisDel: vi.fn(),
 }));
 
+// BYO-keys gate runs at the top of the review job; stub the installer lookup
+// to an installed user WITH keys so the pipeline proceeds.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: vi.fn(),
+}));
+
 import { executeReviewJob } from './review.js';
 import { getCachedToken } from '../github/auth.js';
 import { fetchDiff, fetchDiffPinned } from '../github/api.js';
 import { dbFailStage, getReview } from '../db/reviews.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 
 const mocked = {
   getCachedToken: vi.mocked(getCachedToken),
@@ -51,6 +58,7 @@ const mocked = {
   createRedisSet: vi.mocked(createRedisSet),
   createRedisSetNX: vi.mocked(createRedisSetNX),
   createRedisDel: vi.mocked(createRedisDel),
+  resolveUserCreds: vi.mocked(resolveUserCreds),
 };
 
 const env = {
@@ -69,6 +77,14 @@ beforeEach(() => {
 
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.dbFailStage.mockResolvedValue(undefined);
+  mocked.resolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   mocked.getReview.mockResolvedValue({
     id: 'review-1',
     status: 'RUNNING',

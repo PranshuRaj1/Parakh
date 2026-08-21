@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 
-const { mockGenerateEmbedding, mockClassifyPriority } = vi.hoisted(() => ({
+const { mockGenerateEmbedding, mockClassifyPriority, mockResolveUserCreds } = vi.hoisted(() => ({
   mockGenerateEmbedding: vi.fn(),
   mockClassifyPriority: vi.fn(),
+  mockResolveUserCreds: vi.fn(),
+}));
+
+// BYO-keys: the correction path resolves the installing user's keys before
+// building the client stack. Stubbed to an installed user WITH keys so rule
+// creation proceeds; the no-keys skip is covered by its own unit test.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
 }));
 
 // Stub the LLM factory so the correction path can run without a real model:
@@ -62,6 +70,14 @@ beforeEach(() => {
   mocked.isRepoCollaborator.mockReset().mockResolvedValue(true);
   mockGenerateEmbedding.mockReset().mockResolvedValue([0.1, 0.2]);
   mockClassifyPriority.mockReset().mockResolvedValue('normal');
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   vi.mocked(env.WATCHDOG_QUEUE.send).mockReset().mockResolvedValue(undefined);
 });
 
@@ -217,6 +233,13 @@ it('keeps the extracted rule body verbatim (no @parakh stripping — the LLM ext
       expect.objectContaining({ kind: 'standard' }),
       env
     );
+  });
+
+  it('skips rule creation when the installing user has no keys (BYO-keys gate)', async () => {
+    mockResolveUserCreds.mockResolvedValue(null);
+
+    await expect(saveCorrectionAsRule(makeInput(), env, TOKEN)).resolves.toBeNull();
+    expect(mocked.insertRule).not.toHaveBeenCalled();
   });
 });
 

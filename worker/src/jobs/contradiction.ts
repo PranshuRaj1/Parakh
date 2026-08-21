@@ -20,6 +20,7 @@ import { CONTRADICTION_SIMILARITY_THRESHOLD, CONTRADICTION_MAX_CANDIDATES } from
 import { getCachedToken } from '../github/auth.js';
 import { postComment } from '../github/api.js';
 import { createLLMClients } from '../llm/factory.js';
+import { resolveUserCreds } from '../llm/user-creds.js';
 import {
   findSimilarRules,
   updateRuleStatus,
@@ -68,8 +69,16 @@ export async function executeContradictionJob(
 
   console.log(`[contradiction] Found ${candidates.length} candidate(s) for ${ruleId}`);
 
+  // BYO-keys: classification bills against the installing user's keys. No
+  // keys → skip the check (the rule stays ACTIVE — this is a safety net).
+  const userCreds = await resolveUserCreds(owner, env);
+  if (!userCreds) {
+    console.log(`[contradiction] Skipped check for ${ruleId} in ${fullRepo}: no user LLM keys configured (installer of ${owner}).`);
+    return;
+  }
+
   // 2. Classify relationship with each candidate
-  const { llm } = createLLMClients(env);
+  const { llm } = createLLMClients(env, undefined, userCreds);
 
   // Get token for posting comments (only needed if we find something).
   // Uses the payload installationId (real for comment-taught rules) so

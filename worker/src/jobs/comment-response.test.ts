@@ -11,7 +11,7 @@ function analysis(
   return { intent, rules, ignored };
 }
 
-const { classifyIntentMock, draftReplyMock, geminiMock, groqMock, incrMock, expireMock } = vi.hoisted(() => {
+const { classifyIntentMock, draftReplyMock, geminiMock, groqMock, incrMock, expireMock, mockResolveUserCreds } = vi.hoisted(() => {
   const providerShape = () => ({
     reviewDiff: vi.fn(),
     classifyIntent: vi.fn(),
@@ -27,6 +27,7 @@ const { classifyIntentMock, draftReplyMock, geminiMock, groqMock, incrMock, expi
     groqMock: providerShape(),
     incrMock: vi.fn(),
     expireMock: vi.fn(),
+    mockResolveUserCreds: vi.fn(),
   };
 });
 
@@ -71,6 +72,12 @@ vi.mock('./correction.js', () => ({
   saveCorrectionAsRule: vi.fn(),
   CorrectionRejectedError: class extends Error {},
   isInstructionRule: vi.fn((body: string) => body.toLowerCase().includes('stop flagging') || body.toLowerCase().includes('never flag')),
+}));
+
+// BYO-keys: comment-triggered LLM work resolves the installing user's keys
+// before building the client stack. Stubbed to an installed user WITH keys.
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
 }));
 
 import { executeCommentResponseJob } from './comment-response.js';
@@ -126,6 +133,14 @@ beforeEach(() => {
   draftReplyMock.mockReset();
   incrMock.mockReset().mockResolvedValue(1);
   expireMock.mockReset();
+  mockResolveUserCreds.mockReset().mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   for (const fn of Object.values(mocked)) fn.mockReset();
   mocked.getCachedToken.mockResolvedValue('token');
   mocked.triggerReview.mockResolvedValue(true);
@@ -144,6 +159,17 @@ describe('executeCommentResponseJob', () => {
     expect(classifyIntentMock).not.toHaveBeenCalled();
     expect(mocked.postComment).not.toHaveBeenCalled();
     expect(mocked.triggerReview).not.toHaveBeenCalled();
+  });
+
+  it('skips all LLM work when the installing user has no keys (BYO-keys gate)', async () => {
+    mockResolveUserCreds.mockResolvedValue(null);
+
+    await executeCommentResponseJob(payload(), env);
+
+    expect(classifyIntentMock).not.toHaveBeenCalled();
+    expect(mocked.postComment).not.toHaveBeenCalled();
+    expect(mocked.triggerReview).not.toHaveBeenCalled();
+    expect(mocked.saveCorrectionAsRule).not.toHaveBeenCalled();
   });
 
   it('responds to any comment in all_comments mode (case-insensitive mention check)', async () => {

@@ -99,6 +99,26 @@ export async function listInstallations(env: EnvWithDB, installedBy?: string): P
   return (rows as unknown as InstallationRow[]).map(rowToInstallation);
 }
 
+/** Resolve a single installation by provider+owner (e.g. the review billing owner). */
+export async function getInstallationByOwner(
+  provider: string,
+  owner: string,
+  env: EnvWithDB
+): Promise<ProviderInstallation | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await withDbRetry(
+    () => sql`
+      SELECT * FROM provider_installations
+      WHERE provider = ${provider} AND owner = ${owner}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    DB_RETRY_OPTS
+  );
+  const row = rows[0] as unknown as InstallationRow | undefined;
+  return row ? rowToInstallation(row) : null;
+}
+
 /** Mark an installation removed (app uninstalled, or user disconnects). */
 export async function markInstallationRemoved(
   provider: string,
