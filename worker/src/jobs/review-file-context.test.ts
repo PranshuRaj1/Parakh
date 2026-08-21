@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 import type { ReviewResult } from '../gemini/client.js';
 
+const { resolveUserCredsMock } = vi.hoisted(() => ({ resolveUserCredsMock: vi.fn() }));
+
 vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));
+vi.mock('../llm/user-creds.js', () => ({ resolveUserCreds: resolveUserCredsMock }));
 
 vi.mock('../github/api.js', () => ({
   fetchDiff: vi.fn(),
@@ -149,6 +152,14 @@ beforeEach(() => {
   nextReviewResult = { genericFindings: [], ruleFindings: [], thinking: null };
 
   mocked.getCachedToken.mockResolvedValue('token');
+  resolveUserCredsMock.mockResolvedValue({
+    githubLogin: 'installer-user',
+    geminiKeys: ['fake-gemini-key'],
+    groqKeys: [],
+    cfaiAccountId: null,
+    cfaiToken: null,
+    openrouterKey: null,
+  });
   mocked.getActiveRules.mockResolvedValue([]);
   mocked.getReview.mockResolvedValue({
     id: 'review-1',
