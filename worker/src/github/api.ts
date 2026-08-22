@@ -221,9 +221,8 @@ export async function postCommentOnce(
   marker: string,
   token: string
 ): Promise<{ id: number }> {
-  const comments = await listIssueComments(owner, repo, prNumber, token);
-  const existing = comments.find((comment) => comment.body?.includes(marker));
-  if (existing) return { id: existing.id };
+  const existing = await findIssueCommentByMarker(owner, repo, prNumber, marker, token);
+  if (existing) return existing;
   return postComment(owner, repo, prNumber, `${body}\n\n${marker}`, token);
 }
 
@@ -246,21 +245,24 @@ export async function updateIssueComment(
 }
 
 /**
- * List issue comments on a PR (newest first), paginating through all pages
- * so marker searches can never miss an older comment on chatty PRs.
+ * Search issue comments for one carrying a stable marker, paginating
+ * newest-first and stopping at the first match — the common case (the marked
+ * comment was posted recently) costs exactly one request even on PRs with
+ * hundreds of comments.
  */
-export async function listIssueComments(
+export async function findIssueCommentByMarker(
   owner: string,
   repo: string,
   prNumber: number,
+  marker: string,
   token: string
-): Promise<Array<{ id: number; body: string | null }>> {
-  const comments: Array<{ id: number; body: string | null }> = [];
+): Promise<{ id: number } | null> {
   for (let page = 1; ; page++) {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}&sort=created&direction=desc`;
     const batch = await githubFetch<Array<{ id: number; body: string | null }>>(url, token);
-    comments.push(...batch);
-    if (batch.length < 100) return comments;
+    const match = batch.find((comment) => comment.body?.includes(marker));
+    if (match) return { id: match.id };
+    if (batch.length < 100) return null;
   }
 }
 

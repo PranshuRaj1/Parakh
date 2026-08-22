@@ -8,7 +8,7 @@
  */
 
 import type { FileAnalysis, Severity } from '@parakh/shared';
-import { listIssueComments, postComment, updateIssueComment } from '../github/api.js';
+import { findIssueCommentByMarker, postComment, updateIssueComment } from '../github/api.js';
 import type { Env } from '../index.js';
 import { getLatestOverviewCommentId, setReviewOverviewCommentId } from '../db/reviews.js';
 
@@ -157,8 +157,7 @@ export async function upsertOverviewComment(
   }
 
   try {
-    const comments = await listIssueComments(owner, repo, prNumber, token);
-    const existing = comments.find((comment) => comment.body?.includes(OVERVIEW_MARKER));
+    const existing = await findIssueCommentByMarker(owner, repo, prNumber, OVERVIEW_MARKER, token);
     if (existing) {
       await updateIssueComment(owner, repo, existing.id, marked, token);
       await setReviewOverviewCommentId(reviewId, existing.id, env);

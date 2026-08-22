@@ -11,7 +11,7 @@ import {
 } from './overview.js';
 
 vi.mock('../github/api.js', () => ({
-  listIssueComments: vi.fn(),
+  findIssueCommentByMarker: vi.fn(),
   postComment: vi.fn(),
   updateIssueComment: vi.fn(),
 }));
@@ -22,7 +22,7 @@ vi.mock('../db/reviews.js', () => ({
 }));
 
 import {
-  listIssueComments,
+  findIssueCommentByMarker,
   postComment,
   updateIssueComment,
 } from '../github/api.js';
@@ -32,7 +32,7 @@ import {
 } from '../db/reviews.js';
 
 const mocked = {
-  listIssueComments: vi.mocked(listIssueComments),
+  findIssueCommentByMarker: vi.mocked(findIssueCommentByMarker),
   postComment: vi.mocked(postComment),
   updateIssueComment: vi.mocked(updateIssueComment),
   getLatestOverviewCommentId: vi.mocked(getLatestOverviewCommentId),
@@ -170,7 +170,7 @@ describe('upsertOverviewComment lifecycle', () => {
 
   it('recovers via the stable marker when no stored ID exists', async () => {
     mocked.getLatestOverviewCommentId.mockResolvedValue(null);
-    mocked.listIssueComments.mockResolvedValue([{ id: 77, body: `old\n\n${OVERVIEW_MARKER}` }]);
+    mocked.findIssueCommentByMarker.mockResolvedValue({ id: 77 });
     await upsertOverviewComment('acme', 'app', 7, 'review-1', 'body', 'token', env);
     expect(mocked.updateIssueComment).toHaveBeenCalledWith('acme', 'app', 77, expect.stringContaining(OVERVIEW_MARKER), 'token');
     expect(mocked.setReviewOverviewCommentId).toHaveBeenCalledWith('review-1', 77, env);
@@ -178,7 +178,7 @@ describe('upsertOverviewComment lifecycle', () => {
 
   it('creates one comment when none exists yet', async () => {
     mocked.getLatestOverviewCommentId.mockResolvedValue(null);
-    mocked.listIssueComments.mockResolvedValue([]);
+    mocked.findIssueCommentByMarker.mockResolvedValue(null);
     await upsertOverviewComment('acme', 'app', 7, 'review-1', 'body', 'token', env);
     expect(mocked.postComment).toHaveBeenCalledWith('acme', 'app', 7, expect.stringContaining(OVERVIEW_MARKER), 'token');
     expect(mocked.setReviewOverviewCommentId).toHaveBeenCalledWith('review-1', 99, env);
@@ -189,7 +189,7 @@ describe('upsertOverviewComment lifecycle', () => {
     mocked.updateIssueComment
       .mockRejectedValueOnce(new Error('GitHub API error (404)'))
       .mockResolvedValueOnce(undefined);
-    mocked.listIssueComments.mockResolvedValue([]);
+    mocked.findIssueCommentByMarker.mockResolvedValue(null);
     await upsertOverviewComment('acme', 'app', 7, 'review-1', 'body', 'token', env);
     expect(mocked.postComment).toHaveBeenCalledTimes(1);
     expect(mocked.setReviewOverviewCommentId).toHaveBeenLastCalledWith('review-1', 99, env);
