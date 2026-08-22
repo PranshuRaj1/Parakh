@@ -32,6 +32,25 @@ export type RulePriority = 'high' | 'normal';
  */
 export type RuleKind = 'standard' | 'instruction';
 
+/** Repo-owned markdown file conventions are parsed from. Checked in precedence order. */
+export type ConventionSourceFile = 'AGENTS.md' | 'CLAUDE.md' | '.parakh/rules.md';
+
+/**
+ * A convention parsed from a repo-owned markdown rules file. Never persisted
+ * to the rules table — repo humans own the markdown; conventions are a
+ * per-review overlay that learned corrections (DB rules) always outrank.
+ */
+export interface ConventionRule {
+  /** Stable id: `conv:<source-file-slug>:<ordinal>` — deterministic per file content. */
+  id: string;
+  body: string;
+  priority: RulePriority;
+  kind: RuleKind;
+  /** Same shape as Rule.scope — `{ include: [glob] }`; empty = applies to every file. */
+  scope: Record<string, unknown>;
+  sourceFile: ConventionSourceFile;
+}
+
 /** Finding severity taxonomy. Gemini classifies generic findings; code assigns rule-violation severity. */
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
