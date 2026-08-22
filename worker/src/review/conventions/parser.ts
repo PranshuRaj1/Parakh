@@ -24,7 +24,7 @@ const SOURCE_SLUGS: Record<ConventionSourceFile, string> = {
 };
 
 const BULLET = /^\s*(?:[-*+]|\d+\.)\s+(?:\[[ xX]\]\s+)?(.*)$/;
-const HEADING = /^#{1,6}\s+(.*)$/;
+const HEADING = /^ {0,3}#{1,6}\s+(.*)$/;
 const MIN_BODY_LENGTH = 4;
 
 /**
@@ -56,10 +56,11 @@ export function parseConventionRules(
   const rules: ConventionRule[] = [];
   let sectionTitle = '';
   let paragraph: string[] = [];
+  let lastRuleWasBullet = false;
 
-  const push = (text: string): void => {
+  const push = (text: string): boolean => {
     const cleaned = text.replace(/\s+/g, ' ').trim();
-    if (cleaned.length < MIN_BODY_LENGTH) return;
+    if (cleaned.length < MIN_BODY_LENGTH) return false;
     const fullBody = sectionTitle ? `${sectionTitle}: ${cleaned}` : cleaned;
     rules.push({
       id: `conv:${SOURCE_SLUGS[sourceFile]}:${rules.length + 1}`,
@@ -69,6 +70,15 @@ export function parseConventionRules(
       scope,
       sourceFile,
     });
+    return true;
+  };
+
+  /** An indented line directly under a bullet continues that bullet's rule. */
+  const appendToLastBullet = (text: string): void => {
+    const last = rules[rules.length - 1];
+    if (!last) return;
+    last.body = `${last.body} ${text}`;
+    last.kind = isInstructionRule(last.body) ? 'instruction' : 'standard';
   };
 
   const flushParagraph = (): void => {
@@ -90,20 +100,30 @@ export function parseConventionRules(
     if (heading) {
       flushParagraph();
       sectionTitle = heading[1].replace(/\s+/g, ' ').trim();
+      lastRuleWasBullet = false;
       continue;
     }
 
     const bullet = BULLET.exec(line);
     if (bullet) {
       flushParagraph();
-      push(bullet[1]);
+      lastRuleWasBullet = push(bullet[1]);
       continue;
     }
 
-    // Blank lines end a paragraph; anything else accumulates prose that is
-    // flushed as one rule when a heading, bullet, fence, or EOF interrupts it.
-    if (line.trim() === '') flushParagraph();
-    else paragraph.push(line.trim());
+    // Blank lines end a paragraph and a bullet item; anything else accumulates
+    // prose that is flushed as one rule when a heading, bullet, fence, or EOF
+    // interrupts it. An indented line right after a bullet is that bullet's
+    // continuation (CommonMark list-item semantics), never a new rule.
+    if (line.trim() === '') {
+      flushParagraph();
+      lastRuleWasBullet = false;
+    } else if (lastRuleWasBullet && /^\s/.test(line)) {
+      appendToLastBullet(line.trim());
+    } else {
+      paragraph.push(line.trim());
+      lastRuleWasBullet = false;
+    }
   }
   flushParagraph();
 
@@ -127,13 +147,16 @@ function stripGeneratedBlocks(markdown: string): string {
 }
 
 function splitFrontMatter(markdown: string): { meta: Record<string, string>; body: string } {
-  const match = FRONT_MATTER.exec(markdown);
-  if (!match) return { meta: {}, body: markdown };
+  // stripGeneratedBlocks can leave leading blank lines when a generated block
+  // sits at the top of the file; front matter is still front matter after them.
+  const content = markdown.replace(/^\s+/, '');
+  const match = FRONT_MATTER.exec(content);
+  if (!match) return { meta: {}, body: content };
 
   const meta: Record<string, string> = {};
   for (const line of match[1].split(/\r?\n/)) {
     const separator = line.indexOf(':');
     if (separator > 0) meta[line.slice(0, separator).trim().toLowerCase()] = line.slice(separator + 1).trim();
   }
-  return { meta, body: markdown.slice(match[0].length) };
+  return { meta, body: content.slice(match[0].length) };
 }

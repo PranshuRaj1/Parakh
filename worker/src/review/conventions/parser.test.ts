@@ -80,6 +80,51 @@ describe('parseConventionRules', () => {
     expect(bodies(parseConventionRules('AGENTS.md', markdown))).toEqual(['real rule', 'another rule']);
   });
 
+  it('joins indented continuation lines into the preceding bullet rule', () => {
+    const markdown = [
+      '- Use pnpm db:push',
+      '  for all schema changes',
+      '- second standalone rule',
+    ].join('\n');
+
+    expect(bodies(parseConventionRules('AGENTS.md', markdown))).toEqual([
+      'Use pnpm db:push for all schema changes',
+      'second standalone rule',
+    ]);
+    expect(parseConventionRules('AGENTS.md', markdown)).toHaveLength(2);
+  });
+
+  it('does not attach continuation lines to a rule from before a blank line or heading', () => {
+    const markdown = ['- first rule', '', 'standalone prose sentence here'].join('\n');
+    expect(bodies(parseConventionRules('AGENTS.md', markdown))).toEqual([
+      'first rule',
+      'standalone prose sentence here',
+    ]);
+  });
+
+  it('recognizes headings indented by up to three spaces per CommonMark', () => {
+    const markdown = [' ##  Setup steps', '', '- run the setup script'].join('\n');
+    expect(bodies(parseConventionRules('AGENTS.md', markdown))).toEqual([
+      'Setup steps: run the setup script',
+    ]);
+  });
+
+  it('still finds front matter after leading whitespace left by a stripped generated block', () => {
+    const markdown = [
+      '<!-- BEGIN:nextjs-agent-rules -->',
+      'machine text',
+      '<!-- END:nextjs-agent-rules -->',
+      '---',
+      'priority: high',
+      '---',
+      '',
+      '- scoped high-priority rule',
+    ].join('\n');
+
+    const [rule] = parseConventionRules('AGENTS.md', markdown);
+    expect(rule.priority).toBe('high');
+  });
+
   it('ignores checkbox state — both checked and unchecked items are conventions', () => {
     const rules = parseConventionRules('.parakh/rules.md', '- [x] always use zod\n- [ ] skip any-type imports');
     expect(bodies(rules)).toEqual(['always use zod', 'skip any-type imports']);
