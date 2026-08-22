@@ -88,6 +88,10 @@ export const reviewResponseSchema = {
         required: ['file', 'line', 'body', 'rule_id'],
       },
     },
+    overview: {
+      type: 'STRING' as SchemaType,
+      description: 'One plain-text sentence describing what changed in this file. No recommendations or review findings.',
+    },
   },
   required: ['genericFindings', 'ruleFindings'],
 };

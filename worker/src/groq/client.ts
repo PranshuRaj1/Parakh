@@ -255,10 +255,12 @@ export class GroqClient implements LLMProvider {
       const parsed = this.parseJson<{
         genericFindings?: ReviewResult['genericFindings'];
         ruleFindings?: ReviewResult['ruleFindings'];
+        overview?: string | null;
       }>(raw);
       return {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
+        overview: typeof parsed.overview === 'string' ? parsed.overview : null,
         // Groq has no thinking parts — reasoning capture is Gemini-only.
         thinking: null,
       };
@@ -283,6 +285,7 @@ export class GroqClient implements LLMProvider {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
         priorFindingResolutions: parsed.priorFindingResolutions ?? null,
+        overview: typeof parsed.overview === 'string' ? parsed.overview : null,
         thinking: null,
       };
     });

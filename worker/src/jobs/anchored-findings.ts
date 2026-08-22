@@ -19,6 +19,7 @@
 
 import { MAX_FINDINGS_AS_COMMENTS } from '@parakh/shared';
 import { postReviewComment, listReviewComments } from '../github/api.js';
+import { formatPriority } from './overview.js';
 import { createRedisSet } from '../redis.js';
 import type { Env } from '../index.js';
 import type { LedgerFinding } from '../review/incremental/ledger.js';
@@ -86,7 +87,8 @@ export async function postAnchoredFindings(
         return null;
       }
       const comment = await postReviewComment(
-        owner, repo, prNumber, headSha, finding.file, finding.line, `${finding.body}\n\n${marker}`, token
+        owner, repo, prNumber, headSha, finding.file, finding.line,
+        `${formatPriority(finding.severity)} ${finding.body}\n\n${marker}`, token
       );
       await redisSet(
         findingMappingKey(comment.id),

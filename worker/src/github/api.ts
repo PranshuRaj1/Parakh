@@ -104,7 +104,8 @@ export async function fetchDiffPinned(
 }
 
 /**
- * Get the list of files changed in a pull request.
+ * Get every file changed in a pull request, paginating past the first 100.
+ * Returns files in GitHub's order.
  */
 export async function getPRFiles(
   owner: string,
@@ -112,8 +113,13 @@ export async function getPRFiles(
   prNumber: number,
   token: string
 ): Promise<PRFile[]> {
-  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`;
-  return githubFetch<PRFile[]>(url, token);
+  const files: PRFile[] = [];
+  for (let page = 1; ; page++) {
+    const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`;
+    const batch = await githubFetch<PRFile[]>(url, token);
+    files.push(...batch);
+    if (batch.length < 100) return files;
+  }
 }
 
 /**
@@ -215,11 +221,38 @@ export async function postCommentOnce(
   marker: string,
   token: string
 ): Promise<{ id: number }> {
-  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100&sort=created&direction=desc`;
-  const comments = await githubFetch<Array<{ id: number; body: string | null }>>(url, token);
+  const comments = await listIssueComments(owner, repo, prNumber, token);
   const existing = comments.find((comment) => comment.body?.includes(marker));
   if (existing) return { id: existing.id };
   return postComment(owner, repo, prNumber, `${body}\n\n${marker}`, token);
+}
+
+/**
+ * Update the body of an existing issue comment in place.
+ */
+export async function updateIssueComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string,
+  token: string
+): Promise<void> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/comments/${commentId}`;
+  await githubFetch(url, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+}
+
+export async function listIssueComments(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string
+): Promise<Array<{ id: number; body: string | null }>> {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100&sort=created&direction=desc`;
+  return githubFetch<Array<{ id: number; body: string | null }>>(url, token);
 }
 
 /**

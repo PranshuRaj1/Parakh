@@ -289,6 +289,43 @@ export async function getLatestReviewByPR(
 }
 
 /**
+ * Persist the ID of the persistent PR overview comment this review updated,
+ * so later reviews can find and update the same GitHub comment in place.
+ */
+export async function setReviewOverviewCommentId(
+  id: string,
+  commentId: number,
+  env: EnvWithDB
+): Promise<void> {
+  const sql = getDb(env.DATABASE_URL);
+  await sql`
+    UPDATE reviews
+    SET overview_comment_id = ${commentId}
+    WHERE id = ${id}
+  `;
+}
+
+/**
+ * Latest known overview-comment ID for a PR (null when no completed review
+ * has posted one yet).
+ */
+export async function getLatestOverviewCommentId(
+  repo: string,
+  prNumber: number,
+  env: EnvWithDB
+): Promise<number | null> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT overview_comment_id FROM reviews
+    WHERE repo = ${repo} AND pr_number = ${prNumber}
+      AND overview_comment_id IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0]?.overview_comment_id ?? null;
+}
+
+/**
  * Get recent reviews for a repo (for dashboard display).
  */
 export async function getRecentReviews(

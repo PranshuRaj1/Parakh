@@ -105,6 +105,10 @@ Return your findings in two separate arrays:
 
 If the code looks clean, return empty arrays for both.
 
+3. **overview**: One plain-text sentence (max 200 characters) describing what this diff
+   changes in the file. State what changed only — no recommendations, no review findings.
+   Example: "Updates token validation and refresh handling."
+
 ## Diff to Review
 
 \`\`\`diff

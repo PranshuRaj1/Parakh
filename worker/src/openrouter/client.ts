@@ -177,13 +177,11 @@ export class OpenRouterClient implements LLMProvider {
     const raw = await this.chat(buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus), {
       json: true,
     }, context);
-    const parsed = parseJson<{
-      genericFindings?: ReviewResult['genericFindings'];
-      ruleFindings?: ReviewResult['ruleFindings'];
-    }>(raw);
+    const parsed = parseJson<Partial<ReviewResult>>(raw);
     return {
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
+      overview: typeof parsed.overview === 'string' ? parsed.overview : null,
       thinking: null,
     };
   }
@@ -207,6 +205,7 @@ export class OpenRouterClient implements LLMProvider {
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
       priorFindingResolutions: parsed.priorFindingResolutions ?? null,
+      overview: typeof parsed.overview === 'string' ? parsed.overview : null,
       thinking: null,
     };
   }
