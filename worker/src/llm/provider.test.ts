@@ -231,6 +231,15 @@ describe('LLMClient chain routing', () => {
     expect(Date.now() - started).toBeLessThan(250);
   });
 
+  it('rejects instead of hanging when the caller signal is already aborted', async () => {
+    const hanging = makeProvider('gemini', 'g', 'ok');
+    hanging.reviewDiff = async () => new Promise<never>(() => undefined);
+    const client = new LLMClient([hanging], { providerMs: 40, operationMs: 120 });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(client.reviewDiff('f.ts', 'd', [], controller.signal)).rejects.toThrow();
+  });
+
   it('single failing provider surfaces its error as the chain failure', async () => {
     const boom = makeProvider('gemini', 'g', 'boom');
     const client = new LLMClient([boom]);

@@ -120,7 +120,12 @@ export class LLMClient {
         try {
           const result = await Promise.race([
             invoke(provider, { signal: abort.signal, timeoutMs: sliceMs, operation }),
-            new Promise<never>((_, reject) => abort.signal.addEventListener('abort', () => reject(abort.signal.reason), { once: true })),
+            new Promise<never>((_, reject) => {
+              // An already-aborted signal fires no 'abort' event, so reject
+              // directly or a pre-expired deadline hangs the race forever.
+              if (abort.signal.aborted) reject(abort.signal.reason);
+              else abort.signal.addEventListener('abort', () => reject(abort.signal.reason), { once: true });
+            }),
           ]);
           this.served = provider;
           this.logLatency(provider, operation, 'success', startedAt, sliceMs, null);
