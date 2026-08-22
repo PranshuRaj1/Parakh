@@ -179,6 +179,27 @@ describe('suppressFindings', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('drops cross-file compile-error claims (PR #42 false CRITICAL family)', () => {
+    const result = suppressFindings([
+      finding('CRITICAL', {
+        file: 'worker/src/cfai/client.ts',
+        line: 185,
+        body: "reviewDiff is typed to return ReviewResult, but the returned object now includes an 'overview' property that is not defined in ReviewResult, causing a TypeScript type error and breaking compilation.",
+      }),
+      finding('HIGH', { body: 'this change is breaking compilation of the worker bundle' }),
+    ], []);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress findings that merely mention types without claiming breakage', () => {
+    const result = suppressFindings([
+      finding('MEDIUM', { body: 'the parsed payload should be validated before being typed as ReviewResult' }),
+    ], []);
+
+    expect(result).toHaveLength(1);
+  });
+
   it('suppresses rule-sourced findings identically to generic ones', () => {
     const ruleViolation = finding('MEDIUM', {
       body: 'this value is used without validation',

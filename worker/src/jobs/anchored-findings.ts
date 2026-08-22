@@ -18,7 +18,7 @@
  */
 
 import { MAX_FINDINGS_AS_COMMENTS } from '@parakh/shared';
-import { postReviewComment, listReviewComments } from '../github/api.js';
+import { getPRFiles, postReviewComment, listReviewComments } from '../github/api.js';
 import { formatPriority } from './overview.js';
 import { createRedisSet } from '../redis.js';
 import type { Env } from '../index.js';
@@ -40,6 +40,25 @@ export function findingMappingKey(commentId: number): string {
  */
 export function findingAnchorMarker(reviewId: string, finding: LedgerFinding): string {
   return `<!-- parakh-anchor:${reviewId}:${finding.file}:${finding.line}:${finding.finding_id} -->`;
+}
+
+/**
+ * New-side line numbers covered by a unified-diff patch (added + context).
+ * Deletion lines don't advance the new side; `\` no-newline markers are skipped.
+ */
+export function parseNewSideLines(patch: string): number[] {
+  const lines: number[] = [];
+  let current = 0;
+  for (const raw of patch.split('\n')) {
+    const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      current = parseInt(hunk[1], 10);
+      continue;
+    }
+    if (current === 0) continue;
+    if (raw.startsWith('+') || raw.startsWith(' ')) lines.push(current++);
+  }
+  return lines;
 }
 
 /**
@@ -78,6 +97,29 @@ export async function postAnchoredFindings(
     console.warn('[review] Failed to list existing review comments for anchored-finding dedupe:', err);
   }
 
+  // GitHub rejects anchors on lines outside any diff hunk (422). Fetch each
+  // file's patch so a rejected anchor can retry at the nearest in-hunk line —
+  // otherwise an off-by-context model line silently loses a high-severity
+  // finding. Best-effort: a failed listing just disables the fallback.
+  let anchorLines = new Map<string, number[]>();
+  try {
+    const prFiles = await getPRFiles(owner, repo, prNumber, token);
+    anchorLines = new Map(
+      prFiles
+        .filter((file) => file.patch)
+        .map((file) => [file.filename, parseNewSideLines(file.patch!)])
+    );
+  } catch (err) {
+    console.warn('[review] Failed to fetch PR files for anchor-line fallback:', err);
+  }
+  const nearestAnchorLine = (file: string, line: number): number | null => {
+    const candidates = anchorLines.get(file);
+    if (!candidates || candidates.length === 0) return null;
+    return candidates.reduce((best, n) =>
+      Math.abs(n - line) < Math.abs(best - line) ? n : best
+    );
+  };
+
   const redisSet = createRedisSet(env);
   const results = await Promise.allSettled(
     newFindings.map(async (finding) => {
@@ -86,16 +128,30 @@ export async function postAnchoredFindings(
         console.log(`[review] Skipping already-posted anchored finding (review ${reviewId}): ${finding.file}:${finding.line}`);
         return null;
       }
-      const comment = await postReviewComment(
-        owner, repo, prNumber, headSha, finding.file, finding.line,
-        `${formatPriority(finding.severity)} ${finding.body}\n\n${marker}`, token
-      );
+      const body = `${formatPriority(finding.severity)} ${finding.body}\n\n${marker}`;
+      let anchoredAt = finding.line;
+      let comment;
+      try {
+        comment = await postReviewComment(
+          owner, repo, prNumber, headSha, finding.file, anchoredAt, body, token
+        );
+      } catch (err) {
+        const fallbackLine = nearestAnchorLine(finding.file, finding.line);
+        if (fallbackLine === null || fallbackLine === finding.line) throw err;
+        console.warn(
+          `[review] Anchor at ${finding.file}:${finding.line} is outside the diff — retrying at nearest hunk line ${fallbackLine}`
+        );
+        anchoredAt = fallbackLine;
+        comment = await postReviewComment(
+          owner, repo, prNumber, headSha, finding.file, fallbackLine, body, token
+        );
+      }
       await redisSet(
         findingMappingKey(comment.id),
         JSON.stringify({
           reviewId,
           file: finding.file,
-          line: finding.line,
+          line: anchoredAt,
           body: finding.body,
         }),
         { ex: FINDING_MAPPING_TTL_SECONDS }

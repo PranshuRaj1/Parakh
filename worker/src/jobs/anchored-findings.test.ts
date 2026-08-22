@@ -6,18 +6,20 @@ vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postReviewComment: vi.fn(),
   listReviewComments: vi.fn(),
+  getPRFiles: vi.fn(),
 }));
 vi.mock('../redis.js', () => ({
   createRedisSet: vi.fn(),
 }));
 
-import { postAnchoredFindings, findingMappingKey, findingAnchorMarker } from './anchored-findings.js';
-import { postReviewComment, listReviewComments } from '../github/api.js';
+import { postAnchoredFindings, findingMappingKey, findingAnchorMarker, parseNewSideLines } from './anchored-findings.js';
+import { getPRFiles, postReviewComment, listReviewComments } from '../github/api.js';
 import { createRedisSet } from '../redis.js';
 
 const mocked = {
   postReviewComment: vi.mocked(postReviewComment),
   listReviewComments: vi.mocked(listReviewComments),
+  getPRFiles: vi.mocked(getPRFiles),
   createRedisSet: vi.mocked(createRedisSet),
 };
 
@@ -50,6 +52,7 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   mocked.postReviewComment.mockReset().mockResolvedValue({ id: 500 });
   mocked.listReviewComments.mockReset().mockResolvedValue([]);
+  mocked.getPRFiles.mockReset().mockRejectedValue(new Error('no file metadata'));
   mocked.createRedisSet.mockReset().mockReturnValue((async () => undefined) as never);
 });
 
@@ -144,5 +147,42 @@ describe('postAnchoredFindings', () => {
     await postAnchoredFindings('review-1', [ledgerFinding()], 'acme', 'app', 7, HEAD_SHA, 'token', env);
 
     expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it('retries an out-of-diff anchor at the nearest hunk line and maps the posted line', async () => {
+    // Patch covers new-side lines 12..16 only; the finding points at line 30.
+    mocked.getPRFiles.mockResolvedValue([{
+      sha: 'x', filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 0, changes: 1,
+      patch: '@@ -10,3 +12,5 @@ fn()\n context\n+added\n context\n context\n context',
+    }]);
+    const setMock = vi.fn().mockResolvedValue(undefined);
+    mocked.createRedisSet.mockReturnValue(setMock);
+    mocked.postReviewComment
+      .mockRejectedValueOnce(new Error('422 line is not part of the diff'))
+      .mockResolvedValueOnce({ id: 503 });
+
+    const posted = await postAnchoredFindings(
+      'review-1', [ledgerFinding({ line: 30 })], 'acme', 'app', 7, HEAD_SHA, 'token', env
+    );
+
+    expect(posted).toBe(1);
+    expect(mocked.postReviewComment).toHaveBeenCalledTimes(2);
+    expect(mocked.postReviewComment.mock.calls[0][5]).toBe(30);
+    expect(mocked.postReviewComment.mock.calls[1][5]).toBe(16);
+    expect(JSON.parse(setMock.mock.calls[0][1])).toMatchObject({ file: 'src/app.ts', line: 16 });
+  });
+
+  it('parseNewSideLines tracks added and context lines, not deletions', () => {
+    const lines = parseNewSideLines([
+      '@@ -1,4 +10,4 @@ header',
+      ' context',       // 10
+      '-deleted',       // does not advance
+      '+added',         // 11
+      '\\ No newline at end of file',
+      ' more',          // 12
+      '@@ -50,1 +60,1 @@ next hunk',
+      '+tail',          // 60
+    ].join('\n'));
+    expect(lines).toEqual([10, 11, 12, 60]);
   });
 });

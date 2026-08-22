@@ -234,6 +234,11 @@ const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
   /call sites? (?:were|are|was) not updated/i,
   /lacks a .{0,40}prop/i,
   /import of [^.,;]+ (?:was )?not (?:checked|validated)/i,
+  // Compile-error claims ("breaks compilation", "causes a type error") are
+  // cross-file by nature — the model cannot see other files from one hunk,
+  // and CI checks them deterministically. PR #42's false CRITICAL was this family.
+  /breaking compilation/i,
+  /caus(?:es?|ing) a type(?:script)? error/i,
 ];
 
 function escapeRegExp(text: string): string {
