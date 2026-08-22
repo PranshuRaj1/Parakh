@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   matchesScope,
   parseDiffByFile,
-  formatReviewComment,
-  appendDashboardLink,
   parseRetentionDays,
   selectDisplayedReviewScore,
   formatIncompleteReviewComment,
@@ -181,6 +179,27 @@ describe('suppressFindings', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('drops cross-file compile-error claims (PR #42 false CRITICAL family)', () => {
+    const result = suppressFindings([
+      finding('CRITICAL', {
+        file: 'worker/src/cfai/client.ts',
+        line: 185,
+        body: "reviewDiff is typed to return ReviewResult, but the returned object now includes an 'overview' property that is not defined in ReviewResult, causing a TypeScript type error and breaking compilation.",
+      }),
+      finding('HIGH', { body: 'this change is breaking compilation of the worker bundle' }),
+    ], []);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress findings that merely mention types without claiming breakage', () => {
+    const result = suppressFindings([
+      finding('MEDIUM', { body: 'the parsed payload should be validated before being typed as ReviewResult' }),
+    ], []);
+
+    expect(result).toHaveLength(1);
+  });
+
   it('suppresses rule-sourced findings identically to generic ones', () => {
     const ruleViolation = finding('MEDIUM', {
       body: 'this value is used without validation',
@@ -226,7 +245,7 @@ describe('extractSuppressionPatterns', () => {
   });
 });
 
-describe('formatReviewComment', () => {
+describe('review comment score selection', () => {
   it('retains the previous score only when an incremental range has no commits', () => {
     expect(selectDisplayedReviewScore(2.2, true, 4.5)).toBe(4.5);
     expect(selectDisplayedReviewScore(2.2, false, 4.5)).toBe(2.2);
@@ -263,83 +282,6 @@ describe('formatReviewComment', () => {
       'a b/odd.ts',
     ]);
   });
-
-  it('reports clean code when there are no findings', () => {
-    const comment = formatReviewComment(5, 5, [], 'acme/app', 7);
-    expect(comment).toContain('Parakh Code Review — 5/5');
-    expect(comment).toContain('No issues found. Clean code!');
-  });
-
-  it('groups findings by severity with emoji counts', () => {
-    const comment = formatReviewComment(3.55, 3.5, [
-      finding('HIGH'),
-      finding('LOW'),
-    ], 'acme/app', 7);
-    expect(comment).toContain('🟠 1 HIGH');
-    expect(comment).toContain('🔵 1 LOW');
-  });
-
-  it('renders rule-violation tags, suggestions, and severity order CRITICAL→LOW', () => {
-    const comment = formatReviewComment(3, 3, [
-      finding('LOW', { rule_id: 'rule-1' }),
-      finding('CRITICAL', { file: 'src/secure.ts', line: 1, suggestion: 'validate input' }),
-    ], 'acme/app', 7);
-
-    const criticalIdx = comment.indexOf('🔴 CRITICAL');
-    const lowIdx = comment.indexOf('🔵 LOW');
-    expect(criticalIdx).toBeGreaterThan(-1);
-    expect(lowIdx).toBeGreaterThan(criticalIdx);
-
-    expect(comment).toContain('*(rule violation)*');
-    expect(comment).toContain('src/secure.ts:1');
-    expect(comment).toContain('validate input');
-  });
-
-  it('labels an incremental review and reports its complete snapshot', () => {
-    const comment = formatReviewComment(3.5, 3.5, [finding('HIGH')], 'acme/app', 7, undefined, {
-      mode: 'incremental',
-      rangeStartSha: '1111111abcdef',
-      rangeEndSha: '2222222abcdef',
-      newFindingCount: 1,
-      existingUnresolvedCount: 2,
-      resolvedCount: 3,
-      fallbackReason: null,
-      noChangesSinceParent: false,
-    });
-    expect(comment).toContain('Parakh Incremental Review — 3.5/5');
-    expect(comment).toContain('`1111111` → `2222222`');
-    expect(comment).toContain('1 new · 2 existing unresolved · 3 resolved');
-    expect(comment).toContain('Complete PR score');
-  });
-
-  it('explains full-review fallback and an unchanged incremental range', () => {
-    const fallback = formatReviewComment(5, 5, [], 'acme/app', 7, undefined, {
-      mode: 'full',
-      rangeStartSha: 'aaaaaaa111',
-      rangeEndSha: 'bbbbbbb222',
-      newFindingCount: 0,
-      existingUnresolvedCount: 0,
-      resolvedCount: 0,
-      fallbackReason: 'rules_changed',
-      noChangesSinceParent: false,
-    });
-    expect(fallback).toContain('Parakh Full Review');
-    expect(fallback).toContain('Fallback:** rules changed');
-
-    const unchanged = formatReviewComment(5, 5, [], 'acme/app', 7, undefined, {
-      mode: 'incremental',
-      rangeStartSha: 'ccccccc111',
-      rangeEndSha: 'ccccccc111',
-      newFindingCount: 0,
-      existingUnresolvedCount: 0,
-      resolvedCount: 0,
-      fallbackReason: null,
-      noChangesSinceParent: true,
-    });
-    expect(unchanged).toContain('No commits were added');
-    expect(unchanged).toContain('No model calls were made');
-    expect(unchanged).toContain('previous score was retained');
-  });
 });
 
 describe('formatIncompleteReviewComment', () => {
@@ -363,22 +305,6 @@ describe('formatIncompleteReviewComment', () => {
     const comment = formatIncompleteReviewComment([], 3, 4, ['src/a.ts'], 3.5);
     expect(comment).toContain('Provisional ledger score:** 3.5/5');
     expect(comment).toContain('not a completed review score');
-  });
-});
-
-describe('appendDashboardLink', () => {
-  it('leaves the comment untouched without a dashboard base URL', () => {
-    expect(appendDashboardLink('hello', 'acme/app', 7)).toBe('hello');
-  });
-
-  it('appends a dashboard link with a trailing-slash-safe base URL', () => {
-    const result = appendDashboardLink('hello', 'acme/app', 7, 'https://dash.example.com/');
-    expect(result).toContain('https://dash.example.com/pulls/acme/app/7');
-    expect(result).toContain('hello');
-  });
-
-  it('leaves the comment untouched for an unparseable repo', () => {
-    expect(appendDashboardLink('hello', 'no-slash-here', 7, 'https://dash.example.com')).toBe('hello');
   });
 });
 

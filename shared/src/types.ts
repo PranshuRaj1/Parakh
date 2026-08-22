@@ -138,7 +138,9 @@ export interface Review {
   fallback_reason: string | null;
   active_rules_hash: string | null;
   pipeline_version: string;
-  reconciliation_summary: Record<string, unknown> | null;
+   reconciliation_summary: Record<string, unknown> | null;
+  /** ID of the persistent PR overview comment this review last updated. */
+  overview_comment_id: number | null;
   created_at: string;
 }
 
@@ -195,6 +197,21 @@ export interface IncrementalReviewResult {
   ruleFindings: RawRuleFinding[];
   priorFindingResolutions: PriorFindingResolution[] | null;
   thinking: string | null;
+  /** One-sentence plain-text summary of what changed in this file (PR overview table). */
+  overview?: string | null;
+}
+
+/**
+ * Per-file row for the persistent PR overview comment. GitHub metadata gives
+ * path/status/counts; the overview comes from the model or a deterministic
+ * fallback for files never sent to it.
+ */
+export interface FileAnalysis {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  overview: string;
 }
 
 /**

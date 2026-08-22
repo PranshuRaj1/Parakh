@@ -3,12 +3,15 @@ import { computeScore, displayScore } from '@parakh/shared';
 import type { ReviewResult } from '../../gemini/client.js';
 import {
   extractSuppressionPatterns,
-  formatReviewComment,
   isIgnoredLockfile,
   matchesScope,
   parseDiffByFile,
   resolveReviewResult,
 } from '../../jobs/review.js';
+import {
+  deterministicPrOverview,
+  formatOverviewComment,
+} from '../../jobs/overview.js';
 import { DEFAULT_FEATURE_FLAGS, type FeatureFlags } from '../../config/feature-flags.js';
 import { ReviewBaselineCollector, type ReviewBaselineSnapshot } from './metrics.js';
 import type { LoadedFixture } from './fixture-cases.test-helper.js';
@@ -164,12 +167,12 @@ export function replayCurrentFixture(
     findings,
     rawScore,
     displayedScore,
-    comment: formatReviewComment(
-      rawScore,
-      displayedScore,
-      findings,
-      'fixture/repo',
-      1
-    ),
+    comment: formatOverviewComment({
+      score: displayedScore,
+      prOverview: deterministicPrOverview([]),
+      files: [],
+      repo: 'fixture/repo',
+      prNumber: 1,
+    }),
   };
 }

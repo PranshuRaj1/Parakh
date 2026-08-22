@@ -8,6 +8,7 @@
 import type {
   ReviewJobPayload,
   Finding,
+  FileAnalysis,
   Rule,
   StageReasonCode,
   ReviewStage,
@@ -34,6 +35,7 @@ import {
   fetchDiffPinned,
   getCompareStatus,
   getPRDetails,
+  getPRFiles,
   getFileContent,
   postComment,
   postCommentOnce,
@@ -44,6 +46,17 @@ import {
   addCommentReaction,
   removeCommentReaction,
 } from '../github/api.js';
+import {
+  deterministicPrOverview,
+  fallbackFileOverview,
+  formatOverviewComment,
+  isIgnoredLockfile,
+  sanitizeOverview,
+  upsertOverviewComment,
+} from './overview.js';
+
+// Formatting helpers moved to ./overview.js — re-exported for existing tests.
+export { appendDashboardLink, isIgnoredLockfile } from './overview.js';
 import {
   updateReviewStatus,
   updateReviewResults,
@@ -214,6 +227,11 @@ const BUILTIN_SUPPRESSED_PATTERNS: RegExp[] = [
   /call sites? (?:were|are|was) not updated/i,
   /lacks a .{0,40}prop/i,
   /import of [^.,;]+ (?:was )?not (?:checked|validated)/i,
+  // Compile-error claims ("breaks compilation", "causes a type error") are
+  // cross-file by nature — the model cannot see other files from one hunk,
+  // and CI checks them deterministically. PR #42's false CRITICAL was this family.
+  /breaking compilation/i,
+  /caus(?:es?|ing) a type(?:script)? error/i,
 ];
 
 function escapeRegExp(text: string): string {
@@ -345,59 +363,6 @@ function parseDiffHeaderPath(header: string): string | null {
   return equal?.newPath ?? candidates.at(-1)?.newPath ?? null;
 }
 
-/**
- * Generated lockfiles can be thousands of lines (and are machine-generated,
- * so review them anyway), so skip them. Reviewing them burns dozens of Gemini
- * subrequests and can trip the Worker subrequest limit on large diffs.
- */
-const IGNORED_LOCKFILE_NAMES = [
-  'package-lock.json',
-  'npm-shrinkwrap.json',
-  'yarn.lock',
-  'pnpm-lock.yaml',
-  'bun.lock',
-  'bun.lockb',
-  'Cargo.lock',
-  'composer.lock',
-  'Gemfile.lock',
-  'poetry.lock',
-  'Pipfile.lock',
-];
-
-export function isIgnoredLockfile(filePath: string): boolean {
-  return IGNORED_LOCKFILE_NAMES.some(
-    (name) => filePath === name || filePath.endsWith(`/${name}`)
-  );
-}
-
-export function appendDashboardLink(
-  comment: string,
-  repo: string,
-  prNumber: number,
-  dashboardBaseUrl?: string
-): string {
-  if (!dashboardBaseUrl) return comment;
-  const base = dashboardBaseUrl.replace(/\/+$/, '');
-  const [owner, repoName] = repo.split('/');
-  if (!owner || !repoName) return comment;
-  return `${comment}\n---\n🔍 *Want the model's reasoning? See per-file analysis on the [Parakh dashboard](${base}/pulls/${owner}/${repoName}/${prNumber}).*\n`;
-}
-
-export interface ReviewCommentContext {
-  mode: ReviewMode;
-  rangeStartSha: string | null;
-  rangeEndSha: string;
-  newFindingCount: number;
-  existingUnresolvedCount: number;
-  resolvedCount: number;
-  fallbackReason: string | null;
-  noChangesSinceParent: boolean;
-}
-
-function shortSha(sha: string): string {
-  return sha.slice(0, 7);
-}
-
 export function selectDisplayedReviewScore(
   rawScore: number,
   noChangesSinceParent: boolean,
@@ -406,75 +371,6 @@ export function selectDisplayedReviewScore(
   return noChangesSinceParent && previousScore !== null
     ? previousScore
     : displayScore(rawScore);
-}
-
-export function formatReviewComment(
-  score: number,
-  displayedScore: number,
-  findings: Finding[],
-  repo: string,
-  prNumber: number,
-  dashboardBaseUrl?: string,
-  context?: ReviewCommentContext
-): string {
-  const severityEmoji: Record<string, string> = {
-    CRITICAL: '🔴',
-    HIGH: '🟠',
-    MEDIUM: '🟡',
-    LOW: '🔵',
-  };
-
-  const reviewLabel = context
-    ? context.mode === 'incremental' ? 'Incremental Review' : 'Full Review'
-    : 'Code Review';
-  let comment = `## Parakh ${reviewLabel} — ${displayedScore}/5\n\n`;
-
-  if (context) {
-    const start = context.rangeStartSha ? shortSha(context.rangeStartSha) : 'PR base';
-    comment += `**Reviewed range:** \`${start}\` → \`${shortSha(context.rangeEndSha)}\`\n`;
-    comment += `**Snapshot:** ${context.newFindingCount} new · ${context.existingUnresolvedCount} existing unresolved · ${context.resolvedCount} resolved\n`;
-    comment += `**Complete PR score:** ${displayedScore}/5\n`;
-    if (context.fallbackReason) {
-      comment += `**Fallback:** ${context.fallbackReason.replace(/_/g, ' ')}\n`;
-    }
-    comment += '\n';
-    if (context.noChangesSinceParent) {
-      comment += `✅ No commits were added after \`${start}\`. No model calls were made, and the previous score was retained.\n\n`;
-    }
-  }
-
-  if (findings.length === 0) {
-    comment += '✅ No issues found. Clean code!\n';
-    return appendDashboardLink(comment, repo, prNumber, dashboardBaseUrl);
-  }
-
-  const grouped: Record<string, Finding[]> = {};
-  for (const f of findings) {
-    if (!grouped[f.severity]) grouped[f.severity] = [];
-    grouped[f.severity].push(f);
-  }
-
-  const counts = Object.entries(grouped)
-    .map(([sev, items]) => `${severityEmoji[sev]} ${items.length} ${sev}`)
-    .join(' · ');
-  comment += `**Summary:** ${counts}\n\n`;
-
-  for (const severity of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']) {
-    const items = grouped[severity];
-    if (!items || items.length === 0) continue;
-
-    comment += `### ${severityEmoji[severity]} ${severity}\n\n`;
-    for (const f of items) {
-      const ruleTag = f.rule_id ? ' *(rule violation)*' : '';
-      comment += `- **\`${f.file}:${f.line}\`**${ruleTag}: ${f.body}\n`;
-      if (f.suggestion) {
-        comment += `  > 💡 ${f.suggestion}\n`;
-      }
-    }
-    comment += '\n';
-  }
-
-  return appendDashboardLink(comment, repo, prNumber, dashboardBaseUrl);
 }
 
 // ─── Redis State Types & Helpers ─────────────────────────────────────────────
@@ -496,6 +392,10 @@ interface ReviewState {
   reconciliationSummary: ReconciliationSummary;
   fileFailures: Record<string, { attempts: number; lastError: string }>;
   terminalFailedFiles: string[];
+  /** Every changed PR file with its deterministic or model-generated overview. */
+  fileAnalyses: Record<string, FileAnalysis>;
+  /** PR-level overview — persisted so resumed deliveries render the same comment. */
+  prOverview: string | null;
 }
 
 async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -540,6 +440,7 @@ interface ReviewedFileResult {
   findings: Finding[];
   outcomes: FindingReconciliationOutcome[];
   summary: ReconciliationSummary;
+  overview: string | null;
   telemetry?: {
     findingsCount: number;
     matchedRuleIds: string[];
@@ -573,7 +474,7 @@ export async function reviewSingleFile(
   attentionFocus: string | null
 ): Promise<ReviewedFileResult> {
   const fileDiff = fileChunks.get(fileName);
-  if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary() };
+  if (!fileDiff) return { findings: [], outcomes: [], summary: emptyReconciliationSummary(), overview: null };
 
   // Bounded raw diffs: when the cap is enabled, oversized per-file diffs are
   // trimmed (head hunks preserved + explicit truncation marker) before they
@@ -715,13 +616,14 @@ export async function reviewSingleFile(
       incremental.priorFindingResolutions,
       headSha
     );
-    return { ...reconciled, telemetry };
+    return { ...reconciled, overview: sanitizeOverview(result.overview) || null, telemetry };
   }
 
   return {
     findings: finalFindings,
     outcomes: [],
     summary: emptyReconciliationSummary(),
+    overview: sanitizeOverview(result.overview) || null,
     telemetry,
   };
 }
@@ -1200,9 +1102,11 @@ async function executeReviewJobInternal(
     // first-time reviews. Computed below once the subrequest budget exists;
     // the PR-details fetch is only needed for the fallback path.
     let attentionFocus: string | null = null;
+    /** Validated review-start focus summary — also the PR overview's top fallback. */
+    let focusSummary: string | null = null;
+    let prTitle: string | null = null;
+    let prBody: string | null = null;
     const finalizeOutput: FinalizeReviewOutput = {
-      rangeStartSha: effectiveMode === 'incremental' ? parent?.head_sha ?? null : baseSha,
-      fallbackReason: planningFallbackReason,
       noChangesSinceParent: effectiveMode === 'incremental' && executionDiff.trim().length === 0,
       previousScore: effectiveMode === 'incremental' ? parent?.score ?? null : null,
     };
@@ -1224,6 +1128,8 @@ async function executeReviewJobInternal(
       state.reconciliationSummary ??= emptyReconciliationSummary();
       state.fileFailures ??= {};
       state.terminalFailedFiles ??= [];
+      state.fileAnalyses ??= {};
+      state.prOverview ??= null;
     }
 
     if (!state) {
@@ -1250,19 +1156,66 @@ async function executeReviewJobInternal(
           : emptyReconciliationSummary(),
         fileFailures: {},
         terminalFailedFiles: [],
+        fileAnalyses: {},
+        prOverview: null,
       };
     }
 
     state = state as ReviewState;
 
+    // PR-level overview: validated focus summary, else PR title/description
+    // context, else a deterministic count-based summary. Persisted so queue
+    // redeliveries and resumed batches render the same final comment.
+    const ensurePrOverview = async (): Promise<string> => {
+      if (state!.prOverview) return state!.prOverview;
+      const context = [prTitle, prBody].filter(Boolean).join('. ').trim();
+      state!.prOverview =
+        focusSummary
+        || sanitizeOverview(context)
+        || deterministicPrOverview(Object.values(state!.fileAnalyses));
+      await saveReviewState(fullRepo, prNumber, state!, redisSet);
+      return state!.prOverview;
+    };
+
+    // GitHub metadata for EVERY changed file drives the overview table rows —
+    // including lockfiles, binaries, deletions and renames never sent to the
+    // model (those keep deterministic fallback text). Best-effort: a failed
+    // listing falls back to diff-derived rows with zero counts.
+    if (Object.keys(state.fileAnalyses).length === 0) {
+      try {
+        const prFiles = await getPRFiles(owner, repo, prNumber, token);
+        for (const file of prFiles) {
+          state.fileAnalyses[file.filename] = {
+            path: file.filename,
+            status: file.status,
+            additions: file.additions,
+            deletions: file.deletions,
+            overview: fallbackFileOverview(file),
+          };
+        }
+      } catch (err) {
+        console.warn('[review] Failed to list changed PR files — overview table falls back to diff files:', err);
+        for (const path of fullFileChunks.keys()) {
+          state.fileAnalyses[path] = {
+            path,
+            status: 'modified',
+            additions: 0,
+            deletions: 0,
+            overview: fallbackFileOverview({ status: 'modified', filename: path }),
+          };
+        }
+      }
+    }
+
     await saveReviewState(fullRepo, prNumber, state, redisSet);
     const remainingFiles = state.allFiles.filter((file) => !state!.completedFiles.includes(file));
 
     if (remainingFiles.length === 0) {
+      await ensurePrOverview();
       await finalizeReview(
         reviewId, state.accumulatedFindings, owner, repo, prNumber, token, env,
         stageAttempt, metrics, headSha ?? 'unknown', effectiveMode,
-        state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput
+        state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput, state
       );
       metricsOutcome = 'completed';
       return;
@@ -1285,8 +1238,6 @@ async function executeReviewJobInternal(
 
     if (featureFlags.attentionFocus) {
       try {
-        let prTitle: string | null = null;
-        let prBody: string | null = null;
         const hasPriorFindings = priorFindingsByFile.size > 0;
         if (!hasPriorFindings && activeBudget.hasRoomFor(1)) {
           activeBudget.spend(1);
@@ -1322,6 +1273,7 @@ async function executeReviewJobInternal(
         const focus = validateFocusResponse(await llm.reviewFocus(executionDiff));
         if (focus) {
           attentionFocus = renderFocusBlock(focus);
+          focusSummary = sanitizeOverview(focus.summary) || null;
           metrics.recordReviewFocus();
         }
       } catch (err) {
@@ -1433,6 +1385,12 @@ async function executeReviewJobInternal(
                 );
                 state!.completedFiles.push(fileName);
                 delete state!.fileFailures[fileName];
+                if (reviewed.overview) {
+                  state!.fileAnalyses[fileName] ??= {
+                    path: fileName, status: 'modified', additions: 0, deletions: 0, overview: '',
+                  };
+                  state!.fileAnalyses[fileName].overview = reviewed.overview;
+                }
                 filesProcessedInThisAttempt++;
                 lastReasonCode = 'PROCESSING';
                 lastReasonDetail = `file ${state!.completedFiles.length}/${state!.allFiles.length}: ${fileName}`;
@@ -1499,9 +1457,12 @@ async function executeReviewJobInternal(
                       const applicableRules = activeRules.filter((rule) => matchesScope(fileName, rule.scope));
                       const resolved = resolveReviewResult(partial, fileName, applicableRules, suppressPatterns);
                       metrics.recordFindings(resolved.rawFindingCount, resolved.findings.length);
-                      terminalOutcome = await reconcileFileFindings(prior, resolved.findings, null, headSha ?? 'unknown');
+                      terminalOutcome = {
+                        ...await reconcileFileFindings(prior, resolved.findings, null, headSha ?? 'unknown'),
+                        overview: sanitizeOverview(partial.overview) || null,
+                      };
                     } else {
-                      terminalOutcome = retainPriorFindings(prior, responseFailure);
+                      terminalOutcome = { ...retainPriorFindings(prior, responseFailure), overview: null };
                     }
                   }
                 }
@@ -1642,10 +1603,11 @@ async function executeReviewJobInternal(
       ...metrics.stageDetail(),
     });
 
+    await ensurePrOverview();
     await finalizeReview(
       reviewId, allFindings, owner, repo, prNumber, token, env, stageAttempt, metrics,
       headSha ?? 'unknown', effectiveMode,
-      state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput
+      state.reconciliationOutcomes, state.reconciliationSummary, finalizeOutput, state
     );
     metricsOutcome = 'completed';
 
@@ -1656,13 +1618,14 @@ async function executeReviewJobInternal(
     }
     if (err instanceof SubrequestBudgetExceededError) {
       // Budget checkpoint: the stage event stays open until the next delivery
-      // starts the same stage, which supersedes it (attempt number bumps,
-      // unique index scopes to ended_at IS NULL) and resumes from the per-file
-      // Redis state. Not a failure, so don't failStage.
+      // starts the same stage, which supersedes it. State is already saved, so
+      // this is a PLANNED checkpoint — rethrow as a scheduled retry, otherwise
+      // queue-handler burns its finite unexpected-error schedule and
+      // permanently acks multi-batch PRs that need more than 8 deliveries.
       console.warn(`[review] ${err.message} — checkpointing ${fullRepo}#${prNumber} for redelivery`);
       metricsOutcome = 'checkpoint';
       checkpointReason = 'subrequest_budget';
-      throw err;
+      throw new ReviewRetryScheduledError(5);
     }
     if (err instanceof ReviewRetryScheduledError) {
       throw err;
@@ -1726,8 +1689,6 @@ async function executeReviewJobInternal(
 }
 
 interface FinalizeReviewOutput {
-  rangeStartSha: string | null;
-  fallbackReason: string | null;
   noChangesSinceParent: boolean;
   previousScore: number | null;
 }
@@ -1824,7 +1785,8 @@ async function finalizeReview(
   effectiveMode: ReviewMode,
   reconciliationOutcomes: FindingReconciliationOutcome[],
   reconciliationSummary: ReconciliationSummary,
-  output: FinalizeReviewOutput
+  output: FinalizeReviewOutput,
+  state: ReviewState
 ): Promise<void> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -1859,8 +1821,8 @@ async function finalizeReview(
   );
   await completeStage(reviewId, 'SCORING', stageAttempt, env, metrics.stageDetail());
 
-  const review = await import('../db/reviews.js').then((m) => m.getLatestReviewByPR(fullRepo, prNumber, env));
-  
+  const review = await getLatestReviewByPR(fullRepo, prNumber, env);
+
   await startStage(reviewId, 'REACTING', stageAttempt, env);
   await withTimeout('REACTING', STAGE_TIMEOUTS_MS.REACTING, async () => {
     if (review?.seen_reaction_id) {
@@ -1873,34 +1835,19 @@ async function finalizeReview(
   });
   await completeStage(reviewId, 'REACTING', stageAttempt, env);
 
+  // Upsert the ONE persistent overview comment (score + PR overview + file
+  // table) in place — never a fresh per-review summary comment.
   await startStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
   await withTimeout('POSTING_COMMENT', STAGE_TIMEOUTS_MS.POSTING_COMMENT, async () => {
-    const comment = formatReviewComment(
-      rawScore,
+    const body = formatOverviewComment({
       score,
-      ledgerFindings,
-      fullRepo,
+      prOverview: state.prOverview ?? deterministicPrOverview(Object.values(state.fileAnalyses)),
+      files: Object.values(state.fileAnalyses),
+      repo: fullRepo,
       prNumber,
-      env.DASHBOARD_BASE_URL,
-      {
-        mode: effectiveMode,
-        rangeStartSha: output.rangeStartSha,
-        rangeEndSha: headSha,
-        newFindingCount: persistedSummary.newCount,
-        existingUnresolvedCount: Math.max(0, ledgerFindings.length - persistedSummary.newCount),
-        resolvedCount: persistedSummary.resolvedCount,
-        fallbackReason: output.fallbackReason,
-        noChangesSinceParent: output.noChangesSinceParent,
-      }
-    );
-    await postCommentOnce(
-      owner,
-      repo,
-      prNumber,
-      comment,
-      `<!-- parakh-review:${reviewId} -->`,
-      token
-    );
+      dashboardBaseUrl: env.DASHBOARD_BASE_URL,
+    });
+    await upsertOverviewComment(owner, repo, prNumber, reviewId, body, token, env);
   });
   await completeStage(reviewId, 'POSTING_COMMENT', stageAttempt, env);
 

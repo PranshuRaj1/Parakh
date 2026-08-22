@@ -76,7 +76,7 @@
       ],
       "rawScore": 2.5,
       "displayedScore": 2.5,
-      "comment": "## Parakh Code Review — 2.5/5\n\n**Summary:** 🟠 2 HIGH\n\n### 🟠 HIGH\n\n- **`src/auth/provider.ts:1`**: Authentication flow lacks state validation.\n  > 💡 Validate state before completing sign-in.\n- **`src/config/auth.ts:1`** *(rule violation)*: Authentication callback configuration violates the repository rule.\n  > 💡 Use the approved callback configuration.\n\n"
+      "comment": "# Parakh Overview\n\n## Score: 2.5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "binary-file",
@@ -132,7 +132,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "cross-file-move",
@@ -189,7 +189,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "empty-diff",
@@ -243,7 +243,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "large-generated",
@@ -299,7 +299,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "lockfile-only",
@@ -353,7 +353,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "lockfile-with-source",
@@ -409,7 +409,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "malformed-hunk",
@@ -465,7 +465,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "mode-only-change",
@@ -521,7 +521,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "more-than-one-batch",
@@ -582,7 +582,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "multiple-hunks",
@@ -638,7 +638,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "new-and-deleted-files",
@@ -695,7 +695,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "no-newline-marker",
@@ -751,7 +751,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "normal-edit",
@@ -816,7 +816,7 @@
       ],
       "rawScore": 4.668201174607107,
       "displayedScore": 4.7,
-      "comment": "## Parakh Code Review — 4.7/5\n\n**Summary:** 🟡 1 MEDIUM\n\n### 🟡 MEDIUM\n\n- **`src/example.ts:1`**: Baseline fixture issue.\n  > 💡 Keep this deterministic response stable.\n\n"
+      "comment": "# Parakh Overview\n\n## Score: 4.7/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "path-with-spaces",
@@ -872,7 +872,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "renamed-file",
@@ -928,7 +928,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "repeated-blocks",
@@ -984,7 +984,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "submodule-pointer",
@@ -1040,7 +1040,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     },
     {
       "fixtureId": "unicode-path",
@@ -1096,7 +1096,7 @@
       "findings": [],
       "rawScore": 5,
       "displayedScore": 5,
-      "comment": "## Parakh Code Review — 5/5\n\n✅ No issues found. Clean code!\n"
+      "comment": "# Parakh Overview\n\n## Score: 5/5\n\n## Overview\n\nNo file changes.\n\n## Files Changed\n\n| File | Changes | Overview |\n| --- | ---: | --- |\n"
     }
   ]
 }

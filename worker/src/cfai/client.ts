@@ -174,13 +174,11 @@ async reviewDiff(
       true,
       context
     );
-    const parsed = parseJson<{
-      genericFindings?: ReviewResult['genericFindings'];
-      ruleFindings?: ReviewResult['ruleFindings'];
-    }>(raw);
+    const parsed = parseJson<Partial<IncrementalReviewResult>>(raw);
     return {
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
+      overview: typeof parsed.overview === 'string' ? parsed.overview : null,
       thinking: null,
     };
   }
@@ -206,6 +204,7 @@ async reviewDiff(
       genericFindings: parsed.genericFindings || [],
       ruleFindings: parsed.ruleFindings || [],
       priorFindingResolutions: parsed.priorFindingResolutions ?? null,
+      overview: typeof parsed.overview === 'string' ? parsed.overview : null,
       thinking: null,
     };
   }

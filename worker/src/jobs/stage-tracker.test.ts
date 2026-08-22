@@ -48,9 +48,9 @@ describe('withTimeout', () => {
 describe('getReviewingFilesTimeout', () => {
   it('scales with the number of files from a base', () => {
     expect(getReviewingFilesTimeout(0)).toBe(120_000);
-    expect(getReviewingFilesTimeout(1)).toBe(210_000);
-    expect(getReviewingFilesTimeout(2)).toBe(210_000);
-    expect(getReviewingFilesTimeout(5)).toBe(390_000);
+    expect(getReviewingFilesTimeout(1)).toBe(360_000);
+    expect(getReviewingFilesTimeout(2)).toBe(360_000);
+    expect(getReviewingFilesTimeout(5)).toBe(720_000);
   });
 
   it('caps large reviews below the queue platform limit', () => {

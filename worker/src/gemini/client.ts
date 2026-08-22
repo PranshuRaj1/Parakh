@@ -63,6 +63,8 @@ const DEFAULT_THINKING_BUDGET = 1024;
 export interface ReviewResult {
   genericFindings: RawGenericFinding[];
   ruleFindings: RawRuleFinding[];
+  /** One-sentence plain-text summary of what changed in this file (PR overview table). */
+  overview?: string | null;
   /** Raw model thinking for this file — null when reasoning capture is disabled. */
   thinking: string | null;
 }
@@ -351,6 +353,7 @@ export class GeminiClient implements LLMProvider {
       return {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
+        overview: typeof parsed.overview === 'string' ? parsed.overview : null,
         // Scrub secrets before persisting — same pass as error stacks.
         thinking: this.reasoningEnabled && thinking ? sanitizeErrorText(thinking) : null,
       };
@@ -392,6 +395,7 @@ export class GeminiClient implements LLMProvider {
         genericFindings: parsed.genericFindings || [],
         ruleFindings: parsed.ruleFindings || [],
         priorFindingResolutions: parsed.priorFindingResolutions ?? null,
+        overview: typeof parsed.overview === 'string' ? parsed.overview : null,
         thinking: this.reasoningEnabled && thinking ? sanitizeErrorText(thinking) : null,
       };
     });

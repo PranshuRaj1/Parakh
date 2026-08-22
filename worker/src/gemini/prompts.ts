@@ -105,6 +105,10 @@ Return your findings in two separate arrays:
 
 If the code looks clean, return empty arrays for both.
 
+3. **overview**: One plain-text sentence (max 200 characters) describing what this diff
+   changes in the file. State what changed only — no recommendations, no review findings.
+   Example: "Updates token validation and refresh handling."
+
 ## Diff to Review
 
 \`\`\`diff
@@ -170,7 +174,17 @@ Add a third output array named priorFindingResolutions alongside genericFindings
  * whole execution diff once and returns where attention belongs; code
  * validates and bounds the response before it reaches any per-file prompt.
  */
+/**
+ * Cap the focus-call diff. The focus is advisory attention guidance, and the
+ * raw execution diff can be huge — oversized bodies trip provider payload
+ * limits (Groq 413) and push the primary provider past its time-slice.
+ */
+const FOCUS_DIFF_MAX_CHARS = 40_000;
+
 export function buildReviewFocusPrompt(diff: string): string {
+  const bounded = diff.length > FOCUS_DIFF_MAX_CHARS
+    ? `${diff.slice(0, FOCUS_DIFF_MAX_CHARS)}\n[diff truncated]`
+    : diff;
   return `You are preparing an automated code review. Below is the complete unified diff for a
 pull request.
 
@@ -195,7 +209,7 @@ with exactly two fields:
 ## Diff
 
 \`\`\`diff
-${diff}
+${bounded}
 \`\`\`
 `;
 }
