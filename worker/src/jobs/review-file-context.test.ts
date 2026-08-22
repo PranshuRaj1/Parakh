@@ -21,6 +21,8 @@ vi.mock('../github/api.js', () => ({
   resolveReviewCommentRoot: vi.fn(),
   addCommentReaction: vi.fn(),
   removeCommentReaction: vi.fn(),
+  findIssueCommentByMarker: vi.fn(),
+  updateIssueComment: vi.fn(),
 }));
 
 vi.mock('./anchored-findings.js', () => ({ postAnchoredFindings: vi.fn() }));
@@ -52,6 +54,8 @@ vi.mock('../db/reviews.js', () => ({
   dbUpdateReasonDetail: vi.fn(),
   dbUpdateHeartbeat: vi.fn(),
   dbTimeoutStage: vi.fn(),
+  getLatestOverviewCommentId: vi.fn(),
+  setReviewOverviewCommentId: vi.fn(),
 }));
 
 vi.mock('../db/rules.js', () => ({
@@ -78,9 +82,12 @@ import {
 } from '../github/api.js';
 import {
   getLatestCompletedReviewBefore,
+  getLatestOverviewCommentId,
   getReview,
+  setReviewOverviewCommentId,
   updateReviewResults,
 } from '../db/reviews.js';
+import { findIssueCommentByMarker, updateIssueComment } from '../github/api.js';
 import { getActiveRules } from '../db/rules.js';
 import { createLLMClients } from '../llm/factory.js';
 import { createRedisGet, createRedisSet, createRedisSetNX, createRedisDel } from '../redis.js';
@@ -93,6 +100,10 @@ const mocked = {
   getFileContent: vi.mocked(getFileContent),
   postCommentOnce: vi.mocked(postCommentOnce),
   getLatestCompletedReviewBefore: vi.mocked(getLatestCompletedReviewBefore),
+  getLatestOverviewCommentId: vi.mocked(getLatestOverviewCommentId),
+  setReviewOverviewCommentId: vi.mocked(setReviewOverviewCommentId),
+  findIssueCommentByMarker: vi.mocked(findIssueCommentByMarker),
+  updateIssueComment: vi.mocked(updateIssueComment),
   getReview: vi.mocked(getReview),
   updateReviewResults: vi.mocked(updateReviewResults),
   getActiveRules: vi.mocked(getActiveRules),
@@ -173,6 +184,11 @@ beforeEach(() => {
   mocked.getFileContent.mockResolvedValue('const x = 1;\n');
   mocked.postCommentOnce.mockResolvedValue(undefined);
   mocked.getLatestCompletedReviewBefore.mockResolvedValue(null);
+  // Finalization upserts the persistent PR overview comment — serve it from
+  // the stored-ID path so tests never hit comment creation.
+  mocked.getLatestOverviewCommentId.mockResolvedValue(42);
+  mocked.setReviewOverviewCommentId.mockResolvedValue(undefined);
+  mocked.updateIssueComment.mockResolvedValue(undefined as never);
   vi.mocked(createRedisGet).mockReturnValue((async () => null) as never);
   vi.mocked(createRedisSet).mockReturnValue((async () => undefined) as never);
   vi.mocked(createRedisSetNX).mockReturnValue((async () => true) as never);
