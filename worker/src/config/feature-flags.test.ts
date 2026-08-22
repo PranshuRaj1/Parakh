@@ -26,6 +26,7 @@ describe('getFeatureFlags', () => {
       ATTENTION_FOCUS_ENABLED: 'true',
       BOUNDED_RAW_DIFFS_ENABLED: 'TRUE',
       REVIEW_START_FOCUS_ENABLED: 'true',
+      REPO_CONVENTIONS_ENABLED: 'true',
     }));
 
     expect(flags).toEqual({
@@ -41,7 +42,13 @@ describe('getFeatureFlags', () => {
       attentionFocus: true,
       boundedRawDiffs: true,
       reviewStartFocus: true,
+      repoConventions: true,
     });
+  });
+
+  it('defaults repoConventions off and honors the explicit opt-in', () => {
+    expect(getFeatureFlags(env()).repoConventions).toBe(false);
+    expect(getFeatureFlags(env({ REPO_CONVENTIONS_ENABLED: 'true' })).repoConventions).toBe(true);
   });
 
   it('defaults reviewFileContext on and honors the explicit kill switch', () => {

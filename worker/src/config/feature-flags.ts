@@ -31,6 +31,8 @@ export interface FeatureFlags {
    * the attention focus (validated + bounded, deterministic fallback on failure).
    */
   reviewStartFocus: boolean;
+  /** Read repo convention files (AGENTS.md / CLAUDE.md / .parakh/rules.md) at review time and inject them into the prompt. Default-off — shadow-first rollout. */
+  repoConventions: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -46,6 +48,7 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   attentionFocus: false,
   boundedRawDiffs: false,
   reviewStartFocus: false,
+  repoConventions: false,
 });
 
 function parseBooleanFlag(
@@ -127,6 +130,11 @@ export function getFeatureFlags(env: Env): FeatureFlags {
       'REVIEW_START_FOCUS_ENABLED',
       env.REVIEW_START_FOCUS_ENABLED,
       DEFAULT_FEATURE_FLAGS.reviewStartFocus
+    ),
+    repoConventions: parseBooleanFlag(
+      'REPO_CONVENTIONS_ENABLED',
+      env.REPO_CONVENTIONS_ENABLED,
+      DEFAULT_FEATURE_FLAGS.repoConventions
     ),
   };
 
