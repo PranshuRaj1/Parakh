@@ -53,8 +53,8 @@ GROQ_GENERATION_MODEL = "openai/gpt-oss-120b"
 # appended automatically when their credentials are present as secrets.
 LLM_PRIMARY = "gemini"
 LLM_FALLBACK = "groq"
-LLM_PROVIDER_TIMEOUT_MS = "45000"
-LLM_OPERATION_TIMEOUT_MS = "90000"
+LLM_PROVIDER_TIMEOUT_MS = "90000"
+LLM_OPERATION_TIMEOUT_MS = "240000"
 # Future review-pipeline capabilities are declared now but remain inert until
 # their owning implementation lands. Shadow mode defaults on so a later
 # grouping implementation can collect comparisons without changing output.

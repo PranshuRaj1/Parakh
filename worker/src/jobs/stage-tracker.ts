@@ -140,7 +140,8 @@ export const STAGE_TIMEOUTS_MS = {
 };
 
 const BASE_REVIEW_MS = 30_000;
-const OPERATION_REVIEW_MS = 90_000;
+// Must cover one full LLM chain (LLM_OPERATION_TIMEOUT_MS) per concurrent file pair.
+const OPERATION_REVIEW_MS = 240_000;
 const FILE_CONCURRENCY = 2;
 const REVIEW_CHECKPOINT_RESERVE_MS = 90_000;
 export const QUEUE_CONSUMER_WALL_TIME_MS = 15 * 60_000;

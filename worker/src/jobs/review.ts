@@ -1617,13 +1617,14 @@ async function executeReviewJobInternal(
     }
     if (err instanceof SubrequestBudgetExceededError) {
       // Budget checkpoint: the stage event stays open until the next delivery
-      // starts the same stage, which supersedes it (attempt number bumps,
-      // unique index scopes to ended_at IS NULL) and resumes from the per-file
-      // Redis state. Not a failure, so don't failStage.
+      // starts the same stage, which supersedes it. State is already saved, so
+      // this is a PLANNED checkpoint — rethrow as a scheduled retry, otherwise
+      // queue-handler burns its finite unexpected-error schedule and
+      // permanently acks multi-batch PRs that need more than 8 deliveries.
       console.warn(`[review] ${err.message} — checkpointing ${fullRepo}#${prNumber} for redelivery`);
       metricsOutcome = 'checkpoint';
       checkpointReason = 'subrequest_budget';
-      throw err;
+      throw new ReviewRetryScheduledError(5);
     }
     if (err instanceof ReviewRetryScheduledError) {
       throw err;
