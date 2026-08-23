@@ -15,10 +15,14 @@
     "baseline:accept": "vite-node --script worker/src/review/baseline/generate-baseline.ts --accept",
     "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
     "test:memory": "vitest run worker/src/smoke/memory-smoke.test.ts",
+    "db:push": "drizzle-kit push",
     "setup:hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",
+    "dotenv": "^17.2.2",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0",
     "vite-node": "^3.2.4"
   },

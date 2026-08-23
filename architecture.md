@@ -711,13 +711,13 @@ cron (every minute):
 | `worker/src/smoke/pipeline-smoke.test.ts` | Pre-push smoke: real webhook→queue→triggerReview wiring, leaf deps mocked; catches a broken comment→review chain |
 | `.githooks/pre-push` | Runs the smoke test before every `git push` (aborts on failure) |
 | `worker/src/cron.ts` | Watchdog: prune reasoning, sweep stalled reviews, free locks |
-| `db/migrations/` | Schema, applied in order by `db/migrate.ts` |
+| `db/schema.ts` | Declarative schema applied with `npm run db:push` |
 
 ## Lessons for anyone deploying this
 
-1. **Migrations are manual.** `wrangler deploy` ships code; it does not run
-   `db/migrate.ts`. Apply migrations to the production DB before or right
-   after deploying code that depends on new columns.
+1. **Schema pushes are manual.** `wrangler deploy` ships code; it does not run
+   `npm run db:push`. Push the schema before or immediately after deploying code
+   that depends on new columns.
 2. **A GitHub webhook returning 200 does not mean the review succeeded.** The
    webhook only enqueues; the real work happens in the queue. Judge success
    by the review row's status and the step events, not the webhook response.
