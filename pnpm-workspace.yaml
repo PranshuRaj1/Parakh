@@ -1,6 +1,0 @@
-packages:
-  - shared
-  - worker
-  - dashboard
-
-linkWorkspacePackages: true

@@ -161,7 +161,7 @@ The rule of thumb: if it must survive a crash, it lives in Postgres. If it only 
 Postgres runs on Neon. The desired database structure lives in `db/schema.ts`; apply schema changes before deploying dependent code:
 
 ```bash
-DATABASE_URL=<neon-url> pnpm db:push
+DATABASE_URL=<neon-url> npm run db:push
 ```
 
 Drizzle Kit compares the declared schema with the target database and asks for confirmation before applying changes. The existing `db/migrations/` directory remains as historical context and must not receive new migrations. The pgvector extension must already be enabled on a new database before the first push.
@@ -222,7 +222,7 @@ The dashboard runs with `next dev` from `dashboard/` and reads the same `DATABAS
 
 ### Deploying
 
-1. Push the declared schema first: `DATABASE_URL=<neon-url> pnpm db:push` from the repo root.
+1. Push the declared schema first: `DATABASE_URL=<neon-url> npm run db:push` from the repo root.
 2. Deploy the worker: `cd worker && npm run deploy`.
 3. Verify on the dashboard that the new review reaches COMPLETED.
 
