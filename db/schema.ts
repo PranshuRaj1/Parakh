@@ -87,7 +87,10 @@ export const codeIndexFiles = pgTable(
     language: text().notNull(),
     indexedAt: timestamp('indexed_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => [uniqueIndex('idx_code_index_files_identity').on(table.repo, table.commitSha, table.path)]
+  (table) => [
+    check('code_index_files_language_check', sql`${table.language} in ('typescript', 'javascript')`),
+    uniqueIndex('idx_code_index_files_identity').on(table.repo, table.commitSha, table.path),
+  ]
 );
 
 export const codeIndexSymbols = pgTable(
@@ -107,7 +110,8 @@ export const codeIndexSymbols = pgTable(
     bodyHash: text('body_hash').notNull(),
   },
   (table) => [
-    foreignKey({ name: 'code_index_symbols_file_id_fkey', columns: [table.fileId], foreignColumns: [codeIndexFiles.id] }),
+    check('code_index_symbols_kind_check', sql`${table.kind} in ('file', 'function', 'method', 'class', 'interface', 'type', 'route', 'config')`),
+    foreignKey({ name: 'code_index_symbols_file_id_fkey', columns: [table.fileId], foreignColumns: [codeIndexFiles.id] }).onDelete('cascade'),
     index('idx_code_index_symbols_lookup').on(table.repo, table.commitSha, table.qualifiedName),
     index('idx_code_index_symbols_body_hash').on(table.repo, table.bodyHash),
   ]
@@ -124,8 +128,9 @@ export const codeIndexEdges = pgTable(
     edgeType: text('edge_type').notNull(),
   },
   (table) => [
-    foreignKey({ name: 'code_index_edges_from_fkey', columns: [table.fromSymbolId], foreignColumns: [codeIndexSymbols.id] }),
-    foreignKey({ name: 'code_index_edges_to_fkey', columns: [table.toSymbolId], foreignColumns: [codeIndexSymbols.id] }),
+    check('code_index_edges_type_check', sql`${table.edgeType} in ('imports', 'calls', 'extends', 'implements', 'exports', 'references', 'tested_by', 'uses_config', 'serves_route')`),
+    foreignKey({ name: 'code_index_edges_from_fkey', columns: [table.fromSymbolId], foreignColumns: [codeIndexSymbols.id] }).onDelete('cascade'),
+    foreignKey({ name: 'code_index_edges_to_fkey', columns: [table.toSymbolId], foreignColumns: [codeIndexSymbols.id] }).onDelete('cascade'),
     index('idx_code_index_edges_from').on(table.fromSymbolId),
     index('idx_code_index_edges_to').on(table.toSymbolId),
   ]
@@ -144,7 +149,10 @@ export const codeIndexRuns = pgTable(
     errorSummary: text('error_summary'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => [index('idx_code_index_runs_repo_commit').on(table.repo, table.commitSha)]
+  (table) => [
+    check('code_index_runs_status_check', sql`${table.status} in ('pending', 'running', 'completed', 'failed')`),
+    index('idx_code_index_runs_repo_commit').on(table.repo, table.commitSha),
+  ]
 );
 
 export const reviews = pgTable(
