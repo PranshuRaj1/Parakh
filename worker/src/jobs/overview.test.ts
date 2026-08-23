@@ -58,10 +58,13 @@ beforeEach(() => {
 
 describe('formatPriority', () => {
   it('maps CRITICAL→P0, HIGH→P1, MEDIUM/LOW→P2', () => {
-    expect(formatPriority('CRITICAL')).toBe('🔴 **P0**');
-    expect(formatPriority('HIGH')).toBe('🟠 **P1**');
-    expect(formatPriority('MEDIUM')).toBe('🟡 **P2**');
-    expect(formatPriority('LOW')).toBe('🟡 **P2**');
+    expect(formatPriority('CRITICAL')).toContain('alt="P0"');
+    expect(formatPriority('CRITICAL')).toContain('/p0.svg?v=7');
+    expect(formatPriority('HIGH')).toContain('alt="P1"');
+    expect(formatPriority('HIGH')).toContain('/p1.svg?v=7');
+    expect(formatPriority('MEDIUM')).toContain('alt="P2"');
+    expect(formatPriority('MEDIUM')).toContain('/p2.svg?v=7');
+    expect(formatPriority('LOW')).toBe(formatPriority('MEDIUM'));
   });
 });
 
