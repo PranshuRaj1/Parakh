@@ -150,27 +150,34 @@ export default function ConnectCard() {
         </div>
       )}
 
-      {connections.length > 0 && (
-        <div className="pt-4 border-t border-white/10">
-          <p className="font-dm-sans text-xs text-[#c0c9c0] mb-3">
-            Authorize Parakh, then choose the repositories where it should review pull requests.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {connections.map((conn) => (
-              <a
-                key={conn.provider}
-                href={conn.provider === 'github' ? GITHUB_APP_INSTALL_URL : conn.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2.5 px-5 rounded-lg hover:brightness-110 transition-all text-sm"
-              >
-                <Plug className="w-4 h-4" />
-                Authorize & install {conn.displayName}
-              </a>
-            ))}
-          </div>
+      <div className="pt-4 border-t border-white/10">
+        <p className="font-dm-sans text-xs text-[#c0c9c0] mb-3">
+          Authorize Parakh, then choose the repositories where it should review pull requests.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <a
+            href={GITHUB_APP_INSTALL_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2.5 px-5 rounded-lg hover:brightness-110 transition-all text-sm"
+          >
+            <Plug className="w-4 h-4" />
+            Authorize & install GitHub
+          </a>
+          {connections.filter((conn) => conn.provider !== 'github').map((conn) => (
+            <a
+              key={conn.provider}
+              href={conn.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2.5 px-5 rounded-lg hover:brightness-110 transition-all text-sm"
+            >
+              <Plug className="w-4 h-4" />
+              Authorize & install {conn.displayName}
+            </a>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
