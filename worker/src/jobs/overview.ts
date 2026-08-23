@@ -20,10 +20,10 @@ const OVERVIEW_BODY_BUDGET = 60_000;
 /** Severity → display priority label for inline comments. */
 export function formatPriority(severity: Severity): string {
   const labels: Record<Severity, string> = {
-    CRITICAL: '🔴 **P0**',
-    HIGH: '🟠 **P1**',
-    MEDIUM: '🟡 **P2**',
-    LOW: '🟡 **P2**',
+    CRITICAL: '<a href="#"><img alt="P0" src="https://greptile-static-assets.s3.amazonaws.com/badges/p0.svg?v=7" align="top"></a>',
+    HIGH: '<a href="#"><img alt="P1" src="https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=7" align="top"></a>',
+    MEDIUM: '<a href="#"><img alt="P2" src="https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=7" align="top"></a>',
+    LOW: '<a href="#"><img alt="P2" src="https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=7" align="top"></a>',
   };
   return labels[severity];
 }
