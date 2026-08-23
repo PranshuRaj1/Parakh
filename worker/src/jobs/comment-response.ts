@@ -129,6 +129,7 @@ export async function executeCommentResponseJob(
     authorLogin,
     githubDeliveryId,
     commenterLogin,
+    acknowledgementPosted,
   } = payload;
 
   const fullRepo = `${owner}/${repo}`;
@@ -265,9 +266,9 @@ export async function executeCommentResponseJob(
           existingReview.id,  // resumeReviewId — reuses existing row
           githubDeliveryId    // githubDeliveryId
         );
-        if (enqueued) {
+        if (enqueued && !acknowledgementPosted) {
           await postReply("On it — resuming the previous review 👀");
-        } else {
+        } else if (!acknowledgementPosted) {
           await postReply("⚠️ A review is already in progress, please wait and try again.");
         }
       } else {
@@ -289,9 +290,9 @@ export async function executeCommentResponseJob(
           commentType,        // commentType
           reactionId          // commentReactionId
         );
-        if (enqueued) {
+        if (enqueued && !acknowledgementPosted) {
           await postReply("On it — re-reviewing 👀");
-        } else {
+        } else if (!acknowledgementPosted) {
           await postReply("⚠️ A review is already in progress, please wait and try again.");
         }
       }

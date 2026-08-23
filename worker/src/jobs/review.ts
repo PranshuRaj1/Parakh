@@ -15,6 +15,7 @@ import type {
   Review,
   ReviewMode,
   IncrementalReviewResult,
+  CodebaseImpact,
 } from '@parakh/shared';
 import {
   computeScore,
@@ -139,6 +140,7 @@ import {
 } from '../review/baseline/metrics.js';
 import { verifyFindings } from '../review/finding-verification.js';
 import { buildFileContext } from '../review/file-context.js';
+import { buildPrImpact } from '../review/impact.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
 import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
@@ -397,6 +399,7 @@ interface ReviewState {
   fileAnalyses: Record<string, FileAnalysis>;
   /** PR-level overview — persisted so resumed deliveries render the same comment. */
   prOverview: string | null;
+  codebaseImpact?: CodebaseImpact;
 }
 
 async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -1175,6 +1178,7 @@ async function executeReviewJobInternal(
         terminalFailedFiles: [],
         fileAnalyses: {},
         prOverview: null,
+        codebaseImpact: buildPrImpact(fullRepo, headSha ?? 'unknown', fullFileChunks),
       };
     }
 
@@ -1184,7 +1188,8 @@ async function executeReviewJobInternal(
     // context, else a deterministic count-based summary. Persisted so queue
     // redeliveries and resumed batches render the same final comment.
     const ensurePrOverview = async (): Promise<string> => {
-      if (state!.prOverview) return state!.prOverview;
+      const countOnlyOverview = /^Changes \d+ files?, adding \d+ and removing \d+ lines\.$/;
+      if (state!.prOverview && !countOnlyOverview.test(state!.prOverview)) return state!.prOverview;
       const context = [prTitle, prBody].filter(Boolean).join('. ').trim();
       state!.prOverview =
         focusSummary
@@ -1864,6 +1869,7 @@ async function finalizeReview(
       repo: fullRepo,
       prNumber,
       dashboardBaseUrl: env.DASHBOARD_BASE_URL,
+      codebaseImpact: state.codebaseImpact,
     });
     await upsertOverviewComment(owner, repo, prNumber, reviewId, body, token, env);
   });

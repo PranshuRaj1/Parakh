@@ -8,7 +8,7 @@
 
 import { REACTIONS, GITHUB_APP_BOT_SUFFIX } from '@parakh/shared';
 import type { ReviewJobPayload, CommentJobPayload, GitHubAuthorAssociation } from '@parakh/shared';
-import { addReaction, removeReaction, postComment } from '../github/api.js';
+import { addReaction, addCommentReaction, removeReaction, postComment } from '../github/api.js';
 import { getCachedToken } from '../github/auth.js';
 import { insertReview, getLatestReviewByPR, updateReviewReactions } from '../db/reviews.js';
 import { upsertInstallation, markInstallationRemoved } from '../db/installations.js';
@@ -235,6 +235,20 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
   const fullRepo = repository.full_name;
   const prNumber = issue.number;
 
+  const likelyReviewRequest = /@parakh\b[\s\S]*\b(?:re[\s-]*review|review)\b/i.test(comment.body);
+  let acknowledgementPosted = false;
+  if (likelyReviewRequest) {
+    try {
+      const redis = { get: createRedisGet(env), set: createRedisSet(env) };
+      const token = await getCachedToken(installation.id, env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, redis);
+      await addCommentReaction(owner, repo, comment.id, 'issue_comment', REACTIONS.SEEN, token);
+      await postComment(owner, repo, prNumber, 'On it, I saw your re-review request 👀', token);
+      acknowledgementPosted = true;
+    } catch (err) {
+      console.warn(`[webhook] Failed to acknowledge review request on ${fullRepo}#${prNumber}:`, err);
+    }
+  }
+
   console.log(`[webhook] issue_comment.created on ${fullRepo}#${prNumber} by ${comment.user.login}`);
 
   const payload: CommentJobPayload = {
@@ -251,6 +265,7 @@ async function handleIssueComment(event: WebhookEvent, deliveryId: string, env: 
     authorLogin: comment.user.login,
     githubDeliveryId: deliveryId,
     commenterLogin: comment.user.login,
+    acknowledgementPosted,
   };
 
   await env.WATCHDOG_QUEUE.send(payload);

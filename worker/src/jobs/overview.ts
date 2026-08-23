@@ -7,7 +7,7 @@
  * comments stay separate and immutable.
  */
 
-import type { FileAnalysis, Severity } from '@parakh/shared';
+import type { CodebaseImpact, FileAnalysis, Severity } from '@parakh/shared';
 import { findIssueCommentByMarker, postComment, updateIssueComment } from '../github/api.js';
 import type { Env } from '../index.js';
 import { getLatestOverviewCommentId, setReviewOverviewCommentId } from '../db/reviews.js';
@@ -73,7 +73,13 @@ export function deterministicPrOverview(files: FileAnalysis[]): string {
   if (files.length === 0) return 'No file changes.';
   const additions = files.reduce((sum, f) => sum + f.additions, 0);
   const deletions = files.reduce((sum, f) => sum + f.deletions, 0);
-  return `Changes ${files.length} file${files.length === 1 ? '' : 's'}, adding ${additions} and removing ${deletions} lines.`;
+  const stats = `Changes ${files.length} file${files.length === 1 ? '' : 's'}, adding ${additions} and removing ${deletions} lines.`;
+  const changes = files
+    .map((file) => sanitizeOverview(file.overview))
+    .filter((overview) => overview && !/^Updates this file\.$/.test(overview))
+    .filter((overview, index, overviews) => overviews.indexOf(overview) === index)
+    .slice(0, 3);
+  return changes.length > 0 ? `${stats} Key changes: ${changes.join(' ')}` : stats;
 }
 
 export function appendDashboardLink(
@@ -96,6 +102,28 @@ export interface OverviewCommentInput {
   repo: string;
   prNumber: number;
   dashboardBaseUrl?: string;
+  codebaseImpact?: CodebaseImpact;
+}
+
+function formatImpact(impact: CodebaseImpact): string {
+  const report = impact.blastRadius;
+  const symbolLine = (symbol: { qualifiedName: string; path: string; startLine: number }) =>
+    `- \`${symbol.qualifiedName}\` (${symbol.path}:${symbol.startLine})`;
+  const lines = [`## Codebase Impact\n\n**Blast radius: ${report.level}**`];
+  if (report.changedSymbols.length > 0) {
+    lines.push(`\nChanged symbols:\n${report.changedSymbols.slice(0, 20).map(symbolLine).join('\n')}`);
+  }
+  if (report.affectedSymbols.length > 0) {
+    lines.push(`\nAffected callers:\n${report.affectedSymbols.slice(0, 12).map(symbolLine).join('\n')}`);
+  }
+  if (report.relatedTests.length > 0) {
+    lines.push(`\nRelated tests:\n${report.relatedTests.slice(0, 8).map((symbol) => `- \`${symbol.path}:${symbol.startLine}\``).join('\n')}`);
+  }
+  if (report.riskSignals.length > 0) lines.push(`\nRisk signals:\n${report.riskSignals.slice(0, 8).map((signal) => `- ${signal}`).join('\n')}`);
+  if (impact.reuseCandidates.length > 0) {
+    lines.push(`\nPossible reuse:\n${impact.reuseCandidates.slice(0, 5).map((candidate) => `- \`${candidate.candidate.qualifiedName}\` (${candidate.candidate.path}:${candidate.candidate.startLine})\n  ${candidate.signals.join('; ')}\n  ${candidate.recommendation}`).join('\n')}`);
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -104,6 +132,7 @@ export interface OverviewCommentInput {
  * exceed the budget, complete rows are included until it no longer fits.
  */
 export function formatOverviewComment(input: OverviewCommentInput): string {
+  const impact = input.codebaseImpact ? `\n${formatImpact(input.codebaseImpact)}\n` : '';
   let body =
     `# Parakh Overview\n\n## Score: ${input.score}/5\n\n## Overview\n\n${tableCell(input.prOverview)}\n\n## Files Changed\n\n` +
     '| File | Changes | Overview |\n| --- | ---: | --- |\n';
@@ -112,13 +141,15 @@ export function formatOverviewComment(input: OverviewCommentInput): string {
   let rows = '';
   for (const file of input.files) {
     const row = `| \`${tableCell(file.path)}\` | +${file.additions} / -${file.deletions} | ${tableCell(file.overview)} |\n`;
-    if (body.length + rows.length + row.length > OVERVIEW_BODY_BUDGET) {
+    if (body.length + rows.length + row.length + impact.length > OVERVIEW_BODY_BUDGET) {
       truncated = true;
       break;
     }
     rows += row;
   }
   body += rows;
+
+  body += impact;
 
   if (truncated) {
     body += '\n_Additional changed files are available on the dashboard because this PR exceeds GitHub’s comment size limit._\n';
