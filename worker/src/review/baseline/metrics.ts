@@ -33,6 +33,10 @@ export interface ReviewBaselineSnapshot extends ReviewInputMeasurement {
   reviewFileContextFailures: number;
   /** Successful fetches whose prompt slice hit the bounded cap. */
   reviewFileContextTruncations: number;
+  /** True when at least one repo convention file loaded with rules. */
+  repoConventionsUsed: boolean;
+  /** Convention rules injected into the review prompts after the char cap. */
+  repoConventionRules: number;
   /** Number of per-file diffs truncated by the bounded-diff cap before reaching the model. */
   truncatedDiffs: number;
   /** Successful review-start focus calls whose validated result shaped the prompts. */
@@ -83,6 +87,8 @@ export class ReviewBaselineCollector {
   private reviewFileContextSuccesses = 0;
   private reviewFileContextFailures = 0;
   private reviewFileContextTruncations = 0;
+  private repoConventionsUsed = false;
+  private repoConventionRules = 0;
   private truncatedDiffs = 0;
   private reviewFocusCalls = 0;
   private rawScore: number | null = null;
@@ -155,6 +161,12 @@ export class ReviewBaselineCollector {
     this.reviewFileContextFailures++;
   }
 
+  /** Counters carry no markdown content — only outcomes. */
+  recordConventionLoad(rulesLoaded: number): void {
+    this.repoConventionsUsed = true;
+    this.repoConventionRules = rulesLoaded;
+  }
+
   recordTruncatedDiff(): void {
     this.truncatedDiffs++;
   }
@@ -190,6 +202,8 @@ export class ReviewBaselineCollector {
       reviewFileContextSuccesses: this.reviewFileContextSuccesses,
       reviewFileContextFailures: this.reviewFileContextFailures,
       reviewFileContextTruncations: this.reviewFileContextTruncations,
+      repoConventionsUsed: this.repoConventionsUsed ? '1' : '0',
+      repoConventionRules: this.repoConventionRules,
       truncatedDiffs: this.truncatedDiffs,
       reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,
@@ -223,6 +237,8 @@ export class ReviewBaselineCollector {
       reviewFileContextSuccesses: this.reviewFileContextSuccesses,
       reviewFileContextFailures: this.reviewFileContextFailures,
       reviewFileContextTruncations: this.reviewFileContextTruncations,
+      repoConventionsUsed: this.repoConventionsUsed,
+      repoConventionRules: this.repoConventionRules,
       truncatedDiffs: this.truncatedDiffs,
       reviewFocusCalls: this.reviewFocusCalls,
       rawScore: this.rawScore,

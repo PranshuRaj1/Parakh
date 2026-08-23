@@ -142,6 +142,7 @@ import { buildFileContext } from '../review/file-context.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
 import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
+import { loadConventionRules } from '../review/conventions/loader.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -991,9 +992,25 @@ async function executeReviewJobInternal(
 
     currentStage = 'LOADING_RULES';
     await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
-    const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
+    let activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
        return getActiveRules(fullRepo, env);
     });
+
+    // Repo-owned convention markdown (AGENTS.md / CLAUDE.md / .parakh/rules.md)
+    // joins the learned rules as a per-review overlay. Best-effort: a failed
+    // load degrades to DB rules only. Fetches are accounted against the
+    // subrequest budget when it is created below.
+    let conventionFetches = 0;
+    if (featureFlags.repoConventions && headSha) {
+      const loaded = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
+        return loadConventionRules(owner, repo, headSha!, token);
+      });
+      activeRules.push(...loaded.rules);
+      conventionFetches = loaded.fetchAttempts;
+      if (loaded.rules.length > 0) {
+        metrics.recordConventionLoad(loaded.rules.length);
+      }
+    }
 
     const activeRulesHash = await hashActiveRules(activeRules);
     await updateReviewCompatibilityMetadata(
@@ -1234,7 +1251,7 @@ async function executeReviewJobInternal(
     // Startup overhead (token, lock, getReview, fetchDiff, rules, stages) that
     // happens before the loop — conservative estimate so the loop doesn't
     // exceed the real cap even if our counting misses an edge.
-    activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE);
+    activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE + conventionFetches);
 
     if (featureFlags.attentionFocus) {
       try {
@@ -1402,6 +1419,7 @@ async function executeReviewJobInternal(
               if (batchCommitFailed) continue;
               if (reviewed.telemetry) {
                 for (const ruleId of reviewed.telemetry.matchedRuleIds) {
+                  if (ruleId.startsWith('conv:')) continue;
                   if (!canWriteOptionalTelemetry()) break;
                   try {
                     optionalTelemetryWrites++;
