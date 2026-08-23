@@ -76,13 +76,16 @@ describe('loadConventionRules', () => {
   });
 
   it('caps convention bodies at the prompt budget without splitting rules', async () => {
-    getFileContent.mockResolvedValue('- keep this rule\n- drop this trailing rule because the budget ran out');
+    getFileContent.mockImplementation((_owner, _repo, path) =>
+      path === '.parakh/rules.md'
+        ? Promise.resolve(`- ${'a'.repeat(3995)}\n- drop me`)
+        : Promise.reject(new Error('GitHub API error (404)'))
+    );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // First rule leaves only 5 chars of headroom; the second is dropped whole.
-    getFileContent.mockResolvedValue(`- ${'a'.repeat(3995)}\n- drop me`);
 
     const loaded = await loadConventionRules('acme', 'app', 'head-sha', 'token');
 
+    expect(loaded.filesFound).toBe(1);
     expect(loaded.rules).toHaveLength(1);
     expect(loaded.rules[0].body.length).toBeLessThanOrEqual(4000);
     expect(loaded.truncated).toBe(true);
