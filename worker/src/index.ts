@@ -76,6 +76,7 @@ export interface Env {
   ATTENTION_FOCUS_ENABLED?: string;
   BOUNDED_RAW_DIFFS_ENABLED?: string;
   REVIEW_START_FOCUS_ENABLED?: string;
+  REPO_CONVENTIONS_ENABLED?: string;
 
   // Reasoning capture (model thinking) — opt-in via REASONING_CAPTURE_ENABLED
   // (default on). Thinking tokens cost 2x, so REASONING_THINKING_BUDGET caps
