@@ -17,6 +17,7 @@ export function analyzeBlastRadius(
   maxDepth = 2
 ): BlastRadiusReport {
   const changedIds = new Set(changed.map((symbol) => symbol.id));
+  const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
   const affected = new Set<string>();
   const tests = new Set<string>();
   let frontier = new Set(changed.map((symbol) => symbol.id));
@@ -32,7 +33,7 @@ export function analyzeBlastRadius(
   }
 
   for (const edge of edges) {
-    const source = symbols.find((symbol) => symbol.id === edge.from);
+    const source = byId.get(edge.from);
     if (changedIds.has(edge.to) && source && isTest(source)) tests.add(edge.from);
   }
 
