@@ -97,6 +97,19 @@ describe('deterministicPrOverview', () => {
     expect(summary).toContain('2 files');
     expect(summary).toContain('adding 15');
     expect(summary).toContain('removing 5');
+    expect(summary).toContain('Updates token validation and refresh handling.');
+  });
+
+  it('uses distinct file overviews to explain what the PR brings', () => {
+    const summary = deterministicPrOverview([
+      file({ overview: 'Adds repository convention loading.' }),
+      file({ path: 'src/parser.ts', overview: 'Prioritizes project-specific rules.' }),
+      file({ path: 'src/duplicate.ts', overview: 'Adds repository convention loading.' }),
+      file({ path: 'src/other.ts', overview: 'Updates this file.' }),
+    ]);
+    expect(summary).toContain('Key changes: Adds repository convention loading. Prioritizes project-specific rules.');
+    expect(summary.match(/Adds repository convention loading\./g)).toHaveLength(1);
+    expect(summary).not.toContain('Updates this file.');
   });
 });
 
@@ -143,6 +156,24 @@ describe('formatOverviewComment', () => {
     expect(formatOverviewComment(base)).not.toContain('dashboard');
     const linked = formatOverviewComment({ ...base, dashboardBaseUrl: 'https://dash.example.com/' });
     expect(linked).toContain('https://dash.example.com/pulls/acme/app/7');
+  });
+
+  it('renders codebase impact after the complete files table', () => {
+    const body = formatOverviewComment({
+      ...base,
+      codebaseImpact: {
+        blastRadius: {
+          level: 'low',
+          changedSymbols: [],
+          affectedSymbols: [],
+          relatedTests: [],
+          riskSignals: [],
+          confidence: 'low',
+        },
+        reuseCandidates: [],
+      },
+    });
+    expect(body.indexOf('package-lock.json')).toBeLessThan(body.indexOf('## Codebase Impact'));
   });
 
   it('stops at complete rows inside the body budget and flags the rest', () => {

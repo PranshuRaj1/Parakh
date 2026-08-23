@@ -233,6 +233,68 @@ export interface FileAnalysis {
   overview: string;
 }
 
+export type CodeSymbolKind =
+  | 'file'
+  | 'function'
+  | 'method'
+  | 'class'
+  | 'interface'
+  | 'type'
+  | 'route'
+  | 'config';
+
+export type CodeEdgeType =
+  | 'imports'
+  | 'calls'
+  | 'extends'
+  | 'implements'
+  | 'exports'
+  | 'references'
+  | 'tested_by'
+  | 'uses_config'
+  | 'serves_route';
+
+export interface SymbolReference {
+  repo: string;
+  commitSha: string;
+  path: string;
+  qualifiedName: string;
+  kind: CodeSymbolKind;
+  startLine: number;
+  endLine: number;
+}
+
+export interface IndexedSymbol extends SymbolReference {
+  id: string;
+  signature: string;
+  exported: boolean;
+  normalizedBody: string;
+  bodyHash: string;
+  imports: string[];
+}
+
+export interface BlastRadiusReport {
+  level: 'low' | 'medium' | 'high';
+  changedSymbols: SymbolReference[];
+  affectedSymbols: SymbolReference[];
+  relatedTests: SymbolReference[];
+  riskSignals: string[];
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface ReuseCandidate {
+  changedSymbol: SymbolReference;
+  candidate: SymbolReference;
+  score: number;
+  signals: string[];
+  recommendation: string;
+}
+
+export interface CodebaseImpact {
+  blastRadius: BlastRadiusReport;
+  reuseCandidates: ReuseCandidate[];
+}
+
 /**
  * Raw generic finding from Gemini — severity is LLM-assigned.
  * No rule_id because this finding isn't tied to a stored rule.
