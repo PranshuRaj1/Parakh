@@ -1178,7 +1178,7 @@ async function executeReviewJobInternal(
         terminalFailedFiles: [],
         fileAnalyses: {},
         prOverview: null,
-        codebaseImpact: buildPrImpact(fullRepo, headSha ?? 'unknown', fileChunks),
+        codebaseImpact: buildPrImpact(fullRepo, headSha ?? 'unknown', fullFileChunks),
       };
     }
 
