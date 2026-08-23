@@ -87,7 +87,7 @@ export const githubProvider: CodeHostProvider = {
   },
 
   getInstallUrl(env: ProviderInstallEnv): string {
-    const slug = env.GITHUB_APP_SLUG ?? 'parakh-bot';
+    const slug = env.GITHUB_APP_SLUG ?? 'pranshu-parakh';
     return `https://github.com/apps/${slug}/installations/new`;
   },
 };

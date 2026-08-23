@@ -63,6 +63,7 @@ export default function AdminUsers({ initialUsers }: { initialUsers: DashboardUs
 }
 
 function UserRow({ user, saving, onUpdate }: { user: DashboardUser; saving: boolean; onUpdate: (login: string, status: 'approved' | 'declined') => void }) {
+  const isPending = user.status === 'pending';
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
@@ -71,8 +72,16 @@ function UserRow({ user, saving, onUpdate }: { user: DashboardUser; saving: bool
       </div>
       <div className="flex items-center gap-2">
         <span className="font-space-mono text-xs uppercase text-[#c5c0ff]">{user.status}</span>
-        <button onClick={() => onUpdate(user.githubLogin, 'approved')} disabled={saving} className="rounded-lg bg-[#00FF8C] px-3 py-2 text-sm font-bold text-black disabled:opacity-40">Approve</button>
-        <button onClick={() => onUpdate(user.githubLogin, 'declined')} disabled={saving} className="rounded-lg border border-[#ffb4ab]/50 px-3 py-2 text-sm font-bold text-[#ffb4ab] disabled:opacity-40">Decline</button>
+        {isPending ? (
+          <>
+            <button onClick={() => onUpdate(user.githubLogin, 'approved')} disabled={saving} className="rounded-lg bg-[#00FF8C] px-3 py-2 text-sm font-bold text-black disabled:opacity-40">Approve</button>
+            <button onClick={() => onUpdate(user.githubLogin, 'declined')} disabled={saving} className="rounded-lg border border-[#ffb4ab]/50 px-3 py-2 text-sm font-bold text-[#ffb4ab] disabled:opacity-40">Decline</button>
+          </>
+        ) : user.status === 'approved' ? (
+          <button onClick={() => onUpdate(user.githubLogin, 'declined')} disabled={saving} className="rounded-lg border border-[#ffb4ab]/50 px-3 py-2 text-sm font-bold text-[#ffb4ab] disabled:opacity-40">Remove access</button>
+        ) : (
+          <button onClick={() => onUpdate(user.githubLogin, 'approved')} disabled={saving} className="rounded-lg bg-[#00FF8C] px-3 py-2 text-sm font-bold text-black disabled:opacity-40">Approve</button>
+        )}
       </div>
     </div>
   );

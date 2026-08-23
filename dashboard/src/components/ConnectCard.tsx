@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GitBranch, Plug, Unplug, RefreshCw } from 'lucide-react';
 
+const GITHUB_APP_INSTALL_URL = 'https://github.com/apps/pranshu-parakh';
+
 export interface ConnectionInfo {
   provider: string;
   displayName: string;
@@ -151,19 +153,19 @@ export default function ConnectCard() {
       {connections.length > 0 && (
         <div className="pt-4 border-t border-white/10">
           <p className="font-dm-sans text-xs text-[#c0c9c0] mb-3">
-            Add another repo or a different code host:
+            Authorize Parakh, then choose the repositories where it should review pull requests.
           </p>
           <div className="flex flex-wrap gap-3">
             {connections.map((conn) => (
               <a
                 key={conn.provider}
-                href={conn.url}
+                href={conn.provider === 'github' ? GITHUB_APP_INSTALL_URL : conn.url}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2.5 px-5 rounded-lg hover:brightness-110 transition-all text-sm"
               >
                 <Plug className="w-4 h-4" />
-                Connect {conn.displayName}
+                Authorize & install {conn.displayName}
               </a>
             ))}
           </div>
