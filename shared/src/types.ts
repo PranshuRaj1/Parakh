@@ -354,6 +354,7 @@ export interface CommentJobPayload {
    * fails closed (rejects) when it's absent.
    */
   commenterLogin?: string;
+  acknowledgementPosted?: boolean;
 }
 
 export interface ContradictionJobPayload {
