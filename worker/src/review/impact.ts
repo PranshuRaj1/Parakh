@@ -1,7 +1,6 @@
 import type { CodebaseImpact } from '@parakh/shared';
 import { buildRepositoryIndex } from '../indexer/repository-index.js';
 import { analyzeBlastRadius } from './blast-radius.js';
-import { findReuseCandidates } from './reuse-detection.js';
 
 function diffSource(diff: string): string {
   return diff
@@ -20,5 +19,5 @@ export function buildPrImpact(repo: string, commitSha: string, fileChunks: Map<s
     blastRadius.confidence = 'low';
     blastRadius.riskSignals.unshift('PR-local index; unchanged repository callers were not available');
   }
-  return { blastRadius, reuseCandidates: findReuseCandidates(changed, changed) };
+  return { blastRadius, reuseCandidates: [] };
 }

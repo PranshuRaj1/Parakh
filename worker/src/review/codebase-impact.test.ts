@@ -3,6 +3,7 @@ import { buildRepositoryIndex } from '../indexer/repository-index.js';
 import { parseTypeScriptFile } from '../indexer/parser.js';
 import { analyzeBlastRadius } from './blast-radius.js';
 import { findReuseCandidates } from './reuse-detection.js';
+import { buildPrImpact } from './impact.js';
 
 const files = {
   'src/service.ts': `export function shared(value: string) { return value.trim(); }\nexport function changed(value: string) { return shared(value); }`,
@@ -44,5 +45,12 @@ class Service {
 }`);
     const method = symbols.find((symbol) => symbol.qualifiedName.endsWith('#run'));
     expect(method).toMatchObject({ startLine: 5, endLine: 9, imports: ['./shared'] });
+  });
+
+  it('does not report changed PR symbols as reuse candidates for themselves', () => {
+    const impact = buildPrImpact('acme/app', 'head', new Map([
+      ['src/new.ts', '+export function normalize(value: string) { return value.trim(); }'],
+    ]));
+    expect(impact.reuseCandidates).toEqual([]);
   });
 });
