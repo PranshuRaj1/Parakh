@@ -10,7 +10,7 @@ const STEPS = [
   {
     icon: 'install_mobile',
     title: '1. Install the app',
-    body: 'Click “Connect GitHub” and pick the account or organization where you want Parakh to review pull requests.',
+    body: 'Authorize Parakh on GitHub, then choose the account or organization and repositories where it can review pull requests.',
   },
   {
     icon: 'select_all',
@@ -35,8 +35,8 @@ export default async function ConnectPage() {
               Connect your repositories
             </h1>
             <p className="text-[#c0c9c0] font-dm-sans text-lg max-w-2xl">
-              Parakh reviews your pull requests with a GitHub App. Install it once,
-              then pick which repositories you want reviewed.
+              Authorize and install the Parakh GitHub App on your account, then pick
+              which repositories you want reviewed.
             </p>
           </div>
         </section>
