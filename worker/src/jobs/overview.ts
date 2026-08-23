@@ -111,7 +111,7 @@ function formatImpact(impact: CodebaseImpact): string {
     `- \`${symbol.qualifiedName}\` (${symbol.path}:${symbol.startLine})`;
   const lines = [`## Codebase Impact\n\n**Blast radius: ${report.level}**`];
   if (report.changedSymbols.length > 0) {
-    lines.push(`\nChanged symbols:\n${report.changedSymbols.map(symbolLine).join('\n')}`);
+    lines.push(`\nChanged symbols:\n${report.changedSymbols.slice(0, 20).map(symbolLine).join('\n')}`);
   }
   if (report.affectedSymbols.length > 0) {
     lines.push(`\nAffected callers:\n${report.affectedSymbols.slice(0, 12).map(symbolLine).join('\n')}`);
@@ -119,9 +119,9 @@ function formatImpact(impact: CodebaseImpact): string {
   if (report.relatedTests.length > 0) {
     lines.push(`\nRelated tests:\n${report.relatedTests.slice(0, 8).map((symbol) => `- \`${symbol.path}:${symbol.startLine}\``).join('\n')}`);
   }
-  if (report.riskSignals.length > 0) lines.push(`\nRisk signals:\n${report.riskSignals.map((signal) => `- ${signal}`).join('\n')}`);
+  if (report.riskSignals.length > 0) lines.push(`\nRisk signals:\n${report.riskSignals.slice(0, 8).map((signal) => `- ${signal}`).join('\n')}`);
   if (impact.reuseCandidates.length > 0) {
-    lines.push(`\nPossible reuse:\n${impact.reuseCandidates.map((candidate) => `- \`${candidate.candidate.qualifiedName}\` (${candidate.candidate.path}:${candidate.candidate.startLine})\n  ${candidate.signals.join('; ')}\n  ${candidate.recommendation}`).join('\n')}`);
+    lines.push(`\nPossible reuse:\n${impact.reuseCandidates.slice(0, 5).map((candidate) => `- \`${candidate.candidate.qualifiedName}\` (${candidate.candidate.path}:${candidate.candidate.startLine})\n  ${candidate.signals.join('; ')}\n  ${candidate.recommendation}`).join('\n')}`);
   }
   return lines.join('\n');
 }
@@ -132,6 +132,7 @@ function formatImpact(impact: CodebaseImpact): string {
  * exceed the budget, complete rows are included until it no longer fits.
  */
 export function formatOverviewComment(input: OverviewCommentInput): string {
+  const impact = input.codebaseImpact ? `\n${formatImpact(input.codebaseImpact)}\n` : '';
   let body =
     `# Parakh Overview\n\n## Score: ${input.score}/5\n\n## Overview\n\n${tableCell(input.prOverview)}\n\n## Files Changed\n\n` +
     '| File | Changes | Overview |\n| --- | ---: | --- |\n';
@@ -140,7 +141,7 @@ export function formatOverviewComment(input: OverviewCommentInput): string {
   let rows = '';
   for (const file of input.files) {
     const row = `| \`${tableCell(file.path)}\` | +${file.additions} / -${file.deletions} | ${tableCell(file.overview)} |\n`;
-    if (body.length + rows.length + row.length > OVERVIEW_BODY_BUDGET) {
+    if (body.length + rows.length + row.length + impact.length > OVERVIEW_BODY_BUDGET) {
       truncated = true;
       break;
     }
@@ -148,7 +149,7 @@ export function formatOverviewComment(input: OverviewCommentInput): string {
   }
   body += rows;
 
-  if (input.codebaseImpact) body += `\n${formatImpact(input.codebaseImpact)}\n`;
+  body += impact;
 
   if (truncated) {
     body += '\n_Additional changed files are available on the dashboard because this PR exceeds GitHub’s comment size limit._\n';

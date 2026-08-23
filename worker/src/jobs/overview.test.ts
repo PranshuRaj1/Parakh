@@ -186,6 +186,19 @@ describe('formatOverviewComment', () => {
     // Every included row is complete (no half-written row before the note).
     expect(body).toMatch(/\n\n_Additional changed files/);
   });
+
+  it('keeps a large impact report within GitHub comment limits', () => {
+    const symbol = { repo: 'acme/app', commitSha: 'head', path: `src/${'x'.repeat(150)}.ts`, qualifiedName: 'x'.repeat(150), kind: 'function' as const, startLine: 1, endLine: 2 };
+    const body = formatOverviewComment({
+      ...base,
+      files: Array.from({ length: 900 }, (_, i) => file({ path: `src/file-${i}.ts`, overview: 'x'.repeat(80) })),
+      codebaseImpact: {
+        blastRadius: { level: 'high', changedSymbols: Array(500).fill(symbol), affectedSymbols: Array(500).fill(symbol), relatedTests: Array(500).fill(symbol), riskSignals: Array(500).fill('risk'), confidence: 'low' },
+        reuseCandidates: [],
+      },
+    });
+    expect(body.length).toBeLessThan(65_536);
+  });
 });
 
 describe('upsertOverviewComment lifecycle', () => {
