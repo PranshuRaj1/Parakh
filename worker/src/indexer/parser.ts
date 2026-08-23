@@ -1,9 +1,9 @@
 import type { CodeSymbolKind, IndexedSymbol } from '@parakh/shared';
 
-const DECLARATION = /^(export\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|class\s+([A-Za-z_$][\w$]*)|interface\s+([A-Za-z_$][\w$]*)|type\s+([A-Za-z_$][\w$]*)\s*=|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^\n]*\)\s*=>)/;
-const METHOD = /^(?:export\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^\n]*\)\s*\{/;
-const TEST = /^(?:test|it|describe)\s*\(/;
-const IMPORT = /^import\s+(?:type\s+)?(?:[^'\"]+from\s+)?['\"]([^'\"]+)['\"]/;
+const DECLARATION = /^\s*(export\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|class\s+([A-Za-z_$][\w$]*)|interface\s+([A-Za-z_$][\w$]*)|type\s+([A-Za-z_$][\w$]*)\s*=|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([\s\S]*?\)\s*=>)/;
+const METHOD = /^\s*(?:export\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([\s\S]*?\)\s*\{/;
+const TEST = /^\s*(test|it|describe)\s*\(/;
+const IMPORT = /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['\"]([^'\"]+)['\"]/g;
 
 function hash(value: string): string {
   let result = 2166136261;
@@ -32,15 +32,11 @@ function kind(match: RegExpExecArray): CodeSymbolKind {
   return 'function';
 }
 
-function name(match: RegExpExecArray): string {
-  return match[2] || match[3] || match[4] || match[5] || match[6] || '';
-}
-
-function endLine(lines: string[], start: number): number {
+function endLine(lines: string[], sanitized: string[], start: number): number {
   let depth = 0;
   let opened = false;
   for (let i = start; i < lines.length; i++) {
-    for (const char of lines[i]) {
+    for (const char of sanitized[i]) {
       if (char === '{') {
         depth++;
         opened = true;
@@ -53,6 +49,12 @@ function endLine(lines: string[], start: number): number {
   return Math.min(lines.length, start + 1);
 }
 
+function stripStringsAndComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, (value) => value.replace(/[^\n]/g, ' '))
+    .replace(/\/\/.*$/gm, '')
+    .replace(/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g, (value) => value.replace(/[^\n]/g, ' '));
+}
+
 export function parseTypeScriptFile(
   repo: string,
   commitSha: string,
@@ -60,20 +62,22 @@ export function parseTypeScriptFile(
   source: string
 ): IndexedSymbol[] {
   const lines = source.split(/\r?\n/);
-  const imports = lines.map((line) => IMPORT.exec(line)?.[1]).filter((value): value is string => Boolean(value));
+  const sanitized = stripStringsAndComments(source).split(/\r?\n/);
+  const imports = [...source.matchAll(IMPORT)].map((match) => match[1]);
   const symbols: IndexedSymbol[] = [];
 
   lines.forEach((line, index) => {
-    const declarationMatch = DECLARATION.exec(line);
-    const methodMatch = declarationMatch ? null : METHOD.exec(line);
-    const testMatch = declarationMatch || methodMatch || (TEST.test(line)
-      ? ['test', '', '', '', '', '', line.match(/^(test|it|describe)/)?.[1] ?? 'test'] as unknown as RegExpExecArray
-      : null);
+    const header = lines.slice(index, index + 10).join('\n');
+    const declarationMatch = DECLARATION.exec(header);
+    const methodMatch = declarationMatch ? null : METHOD.exec(header);
+    const testMatch = declarationMatch || methodMatch || TEST.exec(line);
     const declaration = declarationMatch || methodMatch || testMatch;
     if (!declaration) return;
-    const symbolName = name(declaration);
+    const symbolName = declarationMatch
+      ? declaration.slice(2, 7).find(Boolean) ?? ''
+      : declaration[1];
     if (!symbolName || ['if', 'for', 'while', 'switch', 'catch'].includes(symbolName)) return;
-    const end = endLine(lines, index);
+    const end = endLine(lines, sanitized, index);
     const body = lines.slice(index, end).join('\n');
     const normalizedBody = normalize(body);
     const symbolKind = declarationMatch ? kind(declaration) : 'method';

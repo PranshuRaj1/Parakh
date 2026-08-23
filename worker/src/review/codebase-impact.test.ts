@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildRepositoryIndex } from '../indexer/repository-index.js';
+import { parseTypeScriptFile } from '../indexer/parser.js';
 import { analyzeBlastRadius } from './blast-radius.js';
 import { findReuseCandidates } from './reuse-detection.js';
 
@@ -28,5 +29,20 @@ describe('codebase impact analysis', () => {
     const changed = index.symbols.filter((symbol) => symbol.path === 'src/new.ts');
     const existing = index.symbols.filter((symbol) => symbol.path === 'src/shared.ts');
     expect(findReuseCandidates(changed, existing)).toHaveLength(1);
+  });
+
+  it('indexes indented methods, multiline signatures and imports, and ignores braces in strings', () => {
+    const symbols = parseTypeScriptFile('acme/app', 'head', 'src/service.ts', `import {
+  value
+} from './shared';
+class Service {
+  run(
+    input: string
+  ) {
+    return "}" + input;
+  }
+}`);
+    const method = symbols.find((symbol) => symbol.qualifiedName.endsWith('#run'));
+    expect(method).toMatchObject({ startLine: 5, endLine: 9, imports: ['./shared'] });
   });
 });
