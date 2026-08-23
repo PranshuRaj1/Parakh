@@ -56,7 +56,7 @@ Other important paths:
 
 | Path | Purpose |
 |---|---|
-| `db/migrations/` | PostgreSQL schema, applied in order by `db/migrate.ts`. |
+| `db/schema.ts` | Declarative PostgreSQL schema managed by Drizzle Kit. |
 | `.githooks/pre-push` | Runs the pipeline smoke test before every `git push`. |
 | `tests/` | Root-level test scaffolding (vitest config lives at the root). |
 
@@ -158,7 +158,13 @@ The rule of thumb: if it must survive a crash, it lives in Postgres. If it only 
 
 ## Database
 
-Postgres on Neon, applied by numbered migrations in `db/migrations/`. Migrations are manual: `wrangler deploy` ships code but never runs `db/migrate.ts`, so apply migrations before or with code that depends on new columns.
+Postgres runs on Neon. The desired database structure lives in `db/schema.ts`; apply schema changes before deploying dependent code:
+
+```bash
+DATABASE_URL=<neon-url> pnpm db:push
+```
+
+Drizzle Kit compares the declared schema with the target database and asks for confirmation before applying changes. The existing `db/migrations/` directory remains as historical context and must not receive new migrations. The pgvector extension must already be enabled on a new database before the first push.
 
 Main tables:
 
@@ -172,7 +178,7 @@ Main tables:
 | `review_reasoning` | Captured model "thinking" text, auto-pruned after a retention window. |
 | `review_file_events` | Per-file telemetry: which file, provider, model, and error when a file review fails. |
 | `provider_installations` | Connected code-host accounts (provider, owner) and the repos the app can see — written by `installation` webhooks, read by the dashboard Connect page. |
-| `schema_migrations` | Tracks which migration files have already run. |
+| `schema_migrations` | Historical record of migrations applied before the schema-push workflow. |
 
 Two pieces worth calling out:
 
@@ -216,7 +222,7 @@ The dashboard runs with `next dev` from `dashboard/` and reads the same `DATABAS
 
 ### Deploying
 
-1. Apply any new migrations first: `DATABASE_URL=<neon-url> npx tsx db/migrate.ts` from the repo root.
+1. Push the declared schema first: `DATABASE_URL=<neon-url> pnpm db:push` from the repo root.
 2. Deploy the worker: `cd worker && npm run deploy`.
 3. Verify on the dashboard that the new review reaches COMPLETED.
 
