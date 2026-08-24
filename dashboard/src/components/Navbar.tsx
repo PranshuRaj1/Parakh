@@ -25,8 +25,8 @@ export default function Navbar() {
   const pathname = usePathname();
 
   return (
-    <nav className="glass-card mb-8 rounded-t-none border-t-0 px-6 py-4">
-      <div className="flex justify-between items-center h-12">
+    <nav className="glass-card sticky top-0 z-50 rounded-t-none border-t-0 px-6 py-3">
+      <div className="flex justify-between items-center h-11">
         <div className="flex items-center">
           <div className="flex-shrink-0 flex items-center">
             <Link href="/" className="flex items-center">
