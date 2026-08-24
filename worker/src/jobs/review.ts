@@ -842,8 +842,8 @@ const USER_KEYS_GATE_MARKER = '<!-- parakh-no-keys-gate -->';
  * never starts — we post one explanatory PR comment and mark the review FAILED
  * so redeliveries skip it.
  *
- * Returns the resolved creds when the gate passes, null when it blocked the
- * review (caller should return immediately).
+ * Returns resolved credentials when the gate passes, null when no usable
+ * credentials exist.
  */
 export async function applyUserKeysGate(
   owner: string,
@@ -925,7 +925,7 @@ async function executeReviewJobInternal(
     // BYO-keys hard gate: reviews bill against the installing user's own LLM
     // keys. No Gemini keys → explain + FAILED + skip (never uses shared env keys).
     const userCreds = await applyUserKeysGate(owner, repo, prNumber, token, reviewId, env);
-    if (!userCreds) return;
+    if (userCreds === null) return;
     // attempt number = the queue delivery count (1 = first delivery, 2+ =
     // redelivery). Using it as the stage attempt gives each delivery its own
     // attempt_number in review_step_events, which the unique index
