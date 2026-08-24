@@ -98,7 +98,7 @@ export async function getStoredUserLLMKeysByLogin(
              k.cfai_account_id, k.openrouter_keys, k.updated_at
       FROM user_llm_keys k
       JOIN dashboard_users d ON d.github_id = k.github_id
-      WHERE d.github_login = ${login}
+      WHERE lower(d.github_login) = lower(${login})
     `,
     DB_RETRY_OPTS
   );
