@@ -3,7 +3,10 @@ import type { Env } from '../index.js';
 
 const { mockResolveUserCreds } = vi.hoisted(() => ({ mockResolveUserCreds: vi.fn() }));
 
-vi.mock('../llm/user-creds.js', () => ({ resolveUserCreds: mockResolveUserCreds }));
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: (login: string) => login.toLowerCase() === 'pranshuraj1',
+}));
 vi.mock('../github/api.js', () => ({ postCommentOnce: vi.fn() }));
 vi.mock('../db/reviews.js', () => ({ updateReviewStatus: vi.fn() }));
 
@@ -40,48 +43,36 @@ beforeEach(() => {
 });
 
 describe('applyUserKeysGate', () => {
-  it('passes when the installing user has Gemini keys', async () => {
+  it('uses environment keys for users other than PranshuRaj1', async () => {
     mockResolveUserCreds.mockResolvedValue(WITH_KEYS);
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);
 
-    expect(creds).toEqual(WITH_KEYS);
+    expect(creds).toBeUndefined();
     expect(mocked.postCommentOnce).not.toHaveBeenCalled();
     expect(mocked.updateReviewStatus).not.toHaveBeenCalled();
   });
 
-  it('blocks with a PR comment + FAILED when no installer exists', async () => {
+  it('uses environment keys when no saved keys exist for another user', async () => {
     mockResolveUserCreds.mockResolvedValue(null);
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);
 
-    expect(creds).toBeNull();
-    expect(mocked.postCommentOnce).toHaveBeenCalledWith(
-      'acme', 'app', 7,
-      expect.stringContaining('no LLM API keys configured'),
-      expect.stringContaining('parakh-no-keys-gate'),
-      'token'
-    );
-    expect(mocked.updateReviewStatus).toHaveBeenCalledWith('review-1', 'FAILED', env);
+    expect(creds).toBeUndefined();
+    expect(mocked.postCommentOnce).not.toHaveBeenCalled();
+    expect(mocked.updateReviewStatus).not.toHaveBeenCalled();
   });
 
-  it('blocks with a PR comment + FAILED when the installer has no Gemini keys', async () => {
-    mockResolveUserCreds.mockResolvedValue({ ...WITH_KEYS, geminiKeys: [] });
+  it('uses saved keys for PranshuRaj1', async () => {
+    mockResolveUserCreds.mockResolvedValue({ ...WITH_KEYS, githubLogin: 'PranshuRaj1' });
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);
 
-    expect(creds).toBeNull();
-    expect(mocked.postCommentOnce).toHaveBeenCalledWith(
-      'acme', 'app', 7,
-      expect.stringContaining('**installer-user**'),
-      expect.any(String),
-      'token'
-    );
-    expect(mocked.updateReviewStatus).toHaveBeenCalledWith('review-1', 'FAILED', env);
+    expect(creds).toEqual({ ...WITH_KEYS, githubLogin: 'PranshuRaj1' });
   });
 
   it('still FAILs the review when the PR comment cannot be posted', async () => {
-    mockResolveUserCreds.mockResolvedValue(null);
+    mockResolveUserCreds.mockResolvedValue({ ...WITH_KEYS, githubLogin: 'PranshuRaj1', geminiKeys: [] });
     mocked.postCommentOnce.mockRejectedValue(new Error('github down'));
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);

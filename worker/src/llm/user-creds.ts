@@ -30,6 +30,15 @@ export interface UserLLMCreds {
   openrouterKey: string | null;
 }
 
+const SHARED_KEY_LOGIN = new Map([
+  ['pranshuraj1', 'pranshu3961-lang'],
+  ['pranshu3961-lang', 'PranshuRaj1'],
+]);
+
+export function isSharedLLMKeyAccount(login: string): boolean {
+  return SHARED_KEY_LOGIN.has(login.toLowerCase());
+}
+
 /**
  * Resolve the keys of the user who installed Parakh on `owner`'s account.
  * Returns null when there is no installation, no installer, or no stored keys.
@@ -45,7 +54,9 @@ export async function resolveUserCredsByLogin(
   login: string,
   env: Env
 ): Promise<UserLLMCreds | null> {
-  const stored = await getStoredUserLLMKeysByLogin(login, env);
+  let stored = await getStoredUserLLMKeysByLogin(login, env);
+  const sharedLogin = SHARED_KEY_LOGIN.get(login.toLowerCase());
+  if (!stored && sharedLogin) stored = await getStoredUserLLMKeysByLogin(sharedLogin, env);
   if (!stored) return null;
   const secret = env.LLM_KEY_ENCRYPTION_SECRET;
   if (!secret) throw new Error('LLM_KEY_ENCRYPTION_SECRET is not configured');
