@@ -30,13 +30,25 @@ export interface UserLLMCreds {
   openrouterKey: string | null;
 }
 
-const SHARED_KEY_LOGIN = new Map([
-  ['pranshuraj1', 'pranshu3961-lang'],
-  ['pranshu3961-lang', 'PranshuRaj1'],
-]);
+const MASTER_LOGIN = 'PranshuRaj1';
 
 export function isSharedLLMKeyAccount(login: string): boolean {
-  return SHARED_KEY_LOGIN.has(login.toLowerCase());
+  return login.toLowerCase() === MASTER_LOGIN.toLowerCase();
+}
+
+function parseKeys(...values: (string | undefined)[]): string[] {
+  return values.flatMap(value => value?.split(',') ?? []).map(value => value.trim()).filter(Boolean);
+}
+
+function getMasterEnvCreds(env: Env): UserLLMCreds {
+  return {
+    githubLogin: MASTER_LOGIN,
+    geminiKeys: parseKeys(env.GEMINI_API_KEYS, env.GEMINI_API_KEY),
+    groqKeys: parseKeys(env.GROQ_API_KEYS, env.GROQ_API_KEY),
+    cfaiAccountId: env.CF_ACCOUNT_ID?.trim() || null,
+    cfaiToken: env.CF_API_TOKEN?.trim() || null,
+    openrouterKey: env.OPENROUTER_API_KEY?.trim() || null,
+  };
 }
 
 /**
@@ -44,6 +56,7 @@ export function isSharedLLMKeyAccount(login: string): boolean {
  * Returns null when there is no installation, no installer, or no stored keys.
  */
 export async function resolveUserCreds(owner: string, env: Env): Promise<UserLLMCreds | null> {
+  if (owner.toLowerCase() === MASTER_LOGIN.toLowerCase()) return getMasterEnvCreds(env);
   const installation = await getInstallationByOwner('github', owner, env);
   if (!installation?.installedBy) return null;
   return resolveUserCredsByLogin(installation.installedBy, env);
@@ -55,8 +68,6 @@ export async function resolveUserCredsByLogin(
   env: Env
 ): Promise<UserLLMCreds | null> {
   let stored = await getStoredUserLLMKeysByLogin(login, env);
-  const sharedLogin = SHARED_KEY_LOGIN.get(login.toLowerCase());
-  if (!stored && sharedLogin) stored = await getStoredUserLLMKeysByLogin(sharedLogin, env);
   if (!stored) return null;
   const secret = env.LLM_KEY_ENCRYPTION_SECRET;
   if (!secret) throw new Error('LLM_KEY_ENCRYPTION_SECRET is not configured');

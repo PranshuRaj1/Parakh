@@ -5,7 +5,6 @@ const { mockResolveUserCreds } = vi.hoisted(() => ({ mockResolveUserCreds: vi.fn
 
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
-  isSharedLLMKeyAccount: (login: string) => login.toLowerCase() === 'pranshuraj1',
 }));
 vi.mock('../github/api.js', () => ({ postCommentOnce: vi.fn() }));
 vi.mock('../db/reviews.js', () => ({ updateReviewStatus: vi.fn() }));
@@ -43,24 +42,22 @@ beforeEach(() => {
 });
 
 describe('applyUserKeysGate', () => {
-  it('uses environment keys for users other than PranshuRaj1', async () => {
+  it('uses saved keys for standard users', async () => {
     mockResolveUserCreds.mockResolvedValue(WITH_KEYS);
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);
 
-    expect(creds).toBeUndefined();
+    expect(creds).toEqual(WITH_KEYS);
     expect(mocked.postCommentOnce).not.toHaveBeenCalled();
     expect(mocked.updateReviewStatus).not.toHaveBeenCalled();
   });
 
-  it('uses environment keys when no saved keys exist for another user', async () => {
+  it('blocks users with no saved keys', async () => {
     mockResolveUserCreds.mockResolvedValue(null);
 
     const creds = await applyUserKeysGate('acme', 'app', 7, 'token', 'review-1', env);
 
-    expect(creds).toBeUndefined();
-    expect(mocked.postCommentOnce).not.toHaveBeenCalled();
-    expect(mocked.updateReviewStatus).not.toHaveBeenCalled();
+    expect(creds).toBeNull();
   });
 
   it('uses saved keys for PranshuRaj1', async () => {
