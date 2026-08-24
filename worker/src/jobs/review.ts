@@ -85,7 +85,7 @@ import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTE
 import type { LLMClient } from '../llm/provider.js';
 import { AllProvidersFailedError, ProviderResponseError } from '../llm/errors.js';
 import { createLLMClients } from '../llm/factory.js';
-import { resolveUserCreds, type UserLLMCreds } from '../llm/user-creds.js';
+import { isSharedLLMKeyAccount, resolveUserCreds, type UserLLMCreds } from '../llm/user-creds.js';
 import {
   SubrequestBudget,
   SubrequestBudgetExceededError,
@@ -852,9 +852,10 @@ export async function applyUserKeysGate(
   token: string,
   reviewId: string,
   env: Env
-): Promise<UserLLMCreds | null> {
+): Promise<UserLLMCreds | null | undefined> {
   const creds = await resolveUserCreds(owner, env);
-  if (creds && creds.geminiKeys.length > 0) return creds;
+  if (!creds || !isSharedLLMKeyAccount(creds.githubLogin)) return undefined;
+  if (creds.geminiKeys.length > 0) return creds;
 
   const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
   const dashboardLink = base ? `[${base}/settings](${base}/settings)` : 'the dashboard Settings page';
