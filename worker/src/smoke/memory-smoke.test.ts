@@ -142,6 +142,7 @@ vi.mock('../llm/factory.js', () => ({
 // BYO-keys gate: stub the installer lookup to an installed user WITH keys.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: () => true,
 }));
 
 // ─── Imports (real orchestration code) ──────────────────────────────────────

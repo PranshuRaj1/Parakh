@@ -78,6 +78,7 @@ vi.mock('./correction.js', () => ({
 // before building the client stack. Stubbed to an installed user WITH keys.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: () => true,
 }));
 
 import { executeCommentResponseJob } from './comment-response.js';

@@ -12,6 +12,7 @@ const { mockGenerateEmbedding, mockClassifyPriority, mockResolveUserCreds } = vi
 // creation proceeds; the no-keys skip is covered by its own unit test.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: () => true,
 }));
 
 // Stub the LLM factory so the correction path can run without a real model:

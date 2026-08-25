@@ -10,6 +10,7 @@ const { classifyRelationshipMock, mockResolveUserCreds } = vi.hoisted(() => ({
 // building the client stack. Stubbed to an installed user WITH keys.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: () => true,
 }));
 
 // Stub the LLM factory: only classifyRelationship drives the contradiction

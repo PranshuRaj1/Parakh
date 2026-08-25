@@ -5,7 +5,10 @@ import type { ReviewResult } from '../gemini/client.js';
 const { resolveUserCredsMock } = vi.hoisted(() => ({ resolveUserCredsMock: vi.fn() }));
 
 vi.mock('../github/auth.js', () => ({ getCachedToken: vi.fn() }));
-vi.mock('../llm/user-creds.js', () => ({ resolveUserCreds: resolveUserCredsMock }));
+vi.mock('../llm/user-creds.js', () => ({
+  resolveUserCreds: resolveUserCredsMock,
+  isSharedLLMKeyAccount: () => true,
+}));
 
 vi.mock('../github/api.js', () => ({
   fetchDiff: vi.fn(),

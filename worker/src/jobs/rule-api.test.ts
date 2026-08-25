@@ -15,6 +15,7 @@ const { mockGenerateEmbedding, mockClassifyPriority, mockConsoleError, sqlImpl, 
 // test below.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: mockResolveUserCreds,
+  isSharedLLMKeyAccount: () => true,
 }));
 
 // Stub the LLM factory so rule creation can run without a real model call:
