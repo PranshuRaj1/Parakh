@@ -2,7 +2,7 @@ import type { ConventionRule, ConventionSourceFile } from '@parakh/shared';
 import { isInstructionRule } from '../../jobs/rule-quality.js';
 
 /** Repo convention files, in precedence order. Nothing else is ever parsed. */
-export const CONVENTION_FILES = ['AGENTS.md', 'CLAUDE.md', '.parakh/rules.md'] as const;
+export const CONVENTION_FILES = ['.parakh/rules.md', 'AGENTS.md', 'CLAUDE.md'] as const;
 
 /**
  * Total convention-body characters injected into one review prompt before

@@ -75,6 +75,9 @@ ATTENTION_FOCUS_ENABLED = "true"
 BOUNDED_RAW_DIFFS_ENABLED = "true"
 # One LLM call at review start reads the execution diff and shapes the focus.
 REVIEW_START_FOCUS_ENABLED = "true"
+# Inject repo convention files (.parakh/rules.md / AGENTS.md / CLAUDE.md) into
+# review prompts. Kill switch: flip to "false" — the loader degrades silently.
+REPO_CONVENTIONS_ENABLED = "true"
 # Optional tertiary/quaternary generation models (no secrets on the vars side).
 CFAI_GENERATION_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 OPENROUTER_GENERATION_MODEL = "meta-llama/llama-3.3-70b-instruct"

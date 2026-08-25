@@ -44,7 +44,6 @@ body {
 
 .glass-card:hover {
   border-color: rgba(255, 255, 255, 0.2);
-  transform: scale(1.01);
   box-shadow: 0 0 15px 0 rgba(0, 255, 140, 0.15); /* Subtle mint glow using mint-vibrant */
 }
 

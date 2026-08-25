@@ -4,13 +4,13 @@ An AI code-review bot for GitHub that learns from your feedback. Parakh reviews 
 
 ## What is Parakh
 
-Parakh is a GitHub App built on Cloudflare Workers. When you open a PR or mention `@parakh` in a comment, it sends your diff to Gemini, turns the model output into structured findings, scores the PR, and posts the result. Correct it in a comment and it saves that correction as a rule in its memory, then enforces the rule on future reviews. Tell it to stop flagging something and it stops, deterministically, not just by hoping the model behaves.
+Parakh is a GitHub App built on Cloudflare Workers. When you open or reopen a PR, or mention `@parakh` in a comment, it reviews a SHA-pinned diff through the configured LLM provider chain, turns the model output into structured findings, scores the PR, and posts the result. Correct it in a comment and it saves that correction as a rule in its memory, then enforces the rule on future reviews. Tell it to stop flagging something and deterministic suppression removes that finding even when the model repeats it.
 
 This README is the entry point. For the deep story of how the pipeline evolved and why it looks the way it does, read [architecture.md](architecture.md). For the competitive analysis of how Greptile's memory works, read [greptile-architecture.md](greptile-architecture.md).
 
 ## System at a glance
 
-Parakh is one Worker with three entry points, all owned by the same `parakh-worker` deployable:
+Parakh uses one `parakh-worker` deployable with three Cloudflare Worker handlers:
 
 ```
 GitHub webhook ──► fetch handler ──► enqueue ──►┐
@@ -36,9 +36,9 @@ cron (every min)──► scheduled handler ─────────►┤
                         └───────────────────────────────────────┘
 ```
 
-The three invocation contexts:
+The three invocation contexts are:
 
-- `fetch`: the webhook endpoint (`POST /webhook`) and the dashboard APIs (`POST /api/rules`, `POST /api/reviews/:id/retry`). Fast on purpose. It verifies the signature, inserts a row, and enqueues. It never does review work itself.
+- `fetch`: the webhook endpoint (`POST /webhook`) and dashboard APIs for rules, retries, repository connections, and user LLM keys. Webhooks verify the signature, acknowledge the event, persist the required state, and enqueue work. Fetch handlers do not run reviews.
 - `queue`: the `parakh-watchdog` queue consumer runs every job in resumable slices. This is where reviews, comment intents, and contradiction checks actually run.
 - `scheduled`: a minutely cron is the watchdog. It sweeps stalled reviews, prunes expired reasoning, and auto-resumes daily-quota-paused reviews.
 
@@ -57,6 +57,8 @@ Other important paths:
 | Path | Purpose |
 |---|---|
 | `db/schema.ts` | Declarative PostgreSQL schema managed by Drizzle Kit. |
+| `worker/src/providers/` | Code-host adapter layer. GitHub is the active provider; the registry keeps provider-specific webhook and installation payloads out of the core pipeline. |
+| `worker/src/indexer/` | TypeScript and JavaScript symbol and relationship indexing used for pull-request impact analysis. |
 | `.githooks/pre-push` | Runs the pipeline smoke test before every `git push`. |
 | `tests/` | Root-level test scaffolding (vitest config lives at the root). |
 
@@ -72,12 +74,23 @@ webhook pull_request.opened
   └─ enqueue REVIEW job
 ```
 
+**A new commit on an existing PR:**
+
+```
+webhook pull_request.synchronize
+  └─ clear stale Redis review state
+       └─ wait for an explicit `@parakh review` or `@parakh full review`
+```
+
+Parakh does not automatically re-review every push while incremental rollout is gated.
+
 **A comment mentioning `@parakh`:**
 
 ```
 webhook issue_comment.created
   └─ enqueue COMMENT_RESPONSE job
-       └─ classify intent (Gemini): CORRECTION / EXPLANATION / DISMISSAL
+       └─ classify intent through the configured user-owned LLM chain:
+          CORRECTION / EXPLANATION / DISMISSAL
           / QUESTION / REVIEW_REQUEST / GENERAL
             ├─ REVIEW_REQUEST  → trigger a review (or resume one)
             ├─ CORRECTION      → save a rule, reply "Learned" / "Noted"
@@ -91,14 +104,18 @@ webhook issue_comment.created
 ```
 acquire Redis lock (fresh heartbeat skips, stale lock is stolen)
 load SHA-pinned diff (immutable between deliveries)
+load learned rules and repository conventions
+plan full or incremental execution mode
 start stage events (FETCHING_DIFF, LOADING_RULES, REVIEWING_FILES, ...)
 budget = SubrequestBudget(44)
 for each batch of files (concurrency 2):
-  per file: Gemini review → findings → save per-file state to Redis
+  per file: bounded diff + file context → provider chain → findings
+  verify findings against full file content → reconcile with prior findings
+  save per-file state to Redis
   heartbeat + refresh lock + update live pointer
   on budget exceeded → checkpoint and throw, queue redelivers
 when all files done:
-  finalizeReview: score → post comment → 👍 / 👎 verdict reactions
+  finalizeReview: score → upsert overview → post anchored findings → reactions
 ```
 
 For the full reliability story behind this, see [Reliability model](#reliability-model) and [architecture.md](architecture.md).
@@ -112,10 +129,10 @@ For the full reliability story behind this, see [Reliability model](#reliability
 | Cron triggers | The minutely watchdog: sweeps stuck reviews, prunes reasoning, auto-resumes quota-paused reviews. | A Worker cannot run forever, so long-running work is illegal by design. |
 | Neon Postgres + pgvector | Serverless HTTP driver (`@neondatabase/serverless`) works on the edge, and pgvector powers the contradiction engine's similarity search over rule embeddings. | Every query costs a subrequest against the 50 cap. |
 | Upstash Redis | Stores per-delivery checkpoint state, review locks, LLM key cooldowns, and cached GitHub tokens. Redis backing survives queue redeliveries where an in-memory store would reset. | State is ephemeral and TTL-bound; Redis is not the source of truth. |
-| Gemini | Primary LLM: reviews diffs, classifies comment intent and rule priority. | Free-tier quotas are tight, which is why everything else below exists. |
+| Gemini | Default primary LLM: reviews diffs, classifies comment intent, extracts rules, and assigns rule priority. | Free-tier quotas are tight, so the pipeline supports configured fallbacks. |
 | Groq, Cloudflare Workers AI, OpenRouter | Ordered failover chain. When Gemini exhausts every key, a call falls through to the next configured provider so a quota on one vendor never stalls a review. | Fallbacks are only used on exhaustion, never on plain request errors. |
 | GitHub App | Installation tokens and webhooks for PR events, comments, and reviews. | The app's private key is a shared secret any code with it can impersonate, hence the Redis lock. |
-| Next.js (dashboard) | App router UI over the same Neon database, plus server routes that call the worker API for writes. | Reads hit Postgres directly; writes route through the worker so the dashboard never touches Gemini. |
+| Next.js (dashboard) | App Router UI for reviews, progress, reasoning, memory, repository connections, administration, and user-owned LLM keys. | Reads hit Postgres directly; writes route through the worker so the dashboard never runs review LLM calls. |
 
 ## How we switch context
 
@@ -129,7 +146,7 @@ The Worker has three handlers and they never share a running process. Work moves
 - Database rows carry the *truth*: the `reviews` row records status, stage, score, and reactions.
 - Redis carries the *ephemeral state*: per-file checkpoints, the lock, key cooldowns.
 
-The webhook hands off to the queue because it cannot survive a multi-file Gemini review inside its 10s ack window. The queue hands off to Redis state because a delivery can die at any moment (timeout, subrequest cap) and the next delivery must resume. The cron hands off to the queue when it finds a stuck or quota-paused review, re-enqueueing it with its existing review id.
+The webhook hands off to the queue because it cannot survive a multi-file review inside its 10s ack window. The queue hands off to Redis state because a delivery can die at any moment due to a timeout or subrequest cap, and the next delivery must resume. The cron hands off to the queue when it finds a stuck or quota-paused review, re-enqueuing it with its existing review id.
 
 ### LLM provider switching
 
@@ -144,6 +161,12 @@ Within a pool, keys rotate one by one. A key that hits a rate limit gets parked 
 
 Embeddings follow their own chain: providers without an embedding endpoint (OpenRouter) are skipped, and the first provider that can embed wins.
 
+### Review context and finding lifecycle
+
+Each file review combines the bounded execution diff with full-file context when available. A review-start focus step identifies important files and prior findings. Repository convention files such as `AGENTS.md`, `CLAUDE.md`, and `.parakh/rules.md` join learned rules as a per-review overlay. A verification pass rejects findings that the pinned file content does not support.
+
+For incremental reviews, the planner selects changed files and the finding ledger carries forward, renames, or resolves findings from the parent review. The feature is currently shadow-first and falls back to a full review when its safety checks fail. Review output is persisted as one updatable overview comment, with individual findings posted as anchored, reply-able comments.
+
 ### Storage and data-layer switching
 
 The same `@parakh/shared` types appear in the worker, the dashboard, and the database, but each store has a distinct role:
@@ -153,6 +176,8 @@ The same `@parakh/shared` types appear in the worker, the dashboard, and the dat
 | Neon Postgres | Rules, reviews, step events, reasoning, file events, relationships | Durable, queryable source of truth the dashboard reads directly. |
 | Upstash Redis | Per-delivery checkpoints, locks, key cooldowns, token cache | Fast, transient, survives redelivery, and its TTLs auto-clean abandoned state. |
 | Cloudflare Queues | In-flight job messages | The durable carrier between invocation contexts, with retry semantics. |
+
+The schema reserves `code_index_files`, `code_index_symbols`, `code_index_edges`, and `code_index_runs` for commit-pinned repository structure and code relationships. The current impact analysis builds an in-memory index from changed review files. No separate background indexing workflow persists those tables yet.
 
 The rule of thumb: if it must survive a crash, it lives in Postgres. If it only needs to survive a redelivery, it lives in Redis. If it is work still in progress, it lives in the queue.
 
@@ -177,7 +202,10 @@ Main tables:
 | `review_step_events` | Append-only log of every pipeline stage: start/end, duration, outcome, error, and reason transitions. This is what makes failures observable. |
 | `review_reasoning` | Captured model "thinking" text, auto-pruned after a retention window. |
 | `review_file_events` | Per-file telemetry: which file, provider, model, and error when a file review fails. |
-| `provider_installations` | Connected code-host accounts (provider, owner) and the repos the app can see — written by `installation` webhooks, read by the dashboard Connect page. |
+| `provider_installations` | Connected code-host accounts (provider, owner) and the repos the app can see, written by `installation` webhooks and read by the dashboard Connect page. |
+| `code_index_files`, `code_index_symbols`, `code_index_edges`, `code_index_runs` | Commit-pinned repository structure and code relationships used by impact analysis. |
+| `dashboard_users` | GitHub dashboard identities and pending, approved, or declined access status. |
+| `user_llm_keys` | Encrypted user-owned provider keys used for review and comment-triggered LLM work. |
 | `schema_migrations` | Historical record of migrations applied before the schema-push workflow. |
 
 Two pieces worth calling out:
@@ -191,6 +219,8 @@ Parakh's pipeline is built to survive its own platform. The short version:
 
 - **Subrequest budget**: a `SubrequestBudget(44)` counter caps each delivery before Cloudflare's real 50. Hitting it is a checkpoint, not a failure, so the queue redelivers and work resumes.
 - **Checkpoint and resume**: per-file state saves to Redis (`completedFiles`, `accumulatedFindings`) plus a SHA-pinned diff mean a redelivery starts from the exact file it left off at.
+- **Provider-owned billing**: reviews and comment-triggered LLM work normally resolve the repository installer and use that account's encrypted provider keys. Missing keys fail closed instead of silently using shared credentials.
+- **Finding verification**: model findings are checked against full file content, bounded input, repository conventions, learned suppression rules, and the prior finding ledger before they reach GitHub.
 - **Observable stages**: `review_step_events` turns "reviews fail on big PRs" into "here are the concrete bugs". Keep it.
 - **Watchdog**: the cron marks anything stalled past 12 minutes as TIMED_OUT, posts a "reply @parakh review to retry" comment, and frees the lock.
 - **Pre-push safety net**: `.githooks/pre-push` runs the pipeline smoke test, which exercises the real webhook → queue → `triggerReview` chain with only leaf dependencies mocked. A broken comment-to-review wiring blocks the push.
@@ -199,7 +229,7 @@ The full story of how each of these came to be is in [architecture.md](architect
 
 ## Getting started
 
-Prerequisites: Node 18+, a Cloudflare account, a GitHub App, a Neon database, and an Upstash Redis instance.
+Prerequisites: Node 18+, a Cloudflare account, a GitHub App, a Neon database, an Upstash Redis instance, and a dashboard OAuth application.
 
 ```bash
 npm install
@@ -216,9 +246,9 @@ cd worker
 wrangler dev
 ```
 
-Secrets live in `worker/.dev.vars` (gitignored). The full list of expected secrets is documented in `worker/wrangler.toml`. Minimum set: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_BOT_USER_ID`, `DATABASE_URL`, `UPSTASH_REDIS_URL`, `UPSTASH_REDIS_TOKEN`, `GEMINI_API_KEY`, `WORKER_API_SECRET`. Optional: `GITHUB_APP_SLUG` (public app slug used to build the dashboard "Connect" link; defaults to `parakh-bot`).
+Secrets live in `worker/.dev.vars` (gitignored). The full list of expected bindings is documented in `worker/wrangler.toml`. The worker needs GitHub App credentials, `DATABASE_URL`, Upstash Redis credentials, `WORKER_API_SECRET`, and at least one usable LLM key for the installing account. Set `LLM_KEY_ENCRYPTION_SECRET` for dashboard-managed keys. The dashboard needs `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `DATABASE_URL`, `WORKER_API_URL`, `WORKER_API_SECRET`, and `DASHBOARD_ADMIN_LOGINS`. Optional: `GITHUB_APP_SLUG` (public app slug used to build the dashboard Connect link; defaults to `parakh-bot`).
 
-The dashboard runs with `next dev` from `dashboard/` and reads the same `DATABASE_URL`.
+The dashboard runs with `npm run dev` from `dashboard/` and reads the same `DATABASE_URL`.
 
 ### Deploying
 

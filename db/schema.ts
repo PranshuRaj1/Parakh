@@ -38,11 +38,14 @@ export const rules = pgTable(
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     kind: text().notNull().default('standard'),
     createdBy: text('created_by'),
+    mode: text().notNull().default('enforce'),
+    patterns: jsonb().notNull().default([]),
   },
   (table) => [
     check('rules_status_check', sql`${table.status} in ('ACTIVE', 'SUPERSEDED', 'INACTIVE', 'PENDING')`),
     check('rules_priority_check', sql`${table.priority} in ('high', 'normal')`),
     check('rules_kind_check', sql`${table.kind} in ('standard', 'instruction')`),
+    check('rules_mode_check', sql`${table.mode} in ('enforce', 'suppress')`),
     foreignKey({ name: 'rules_supersedes_fkey', columns: [table.supersedes], foreignColumns: [rules.id] }),
     foreignKey({ name: 'rules_superseded_by_fkey', columns: [table.supersededBy], foreignColumns: [rules.id] }),
     index('idx_rules_repo_status').on(table.repo, table.status),
@@ -70,6 +73,85 @@ export const ruleRelationships = pgTable(
     foreignKey({ name: 'rule_relationships_to_rule_id_fkey', columns: [table.toRuleId], foreignColumns: [rules.id] }),
     index('idx_rule_relationships_from').on(table.fromRuleId),
     index('idx_rule_relationships_to').on(table.toRuleId),
+  ]
+);
+
+export const codeIndexFiles = pgTable(
+  'code_index_files',
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    repo: text().notNull(),
+    commitSha: text('commit_sha').notNull(),
+    path: text().notNull(),
+    contentHash: text('content_hash').notNull(),
+    language: text().notNull(),
+    indexedAt: timestamp('indexed_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    check('code_index_files_language_check', sql`${table.language} in ('typescript', 'javascript')`),
+    uniqueIndex('idx_code_index_files_identity').on(table.repo, table.commitSha, table.path),
+  ]
+);
+
+export const codeIndexSymbols = pgTable(
+  'code_index_symbols',
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    repo: text().notNull(),
+    commitSha: text('commit_sha').notNull(),
+    fileId: uuid('file_id').notNull(),
+    qualifiedName: text('qualified_name').notNull(),
+    kind: text().notNull(),
+    signature: text().notNull(),
+    startLine: integer('start_line').notNull(),
+    endLine: integer('end_line').notNull(),
+    exported: boolean().notNull().default(false),
+    normalizedBody: text('normalized_body').notNull(),
+    bodyHash: text('body_hash').notNull(),
+  },
+  (table) => [
+    check('code_index_symbols_kind_check', sql`${table.kind} in ('file', 'function', 'method', 'class', 'interface', 'type', 'route', 'config')`),
+    foreignKey({ name: 'code_index_symbols_file_id_fkey', columns: [table.fileId], foreignColumns: [codeIndexFiles.id] }).onDelete('cascade'),
+    index('idx_code_index_symbols_lookup').on(table.repo, table.commitSha, table.qualifiedName),
+    index('idx_code_index_symbols_body_hash').on(table.repo, table.bodyHash),
+  ]
+);
+
+export const codeIndexEdges = pgTable(
+  'code_index_edges',
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    repo: text().notNull(),
+    commitSha: text('commit_sha').notNull(),
+    fromSymbolId: uuid('from_symbol_id').notNull(),
+    toSymbolId: uuid('to_symbol_id').notNull(),
+    edgeType: text('edge_type').notNull(),
+  },
+  (table) => [
+    check('code_index_edges_type_check', sql`${table.edgeType} in ('imports', 'calls', 'extends', 'implements', 'exports', 'references', 'tested_by', 'uses_config', 'serves_route')`),
+    foreignKey({ name: 'code_index_edges_from_fkey', columns: [table.fromSymbolId], foreignColumns: [codeIndexSymbols.id] }).onDelete('cascade'),
+    foreignKey({ name: 'code_index_edges_to_fkey', columns: [table.toSymbolId], foreignColumns: [codeIndexSymbols.id] }).onDelete('cascade'),
+    index('idx_code_index_edges_from').on(table.fromSymbolId),
+    index('idx_code_index_edges_to').on(table.toSymbolId),
+  ]
+);
+
+export const codeIndexRuns = pgTable(
+  'code_index_runs',
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    repo: text().notNull(),
+    commitSha: text('commit_sha').notNull(),
+    status: text().notNull(),
+    filesIndexed: integer('files_indexed').notNull().default(0),
+    symbolsIndexed: integer('symbols_indexed').notNull().default(0),
+    parserVersion: text('parser_version').notNull(),
+    errorSummary: text('error_summary'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    check('code_index_runs_status_check', sql`${table.status} in ('pending', 'running', 'completed', 'failed')`),
+    index('idx_code_index_runs_repo_commit').on(table.repo, table.commitSha),
   ]
 );
 
@@ -112,12 +194,25 @@ export const reviews = pgTable(
     provisionalScore: numeric('provisional_score', { precision: 3, scale: 1 }),
     stageDeadlineAt: timestamp('stage_deadline_at', { withTimezone: true }),
     overviewCommentId: bigint('overview_comment_id', { mode: 'bigint' }),
+    requestedReviewMode: text('requested_review_mode').notNull().default('full'),
+    effectiveReviewMode: text('effective_review_mode').notNull().default('full'),
+    parentReviewId: uuid('parent_review_id'),
+    comparisonBaseSha: text('comparison_base_sha'),
+    fallbackReason: text('fallback_reason'),
+    activeRulesHash: text('active_rules_hash'),
+    pipelineVersion: text('pipeline_version').notNull().default('1'),
   },
   (table) => [
     check('reviews_status_check', sql`${table.status} in ('QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'PAUSED_DAILY_QUOTA')`),
     check('reviews_trigger_reason_check', sql`${table.triggerReason} in ('opened', 'synchronize', 'manual_mention', 'auto_retry')`),
     check('reviews_trigger_comment_type_check', sql`${table.triggerCommentType} in ('issue_comment', 'pull_request_review_comment')`),
+    check('reviews_requested_review_mode_check', sql`${table.requestedReviewMode} in ('incremental', 'full')`),
+    check('reviews_effective_review_mode_check', sql`${table.effectiveReviewMode} in ('incremental', 'full')`),
+    foreignKey({ name: 'reviews_parent_review_id_fkey', columns: [table.parentReviewId], foreignColumns: [reviews.id] }).onDelete('set null'),
     index('idx_reviews_repo_pr').on(table.repo, table.prNumber),
+    index('idx_reviews_completed_parent')
+      .on(table.repo, table.prNumber, table.createdAt.desc())
+      .where(sql`${table.status} = 'COMPLETED'`),
     index('idx_reviews_trigger_comment_id').on(table.triggerCommentId).where(sql`${table.triggerCommentId} is not null`),
     index('idx_reviews_daily_quota_resume').on(table.status, table.dailyQuotaResumeAt).where(sql`${table.status} = 'PAUSED_DAILY_QUOTA'`),
     index('idx_reviews_stage_deadline').on(table.stageDeadlineAt).where(sql`${table.status} = 'RUNNING'`),

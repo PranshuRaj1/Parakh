@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { GitBranch, Plug, Unplug, RefreshCw } from 'lucide-react';
 
 export interface ConnectionInfo {
-  provider: string;
+  id: string;
   displayName: string;
   url: string;
 }
@@ -47,7 +47,7 @@ export default function ConnectCard() {
   }, []);
 
   useEffect(() => {
-    load();
+    void Promise.resolve().then(load);
   }, [load]);
 
   const disconnect = async (provider: string, owner: string) => {
@@ -71,7 +71,7 @@ export default function ConnectCard() {
   const connected = installations.filter((i) => i.status === 'active');
 
   return (
-    <div className="glass-card rounded-2xl p-6 flex flex-col gap-6">
+    <div className="glass-card rounded-2xl p-5 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="font-anybody text-lg font-bold text-white flex items-center gap-2">
           <Plug className="w-5 h-5 text-[#00FF8C]" />
@@ -96,7 +96,7 @@ export default function ConnectCard() {
       {loading ? (
         <div className="text-[#c0c9c0] font-dm-sans text-sm animate-pulse">Loading your connections…</div>
       ) : connected.length === 0 ? (
-        <div className="rounded-xl bg-white/5 border border-white/5 p-6 text-center">
+          <div className="rounded-xl bg-white/5 border border-white/5 p-4 text-center">
           <GitBranch className="w-8 h-8 text-[#c5c0ff] mx-auto mb-3" />
           <p className="font-dm-sans text-[#c0c9c0] text-sm">
             No repositories connected yet. Install the app to start reviewing pull requests.
@@ -105,7 +105,7 @@ export default function ConnectCard() {
       ) : (
         <div className="flex flex-col gap-4">
           {connected.map((inst) => (
-            <div key={`${inst.provider}/${inst.owner}`} className="rounded-xl bg-white/5 border border-white/5 p-4">
+            <div key={`${inst.provider}/${inst.owner}`} className="rounded-xl bg-white/5 border border-white/5 p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-md bg-[#00FF8C]/15 text-[#00FF8C] px-2 py-0.5 font-space-mono text-xs font-bold">
@@ -126,7 +126,7 @@ export default function ConnectCard() {
                 </button>
               </div>
               {inst.repos.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   {inst.repos.slice(0, 12).map((repo) => (
                     <Link
                       key={repo}
@@ -148,27 +148,25 @@ export default function ConnectCard() {
         </div>
       )}
 
-      {connections.length > 0 && (
-        <div className="pt-4 border-t border-white/10">
-          <p className="font-dm-sans text-xs text-[#c0c9c0] mb-3">
-            Add another repo or a different code host:
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {connections.map((conn) => (
-              <a
-                key={conn.provider}
-                href={conn.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2.5 px-5 rounded-lg hover:brightness-110 transition-all text-sm"
-              >
-                <Plug className="w-4 h-4" />
-                Connect {conn.displayName}
-              </a>
-            ))}
-          </div>
+      <div className="pt-3 border-t border-white/10">
+        <p className="font-dm-sans text-xs text-[#c0c9c0] mb-3">
+          Authorize Parakh, then choose the repositories where it should review pull requests.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {connections.map((conn) => (
+            <a
+              key={conn.id}
+              href={conn.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 bg-[#00FF8C] text-black font-anybody font-bold py-2 px-4 rounded-lg hover:brightness-110 transition-all text-sm"
+            >
+              <Plug className="w-4 h-4" />
+              Authorize & install {conn.displayName}
+            </a>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

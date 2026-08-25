@@ -15,6 +15,7 @@ import type {
   Review,
   ReviewMode,
   IncrementalReviewResult,
+  CodebaseImpact,
 } from '@parakh/shared';
 import {
   computeScore,
@@ -139,9 +140,11 @@ import {
 } from '../review/baseline/metrics.js';
 import { verifyFindings } from '../review/finding-verification.js';
 import { buildFileContext } from '../review/file-context.js';
+import { buildPrImpact } from '../review/impact.js';
 import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
 import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
+import { loadConventionRules } from '../review/conventions/loader.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -396,6 +399,7 @@ interface ReviewState {
   fileAnalyses: Record<string, FileAnalysis>;
   /** PR-level overview — persisted so resumed deliveries render the same comment. */
   prOverview: string | null;
+  codebaseImpact?: CodebaseImpact;
 }
 
 async function loadReviewState(repo: string, prNumber: number, redisGet: (key: string) => Promise<string | null>): Promise<ReviewState | null> {
@@ -854,7 +858,11 @@ export async function applyUserKeysGate(
   env: Env
 ): Promise<UserLLMCreds | null | undefined> {
   const creds = await resolveUserCreds(owner, env);
+<<<<<<< HEAD
   if (!creds || !isSharedLLMKeyAccount(creds.githubLogin)) return undefined;
+=======
+  if (!creds) return null;
+>>>>>>> origin/main
   if (creds.geminiKeys.length > 0) return creds;
 
   const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
@@ -992,9 +1000,25 @@ async function executeReviewJobInternal(
 
     currentStage = 'LOADING_RULES';
     await startStage(reviewId, 'LOADING_RULES', stageAttempt, env);
-    const activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
+    let activeRules = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
        return getActiveRules(fullRepo, env);
     });
+
+    // Repo-owned convention markdown (AGENTS.md / CLAUDE.md / .parakh/rules.md)
+    // joins the learned rules as a per-review overlay. Best-effort: a failed
+    // load degrades to DB rules only. Fetches are accounted against the
+    // subrequest budget when it is created below.
+    let conventionFetches = 0;
+    if (featureFlags.repoConventions && headSha) {
+      const loaded = await withTimeout('LOADING_RULES', STAGE_TIMEOUTS_MS.LOADING_RULES, async () => {
+        return loadConventionRules(owner, repo, headSha!, token);
+      });
+      activeRules.push(...loaded.rules);
+      conventionFetches = loaded.fetchAttempts;
+      if (loaded.rules.length > 0) {
+        metrics.recordConventionLoad(loaded.rules.length);
+      }
+    }
 
     const activeRulesHash = await hashActiveRules(activeRules);
     await updateReviewCompatibilityMetadata(
@@ -1159,6 +1183,7 @@ async function executeReviewJobInternal(
         terminalFailedFiles: [],
         fileAnalyses: {},
         prOverview: null,
+        codebaseImpact: buildPrImpact(fullRepo, headSha ?? 'unknown', fullFileChunks),
       };
     }
 
@@ -1168,7 +1193,8 @@ async function executeReviewJobInternal(
     // context, else a deterministic count-based summary. Persisted so queue
     // redeliveries and resumed batches render the same final comment.
     const ensurePrOverview = async (): Promise<string> => {
-      if (state!.prOverview) return state!.prOverview;
+      const countOnlyOverview = /^Changes \d+ files?, adding \d+ and removing \d+ lines\.$/;
+      if (state!.prOverview && !countOnlyOverview.test(state!.prOverview)) return state!.prOverview;
       const context = [prTitle, prBody].filter(Boolean).join('. ').trim();
       state!.prOverview =
         focusSummary
@@ -1235,7 +1261,7 @@ async function executeReviewJobInternal(
     // Startup overhead (token, lock, getReview, fetchDiff, rules, stages) that
     // happens before the loop — conservative estimate so the loop doesn't
     // exceed the real cap even if our counting misses an edge.
-    activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE);
+    activeBudget.spend(STARTUP_SUBREQUESTS_ESTIMATE + conventionFetches);
 
     if (featureFlags.attentionFocus) {
       try {
@@ -1403,6 +1429,7 @@ async function executeReviewJobInternal(
               if (batchCommitFailed) continue;
               if (reviewed.telemetry) {
                 for (const ruleId of reviewed.telemetry.matchedRuleIds) {
+                  if (ruleId.startsWith('conv:')) continue;
                   if (!canWriteOptionalTelemetry()) break;
                   try {
                     optionalTelemetryWrites++;
@@ -1847,6 +1874,7 @@ async function finalizeReview(
       repo: fullRepo,
       prNumber,
       dashboardBaseUrl: env.DASHBOARD_BASE_URL,
+      codebaseImpact: state.codebaseImpact,
     });
     await upsertOverviewComment(owner, repo, prNumber, reviewId, body, token, env);
   });
