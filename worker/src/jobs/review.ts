@@ -86,7 +86,7 @@ import { AllKeysExhaustedError, DailyQuotaExhaustedError, DAILY_QUOTA_PAUSE_AFTE
 import type { LLMClient } from '../llm/provider.js';
 import { AllProvidersFailedError, ProviderResponseError } from '../llm/errors.js';
 import { createLLMClients } from '../llm/factory.js';
-import { resolveUserCreds, type UserLLMCreds } from '../llm/user-creds.js';
+import { isSharedLLMKeyAccount, resolveUserCreds, type UserLLMCreds } from '../llm/user-creds.js';
 import {
   SubrequestBudget,
   SubrequestBudgetExceededError,
@@ -871,9 +871,9 @@ export async function applyUserKeysGate(
   token: string,
   reviewId: string,
   env: Env
-): Promise<UserLLMCreds | null> {
+): Promise<UserLLMCreds | null | undefined> {
   const creds = await resolveUserCreds(owner, env);
-  if (!creds) return null;
+  if (!creds || !isSharedLLMKeyAccount(creds.githubLogin)) return undefined;
   if (creds.geminiKeys.length > 0) return creds;
 
   const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
@@ -931,6 +931,10 @@ async function executeReviewJobInternal(
     const dbReview = await getReview(reviewId, env);
     if (!dbReview) {
       console.error(`[review] No review row found for ${reviewId} — skipping`);
+      return;
+    }
+    if ((dbReview.status as string) === 'CANCELLED') {
+      console.log(`[review] Review ${reviewId} already CANCELLED — skipping redelivery`);
       return;
     }
     if (dbReview.status === 'COMPLETED') {
@@ -1832,7 +1836,7 @@ async function finalizeReview(
   // Idempotency guard: if another delivery already finalized this review
   // (double completion from a redelivery), bail before posting anything again.
   const current = await getReview(reviewId, env);
-  if (current?.status === 'COMPLETED') {
+  if (current?.status === 'COMPLETED' || (current?.status === 'FAILED' && current.error_step === 'CANCELLED') || (current?.status as string | undefined) === 'CANCELLED') {
     console.log(`[review] finalize skipped — review ${reviewId} already COMPLETED`);
     return;
   }
@@ -1850,6 +1854,12 @@ async function finalizeReview(
     output.previousScore
   );
   metrics.recordScore(rawScore, score);
+  const finalReview = await getReview(reviewId, env);
+  if ((finalReview?.status as string | undefined) === 'CANCELLED' || (finalReview?.status === 'FAILED' && finalReview.error_step === 'CANCELLED')) {
+    console.log(`[review] Review ${reviewId} cancelled before finalization`);
+    return;
+  }
+
   await withDbRetry(
     () => updateReviewResults(reviewId, score, ledgerFindings, env),
     FINALIZE_DB_RETRY_OPTS

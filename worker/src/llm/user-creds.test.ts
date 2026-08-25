@@ -12,30 +12,32 @@ vi.mock('./encryption.js', () => ({ decryptKey: decrypt }));
 
 import { resolveUserCreds } from './user-creds.js';
 
-const env = {
-  LLM_KEY_ENCRYPTION_SECRET: 'secret',
-  GEMINI_API_KEYS: 'gemini-1, gemini-2',
-  GROQ_API_KEY: 'groq-1',
-  CF_ACCOUNT_ID: 'cf-account',
-  CF_API_TOKEN: 'cf-token',
-  OPENROUTER_API_KEY: 'openrouter-1',
-} as never;
+const env = { LLM_KEY_ENCRYPTION_SECRET: 'secret' } as never;
+const stored = {
+  githubId: 1,
+  githubLogin: 'PranshuRaj1',
+  geminiKeys: [{ enc: 'gemini', hint: 'mini' }],
+  groqKeys: [],
+  cfaiKeys: [],
+  cfaiAccountId: null,
+  openrouterKeys: [],
+  updatedAt: '',
+};
+
 describe('resolveUserCreds', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('uses Worker env keys for PranshuRaj1 without an installation row', async () => {
-    await expect(resolveUserCreds('PranshuRaj1', env)).resolves.toMatchObject({
+  it('shares PranshuRaj1 keys with pranshu3961-lang', async () => {
+    getInstallation.mockResolvedValue({ installedBy: 'pranshu3961-lang' });
+    getKeys.mockImplementation(async (login: string) => login === 'PranshuRaj1' ? stored : null);
+
+    await expect(resolveUserCreds('pranshu3961-lang', env)).resolves.toMatchObject({
       githubLogin: 'PranshuRaj1',
-      geminiKeys: ['gemini-1', 'gemini-2'],
-      groqKeys: ['groq-1'],
-      cfaiAccountId: 'cf-account',
-      cfaiToken: 'cf-token',
-      openrouterKey: 'openrouter-1',
+      geminiKeys: ['gemini'],
     });
-    expect(getInstallation).not.toHaveBeenCalled();
-    expect(getKeys).not.toHaveBeenCalled();
+    expect(getKeys).toHaveBeenNthCalledWith(2, 'PranshuRaj1', env);
   });
 
   it('does not share keys with other users', async () => {

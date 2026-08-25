@@ -54,7 +54,7 @@ export const MAX_RULES_PER_COMMENT = 3;
 // ─── Anchored Findings ───────────────────────────────────────────────────────
 
 /** Max finding comments anchored to the diff per review (spam guard). */
-export const MAX_FINDINGS_AS_COMMENTS = 20;
+export const MAX_FINDINGS_AS_COMMENTS = 5;
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 

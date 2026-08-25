@@ -31,9 +31,13 @@ export interface UserLLMCreds {
 }
 
 const MASTER_LOGIN = 'PranshuRaj1';
+const SHARED_KEY_LOGIN = new Map([
+  ['pranshuraj1', 'pranshu3961-lang'],
+  ['pranshu3961-lang', 'PranshuRaj1'],
+]);
 
 export function isSharedLLMKeyAccount(login: string): boolean {
-  return login.toLowerCase() === MASTER_LOGIN.toLowerCase();
+  return SHARED_KEY_LOGIN.has(login.toLowerCase());
 }
 
 function parseKeys(...values: (string | undefined)[]): string[] {
@@ -56,7 +60,9 @@ function getMasterEnvCreds(env: Env): UserLLMCreds {
  * Returns null when there is no installation, no installer, or no stored keys.
  */
 export async function resolveUserCreds(owner: string, env: Env): Promise<UserLLMCreds | null> {
-  if (owner.toLowerCase() === MASTER_LOGIN.toLowerCase()) return getMasterEnvCreds(env);
+  if (owner.toLowerCase() === MASTER_LOGIN.toLowerCase()) {
+    return await resolveUserCredsByLogin(MASTER_LOGIN, env) ?? getMasterEnvCreds(env);
+  }
   const installation = await getInstallationByOwner('github', owner, env);
   if (!installation?.installedBy) return null;
   return resolveUserCredsByLogin(installation.installedBy, env);
@@ -68,6 +74,8 @@ export async function resolveUserCredsByLogin(
   env: Env
 ): Promise<UserLLMCreds | null> {
   let stored = await getStoredUserLLMKeysByLogin(login, env);
+  const sharedLogin = SHARED_KEY_LOGIN.get(login.toLowerCase());
+  if (!stored && sharedLogin) stored = await getStoredUserLLMKeysByLogin(sharedLogin, env);
   if (!stored) return null;
   const secret = env.LLM_KEY_ENCRYPTION_SECRET;
   if (!secret) throw new Error('LLM_KEY_ENCRYPTION_SECRET is not configured');
