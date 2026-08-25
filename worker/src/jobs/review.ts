@@ -366,6 +366,13 @@ function parseDiffHeaderPath(header: string): string | null {
   return equal?.newPath ?? candidates.at(-1)?.newPath ?? null;
 }
 
+/**
+ * Choose the score shown to users after raw scoring.
+ *
+ * A no-change incremental review reuses the parent's displayed score so a
+ * replay cannot create visual drift from rounding or provider-side metadata.
+ * Otherwise the score comes from the pure shared scoring function.
+ */
 export function selectDisplayedReviewScore(
   rawScore: number,
   noChangesSinceParent: boolean,
@@ -453,6 +460,14 @@ interface ReviewedFileResult {
   };
 }
 
+/**
+ * Review one file through the provider boundary and deterministic adjudication.
+ *
+ * The caller owns batching, checkpoints, locks, and review-wide state. This
+ * function owns the file pipeline: prepare context, call the LLM, resolve
+ * severities and suppressions, verify factual claims, then reconcile against
+ * prior ledger findings when the review is incremental.
+ */
 export async function reviewSingleFile(
   llm: LLMClient,
   fileName: string,

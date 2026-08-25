@@ -24,6 +24,7 @@ export interface BoundedDiff {
 }
 
 /** Trim a unified diff to at most `maxChars`, cutting only at line boundaries. */
+/** Bound oversized diffs so one provider request cannot consume the review budget. */
 export function boundDiff(rawDiff: string, maxChars = REVIEW_DIFF_MAX_CHARS): BoundedDiff {
   if (rawDiff.length <= maxChars) return { diff: rawDiff, truncated: false };
 

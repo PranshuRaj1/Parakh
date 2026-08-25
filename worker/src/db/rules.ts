@@ -32,6 +32,7 @@ interface EnvWithDB {
  *   WHERE status = 'ACTIVE' AND repo = $1
  * That single WHERE clause is the entire "don't apply old rules" guarantee.
  */
+/** Load active repository memory that can influence the next review. */
 export async function getActiveRules(
   repo: string,
   env: EnvWithDB,
@@ -88,6 +89,7 @@ function assertEmbeddingDimensions(embedding: number[], operation: string): void
 /**
  * Insert a new rule with its embedding.
  */
+/** Persist a validated rule so later reviews can enforce repository policy. */
 export async function insertRule(
   rule: {
     repo: string;
@@ -174,6 +176,7 @@ export async function setRuleSupersedes(
  * Find similar active rules using pgvector cosine similarity.
  * Used by the contradiction engine to find candidates for relationship classification.
  */
+/** Find semantically similar rules for contradiction and duplicate handling. */
 export async function findSimilarRules(
   repo: string,
   embedding: number[],

@@ -30,6 +30,7 @@ interface EnvWithDB {
  * Insert a new review record.
  * Every synchronize event creates a new row — intentional for score history.
  */
+/** Create the durable review record that coordinates queue work and final output. */
 export async function insertReview(
   review: {
     repo: string;
@@ -248,6 +249,7 @@ export async function updateReviewStatus(
 /**
  * Update review with completed results.
  */
+/** Persist the adjudicated findings and score that finalization will publish. */
 export async function updateReviewResults(
   id: string,
   score: number,
@@ -388,6 +390,7 @@ export async function getReview(
  * Used by REVIEW_REQUEST handler to check for resumable reviews.
  * Returns reviews in RUNNING or QUEUED status.
  */
+/** Load review state that can safely continue after delivery interruption. */
 export async function getResumableReview(
   repo: string,
   prNumber: number,
@@ -428,6 +431,7 @@ export async function markReviewIncomplete(
   `;
 }
 
+/** Persist finding lifecycle outcomes so incremental behavior remains explainable. */
 export async function saveReviewReconciliation(
   reviewId: string,
   outcomes: FindingReconciliationOutcome[],
@@ -536,6 +540,7 @@ export async function recordIncrementalShadowRun(
 
 // ─── Stage Tracking DB Operations ─────────────────────────────────────────────
 
+/** Record stage start for observability and timeout recovery. */
 export async function dbStartStage(
   reviewId: string,
   stage: string,
@@ -583,6 +588,7 @@ export async function dbStartStage(
   }, DB_RETRY_OPTS);
 }
 
+/** Mark a stage complete without changing the review's finding semantics. */
 export async function dbCompleteStage(
   reviewId: string,
   stage: string,

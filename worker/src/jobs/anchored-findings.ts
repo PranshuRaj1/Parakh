@@ -38,6 +38,7 @@ export function findingMappingKey(commentId: number): string {
  * an earlier delivery matches, while two distinct findings on the same line
  * stay distinct.
  */
+/** Create the stable marker used to make an anchored finding idempotent. */
 export function findingAnchorMarker(reviewId: string, finding: LedgerFinding): string {
   return `<!-- parakh-anchor:${reviewId}:${finding.file}:${finding.line}:${finding.finding_id} -->`;
 }
@@ -68,6 +69,7 @@ export function parseNewSideLines(patch: string): number[] {
  * existing PR review comment) are skipped. Returns the number of comments
  * posted.
  */
+/** Publish ledger findings as GitHub line comments after adjudication is complete. */
 export async function postAnchoredFindings(
   reviewId: string,
   ledgerFindings: LedgerFinding[],

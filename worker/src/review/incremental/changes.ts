@@ -9,6 +9,7 @@ export interface DiffChange {
   kind: DiffChangeKind;
 }
 
+/** Parse Git diff metadata into the file operations used by ledger planning. */
 export function parseDiffChanges(diff: string): DiffChange[] {
   return diff.split(/^diff --git /m).slice(1).map<DiffChange>((section) => {
     const firstLine = section.split('\n', 1)[0] ?? '';
@@ -37,6 +38,10 @@ export interface PreparedIncrementalLedger {
   summary: ReconciliationSummary;
 }
 
+/**
+ * Partition prior findings into carried, resolved, renamed, and re-review
+ * buckets before the file loop begins.
+ */
 export function prepareIncrementalLedger(
   priorFindings: LedgerFinding[],
   changes: DiffChange[],

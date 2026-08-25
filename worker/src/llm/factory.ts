@@ -68,6 +68,11 @@ function applyUserCredsToEnv(env: Env, creds: UserLLMCreds): Env {
   };
 }
 
+/**
+ * Assemble the provider chain used by review.ts. Provider construction is kept
+ * here so orchestration depends on one interface while fallback, key rotation,
+ * cooldown state, and request budgeting remain provider concerns.
+ */
 export function createLLMClients(env: Env, budget?: SubrequestBudget, creds?: UserLLMCreds): LLMClients {
   const effectiveEnv = creds ? applyUserCredsToEnv(env, creds) : env;
   const gemini = new GeminiClient(effectiveEnv, makeCooldownStore(GEMINI_COOLDOWN_KEY, env, budget));

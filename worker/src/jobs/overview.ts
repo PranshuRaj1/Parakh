@@ -34,6 +34,7 @@ function tableCell(text: string): string {
 }
 
 /** Flatten whitespace and cap a model-generated file overview at 200 chars. */
+/** Keep model-generated overview text safe before it crosses into GitHub markup. */
 export function sanitizeOverview(text: string | null | undefined): string {
   if (!text) return '';
   return text.replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -69,6 +70,7 @@ export function fallbackFileOverview(file: { status: string; filename: string })
 }
 
 /** Deterministic PR-level overview when no model summary is available. */
+/** Build a model-independent PR summary when no usable model overview exists. */
 export function deterministicPrOverview(files: FileAnalysis[]): string {
   if (files.length === 0) return 'No file changes.';
   const additions = files.reduce((sum, f) => sum + f.additions, 0);
@@ -165,6 +167,7 @@ export function formatOverviewComment(input: OverviewCommentInput): string {
  * any existing comment carrying the stable marker, then create fresh. A
  * stored ID pointing at a deleted comment (404) falls through to search.
  */
+/** Update the single durable overview comment instead of creating duplicates. */
 export async function upsertOverviewComment(
   owner: string,
   repo: string,

@@ -2,6 +2,10 @@ import type { Rule } from '@parakh/shared';
 
 export const REVIEW_PIPELINE_VERSION = '2c';
 
+/**
+ * Canonicalize rule metadata before hashing so property insertion order cannot
+ * change incremental-review compatibility.
+ */
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
@@ -14,6 +18,11 @@ function stableValue(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Hash every rule field that can change review behavior. Incremental review
+ * reuses a parent ledger only when this identity and the pipeline version
+ * still match.
+ */
 export async function hashActiveRules(rules: Rule[]): Promise<string> {
   const compatibleShape = [...rules]
     .sort((left, right) => left.id.localeCompare(right.id))

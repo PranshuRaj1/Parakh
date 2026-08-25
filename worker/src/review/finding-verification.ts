@@ -46,6 +46,11 @@ export function extractReferencedIdentifiers(body: string): string[] {
   return extractIdentifierClaims(body).presenceClaims;
 }
 
+/**
+ * Split claims about identifiers that should exist from claims that they are
+ * absent. This is lexical verification after the model call, not another LLM
+ * review, so it remains cheap, testable, and independent of provider behavior.
+ */
 export function extractIdentifierClaims(body: string): ReferencedIdentifiers {
   const presenceClaims = new Set<string>();
   const absenceClaims = new Set<string>();
@@ -62,6 +67,11 @@ export function extractIdentifierClaims(body: string): ReferencedIdentifiers {
   return { presenceClaims: [...presenceClaims], absenceClaims: [...absenceClaims] };
 }
 
+/**
+ * Check one finding against the full file content and return an evidence state.
+ * The function has no network or persistence side effects because GitHub
+ * fetching and review-state updates belong to the orchestration layer.
+ */
 export function verifyFinding(
   finding: Finding,
   referenceFileContent: string | null,
@@ -114,6 +124,11 @@ export function verifyFinding(
   return { finding, status: 'verified', reason: 'cited_lines_present' };
 }
 
+/**
+ * Remove only findings that code can directly contradict. Unverifiable
+ * findings are retained and counted so limited evidence does not become a
+ * false-negative filter.
+ */
 export function verifyFindings(
   findings: Finding[],
   referenceFileContent: string | null,
