@@ -39,7 +39,7 @@ export function findingMappingKey(commentId: number): string {
  * stay distinct.
  */
 export function findingAnchorMarker(reviewId: string, finding: LedgerFinding): string {
-  return `<!-- parakh-anchor:${reviewId}:${finding.file}:${finding.line}:${finding.finding_id} -->`;
+  return `<!-- parakh-anchor:${finding.finding_id} -->`;
 }
 
 /**
@@ -62,8 +62,9 @@ export function parseNewSideLines(patch: string): number[] {
 }
 
 /**
- * Post the review's NEW findings (first seen at this head sha) as anchored
- * diff comments, capped at MAX_FINDINGS_AS_COMMENTS per review.
+ * Post the review's unresolved findings as anchored diff comments, capped at
+ * MAX_FINDINGS_AS_COMMENTS per review. Findings that do not fit remain in the
+ * durable ledger and become eligible on a later review.
  * Findings already posted by an earlier delivery (marker present in an
  * existing PR review comment) are skipped. Returns the number of comments
  * posted.
@@ -78,24 +79,37 @@ export async function postAnchoredFindings(
   token: string,
   env: Env
 ): Promise<number> {
-  const newFindings = ledgerFindings
-    .filter((finding) => finding.first_seen_head_sha === headSha && finding.last_validated_head_sha === headSha)
-    .slice(0, MAX_FINDINGS_AS_COMMENTS);
-
-  if (newFindings.length === 0) return 0;
-
   // Pre-existing anchored markers from earlier deliveries (best-effort: a
   // failure here degrades to posting without dedupe, never to skipping posts).
   let existingMarkers = new Set<string>();
   try {
     const comments = await listReviewComments(owner, repo, prNumber, token);
-    existingMarkers = new Set(
-      comments
-        .flatMap((comment) => comment.body?.match(/<!-- parakh-anchor:[^>]+ -->/g) ?? [])
-    );
+    existingMarkers = new Set(comments.flatMap((comment) => {
+      const body = comment.body ?? '';
+      return body.match(/<!-- parakh-anchor:[^>]+ -->/g) ?? [];
+    }));
   } catch (err) {
     console.warn('[review] Failed to list existing review comments for anchored-finding dedupe:', err);
   }
+
+  const severityRank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 } as const;
+  const markerMatches = (finding: LedgerFinding): boolean => {
+    const stable = findingAnchorMarker(reviewId, finding);
+    const legacy = new RegExp(`<!-- parakh-anchor:[^>]*:${finding.finding_id} -->`);
+    return existingMarkers.has(stable) || [...existingMarkers].some((marker) => legacy.test(marker));
+  };
+  const newFindings = ledgerFindings
+    .filter((finding) => finding.last_validated_head_sha === headSha)
+    .filter((finding) => !markerMatches(finding))
+    .sort((left, right) =>
+      severityRank[left.severity] - severityRank[right.severity]
+      || left.first_seen_head_sha.localeCompare(right.first_seen_head_sha)
+      || left.file.localeCompare(right.file)
+      || left.line - right.line
+    )
+    .slice(0, MAX_FINDINGS_AS_COMMENTS);
+
+  if (newFindings.length === 0) return 0;
 
   // GitHub rejects anchors on lines outside any diff hunk (422). Fetch each
   // file's patch so a rejected anchor can retry at the nearest in-hunk line —

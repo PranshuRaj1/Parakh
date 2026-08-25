@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../index.js';
 import type { LedgerFinding } from '../review/incremental/ledger.js';
 
+vi.mock('@parakh/shared', async () => ({
+  ...(await vi.importActual<typeof import('@parakh/shared')>('@parakh/shared')),
+  MAX_FINDINGS_AS_COMMENTS: 5,
+}));
+
 vi.mock('../github/api.js', () => ({
   postComment: vi.fn(),
   postReviewComment: vi.fn(),
@@ -57,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('postAnchoredFindings', () => {
-  it('posts only findings first seen at this head sha as anchored diff comments', async () => {
+  it('posts unresolved findings from earlier reviews as well as new findings', async () => {
     const findings = [
       ledgerFinding(),
       ledgerFinding({ finding_id: 'f-old', first_seen_head_sha: 'oldsha', last_validated_head_sha: HEAD_SHA }),
@@ -65,12 +70,12 @@ describe('postAnchoredFindings', () => {
 
     const posted = await postAnchoredFindings('review-1', findings, 'acme', 'app', 7, HEAD_SHA, 'token', env);
 
-    expect(posted).toBe(1);
-    expect(mocked.postReviewComment).toHaveBeenCalledTimes(1);
+    expect(posted).toBe(2);
+    expect(mocked.postReviewComment).toHaveBeenCalledTimes(2);
     const [owner, repo, pr, sha, file, line, body] = mocked.postReviewComment.mock.calls[0];
     expect([owner, repo, pr, sha, file, line]).toEqual(['acme', 'app', 7, HEAD_SHA, 'src/app.ts', 10]);
     expect(String(body)).toContain('handle the error');
-    expect(String(body)).toContain('<!-- parakh-anchor:review-1:src/app.ts:10:f-1 -->');
+    expect(String(body)).toContain('<!-- parakh-anchor:f-1 -->');
   });
 
   it('does not re-post a finding whose anchor marker already exists (redelivery dedupe)', async () => {
@@ -95,10 +100,13 @@ describe('postAnchoredFindings', () => {
     expect(mocked.postReviewComment).toHaveBeenCalledTimes(1);
   });
 
-  it('returns 0 and posts nothing when no findings are new', async () => {
+  it('does not repost a deferred finding after its legacy marker exists', async () => {
     const findings = [
       ledgerFinding({ finding_id: 'f-old', first_seen_head_sha: 'oldsha', last_validated_head_sha: HEAD_SHA }),
     ];
+    mocked.listReviewComments.mockResolvedValue([
+      { id: 901, body: '<!-- parakh-anchor:review-1:src/app.ts:10:f-old -->' },
+    ]);
 
     const posted = await postAnchoredFindings('review-1', findings, 'acme', 'app', 7, HEAD_SHA, 'token', env);
 
@@ -120,6 +128,24 @@ describe('postAnchoredFindings', () => {
 
     expect(posted).toBe(1);
     expect(mocked.postReviewComment).toHaveBeenCalledTimes(2);
+  });
+
+  it('posts at most five findings in severity order and leaves the rest eligible', async () => {
+    const findings = [
+      ...Array.from({ length: 2 }, (_, i) => ledgerFinding({ finding_id: `medium-${i}`, severity: 'MEDIUM' })),
+      ...Array.from({ length: 7 }, (_, i) => ledgerFinding({ finding_id: `critical-${i}`, severity: 'CRITICAL' })),
+    ];
+
+    const posted = await postAnchoredFindings('review-1', findings, 'acme', 'app', 7, HEAD_SHA, 'token', env);
+
+    expect(posted).toBe(5);
+    expect(mocked.postReviewComment.mock.calls.map((call) => String(call[6]))).toEqual([
+      expect.stringContaining('critical-0'),
+      expect.stringContaining('critical-1'),
+      expect.stringContaining('critical-2'),
+      expect.stringContaining('critical-3'),
+      expect.stringContaining('critical-4'),
+    ]);
   });
 
   it('maps each posted comment to its finding in Redis with a TTL', async () => {
