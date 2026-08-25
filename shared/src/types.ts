@@ -55,7 +55,7 @@ export interface ConventionRule {
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
 /** Review lifecycle status. REVIEWING removed in v4 — replaced by RUNNING with stage tracking. */
-export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_DAILY_QUOTA';
+export type ReviewStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED_DAILY_QUOTA' | 'CANCELLED';
 
 export type ReviewStage = 'QUEUED' | 'AUTHENTICATING' | 'FETCHING_DIFF' | 'LOADING_RULES' | 'REVIEWING_FILES' | 'SCORING' | 'POSTING_COMMENT' | 'REACTING';
 

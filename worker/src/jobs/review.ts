@@ -918,6 +918,10 @@ async function executeReviewJobInternal(
       console.error(`[review] No review row found for ${reviewId} — skipping`);
       return;
     }
+    if ((dbReview.status as string) === 'CANCELLED') {
+      console.log(`[review] Review ${reviewId} already CANCELLED — skipping redelivery`);
+      return;
+    }
     if (dbReview.status === 'COMPLETED') {
       console.log(`[review] Review ${reviewId} already COMPLETED — skipping redelivery`);
       return;
@@ -1817,7 +1821,7 @@ async function finalizeReview(
   // Idempotency guard: if another delivery already finalized this review
   // (double completion from a redelivery), bail before posting anything again.
   const current = await getReview(reviewId, env);
-  if (current?.status === 'COMPLETED') {
+  if (current?.status === 'COMPLETED' || (current?.status === 'FAILED' && current.error_step === 'CANCELLED') || (current?.status as string | undefined) === 'CANCELLED') {
     console.log(`[review] finalize skipped — review ${reviewId} already COMPLETED`);
     return;
   }
@@ -1835,6 +1839,12 @@ async function finalizeReview(
     output.previousScore
   );
   metrics.recordScore(rawScore, score);
+  const finalReview = await getReview(reviewId, env);
+  if ((finalReview?.status as string | undefined) === 'CANCELLED' || (finalReview?.status === 'FAILED' && finalReview.error_step === 'CANCELLED')) {
+    console.log(`[review] Review ${reviewId} cancelled before finalization`);
+    return;
+  }
+
   await withDbRetry(
     () => updateReviewResults(reviewId, score, ledgerFindings, env),
     FINALIZE_DB_RETRY_OPTS

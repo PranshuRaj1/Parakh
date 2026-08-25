@@ -180,6 +180,29 @@ export async function updateReviewReactions(
   }
 }
 
+export async function cancelReviewsByPR(
+  repo: string,
+  prNumber: number,
+  env: EnvWithDB
+): Promise<number> {
+  const sql = getDb(env.DATABASE_URL);
+  const rows = await sql`
+    UPDATE reviews
+    SET status = 'FAILED',
+        failed_at = NOW(),
+        error_step = 'CANCELLED',
+        error_message = 'Cancelled by operator',
+        worker_heartbeat_at = NULL,
+        stage_deadline_at = NULL,
+        daily_quota_resume_at = NULL
+    WHERE repo = ${repo}
+      AND pr_number = ${prNumber}
+      AND status IN ('QUEUED', 'RUNNING', 'PAUSED_DAILY_QUOTA')
+    RETURNING id
+  `;
+  return rows.length;
+}
+
 /**
  * Record which comment triggered a manual_mention review, plus the id of the
  * reaction currently live on that comment (👀). Called on fresh starts only.
@@ -234,13 +257,13 @@ export async function updateReviewStatus(
       UPDATE reviews
       SET status = ${status},
           github_delivery_id = ${githubDeliveryId}
-      WHERE id = ${id}
+      WHERE id = ${id} AND (${status} <> 'COMPLETED' OR status <> 'FAILED' OR error_step <> 'CANCELLED')
     `;
   } else {
     await sql`
       UPDATE reviews
       SET status = ${status}
-      WHERE id = ${id}
+      WHERE id = ${id} AND (${status} <> 'COMPLETED' OR status <> 'FAILED' OR error_step <> 'CANCELLED')
     `;
   }
 }

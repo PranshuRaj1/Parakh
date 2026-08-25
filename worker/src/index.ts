@@ -16,6 +16,7 @@ import { handleRetryReview } from './jobs/retry-api.js';
 import { handleCronTrigger } from './cron.js';
 import { listInstallations, markInstallationRemoved } from './db/installations.js';
 import { getStoredUserLLMKeysByLogin, getGithubIdByLogin, upsertUserLLMKeys } from './db/user-llm-keys.js';
+import { cancelReviewsByPR } from './db/reviews.js';
 import { encryptKey, keyHint } from './llm/encryption.js';
 import { providers, getProvider } from './providers/registry.js';
 import type { JobPayload } from '@parakh/shared';
@@ -131,6 +132,10 @@ export default {
     // ── Dashboard rule creation API ───────────────────────────────────
     if (url.pathname === '/api/rules' && request.method === 'POST') {
       return handleRuleCreationRequest(request, env, _ctx);
+    }
+
+    if (url.pathname === '/api/reviews/cancel' && request.method === 'POST') {
+      return handleCancelReviewsRequest(request, env);
     }
 
     // ── Dashboard retry API ───────────────────────────────────────────
@@ -306,6 +311,23 @@ function bearerOk(request: Request, env: Env): boolean {
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handleCancelReviewsRequest(request: Request, env: Env): Promise<Response> {
+  if (!bearerOk(request, env)) return json({ error: 'Unauthorized' }, 401);
+  try {
+    const body = await request.json() as { repo?: unknown; prNumber?: unknown };
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const prNumber = typeof body.prNumber === 'number' ? body.prNumber : Number(body.prNumber);
+    if (!repo || !Number.isInteger(prNumber) || prNumber < 1) {
+      return json({ error: 'repo and a positive integer prNumber are required' }, 400);
+    }
+    const cancelled = await cancelReviewsByPR(repo, prNumber, env);
+    return json({ repo, prNumber, cancelled });
+  } catch (err) {
+    console.error('[worker] Review cancellation error:', err);
+    return json({ error: 'Failed to cancel reviews' }, 500);
+  }
 }
 
 /** GET /api/connect — list installations owned by the requesting dashboard user. */
