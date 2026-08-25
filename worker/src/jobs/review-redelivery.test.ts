@@ -39,6 +39,7 @@ vi.mock('../redis.js', () => ({
 // to an installed user WITH keys so the pipeline proceeds.
 vi.mock('../llm/user-creds.js', () => ({
   resolveUserCreds: vi.fn(),
+  isSharedLLMKeyAccount: vi.fn(() => true),
 }));
 
 import { executeReviewJob } from './review.js';
