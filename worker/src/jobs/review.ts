@@ -858,11 +858,7 @@ export async function applyUserKeysGate(
   env: Env
 ): Promise<UserLLMCreds | null | undefined> {
   const creds = await resolveUserCreds(owner, env);
-<<<<<<< HEAD
   if (!creds || !isSharedLLMKeyAccount(creds.githubLogin)) return undefined;
-=======
-  if (!creds) return null;
->>>>>>> origin/main
   if (creds.geminiKeys.length > 0) return creds;
 
   const base = env.DASHBOARD_BASE_URL ? env.DASHBOARD_BASE_URL.replace(/\/+$/, '') : '';
