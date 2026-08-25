@@ -21,6 +21,11 @@ export interface IncrementalPlanInput {
   parentIsAncestor: boolean | null;
 }
 
+/**
+ * Decide whether a parent ledger is compatible with the current PR state.
+ * Falling back to a full review is safer than reusing findings across changed
+ * base commits, rules, pipeline versions, or unrelated commit histories.
+ */
 export function planIncrementalReview(input: IncrementalPlanInput): IncrementalPlan {
   const { parent } = input;
   if (!parent) return { decision: 'fallback', reason: 'no_completed_parent' };

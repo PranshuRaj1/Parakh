@@ -41,6 +41,7 @@ function parseProviderName(value: string | undefined): ProviderName | null {
   return PROVIDER_PRIORITY.includes(name) ? name : null;
 }
 
+/** Resolve the configured provider order; review execution tries this chain in order. */
 export function resolveProviderChain(env: Env): ProviderName[] {
   const primary = parseProviderName(env.LLM_PRIMARY) ?? 'gemini';
   const fallback = env.LLM_FALLBACK?.toLowerCase() === 'none' ? null : parseProviderName(env.LLM_FALLBACK);

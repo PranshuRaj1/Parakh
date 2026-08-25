@@ -51,6 +51,11 @@ export function emptyReconciliationSummary(): ReconciliationSummary {
   };
 }
 
+/**
+ * Merge per-file totals into the review-wide reconciliation summary.
+ * Keeping this pure means batch execution order does not change the meaning
+ * of the accumulated review result.
+ */
 export function mergeReconciliationSummaries(
   left: ReconciliationSummary,
   right: ReconciliationSummary
@@ -69,6 +74,11 @@ export function mergeReconciliationSummaries(
   };
 }
 
+/**
+ * Add durable identity and commit history to findings before persistence.
+ * The identity lets incremental reviews update an existing issue instead of
+ * creating a new issue for every pull request commit.
+ */
 export function ensureLedgerFindings(
   findings: Finding[],
   headSha: string,
@@ -154,6 +164,11 @@ export function retainPriorFindings(
   };
 }
 
+/**
+ * Reconcile one file's new findings with its prior ledger findings. Resolution
+ * is applied first, then strict and semantic matching preserve issue identity;
+ * provider failures retain known findings instead of erasing them.
+ */
 export async function reconcileFileFindings(
   priorFindings: LedgerFinding[],
   newFindings: Finding[],

@@ -57,6 +57,7 @@ async function githubFetch<T>(url: string, token: string, options: RequestInit =
  * Fetch the raw diff for a pull request.
  * Returns the diff as a string (unified diff format).
  */
+/** Fetch the PR diff used as review input when no explicit SHA pair is available. */
 export async function fetchDiff(
   owner: string,
   repo: string,
@@ -82,6 +83,7 @@ export async function fetchDiff(
  * The PR's live diff endpoint always reflects the latest head; pinning the
  * SHA pair at review-start makes the diff immutable for the whole run.
  */
+/** Fetch the diff between the exact commits captured by the review. */
 export async function fetchDiffPinned(
   owner: string,
   repo: string,
@@ -125,6 +127,7 @@ export async function getPRFiles(
 /**
  * Get file content from a repo (for injecting full file context into review).
  */
+/** Fetch full file content for post-LLM factual verification. */
 export async function getFileContent(
   owner: string,
   repo: string,
@@ -217,6 +220,7 @@ export async function isRepoCollaborator(
   throw new Error(`Collaborator check failed (${response.status}) ${url}: ${body}`);
 }
 
+/** Post a comment only when its idempotency marker is not already present. */
 export async function postCommentOnce(
   owner: string,
   repo: string,

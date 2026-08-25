@@ -21,6 +21,7 @@ export interface FileContext {
  * the slice boundary (which would corrupt the last character of e.g. emoji or
  * CJK ext-B text).
  */
+/** Build bounded file context for the provider without changing review state. */
 export function buildFileContext(
   content: string,
   maxChars: number = REVIEW_FILE_CONTEXT_MAX_CHARS

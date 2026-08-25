@@ -9,6 +9,7 @@ export type ResumeValidationHash = string;
  * or cross-PR equality. A future canonical change-set hash must operate on
  * parsed, normalized, deterministically ordered evidence instead.
  */
+/** Hash the exact diff used by a review so queue retries can detect changed input. */
 export async function hashResumeValidationDiff(
   rawDiff: string
 ): Promise<ResumeValidationHash> {

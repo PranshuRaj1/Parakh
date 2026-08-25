@@ -19,6 +19,7 @@ const NOT_FOUND = /GitHub API error \(404\)/;
  * A missing file is normal (most repos have none) and stays silent; any other
  * failure degrades to reviewing without conventions. Never throws.
  */
+/** Load repository-owned convention files as review rules at a pinned commit. */
 export async function loadConventionRules(
   owner: string,
   repo: string,
