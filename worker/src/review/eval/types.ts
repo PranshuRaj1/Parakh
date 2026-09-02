@@ -153,3 +153,43 @@ export interface NoiseFloor {
   f1Delta: number | null;
   falsePositiveDelta: number;
 }
+
+export interface EvaluatedRun {
+  run: EvalRun;
+  adjudications: FindingAdjudication[];
+  metrics: CaseMetrics;
+}
+
+export type ComparisonAssessment =
+  | 'better'
+  | 'worse'
+  | 'mixed'
+  | 'inconclusive'
+  | 'judge_unstable';
+
+export interface EvalCaseReport {
+  caseId: string;
+  oldNoiseFloor: NoiseFloor;
+  newNoiseFloor: NoiseFloor;
+  comparison: CaseComparison;
+  assessment: ComparisonAssessment;
+  runs: {
+    oldA: EvaluatedRun;
+    oldB: EvaluatedRun;
+    newA: EvaluatedRun;
+    newB: EvaluatedRun;
+  };
+}
+
+export interface EvalReport {
+  schemaVersion: 1;
+  createdAt: string;
+  goldSetVersion: string;
+  oldPipeline: PipelineVersion;
+  newPipeline: PipelineVersion;
+  judgeModel: string;
+  judgeTier: JudgeVerdict['judgeTier'];
+  config: EvalRunConfig;
+  cases: EvalCaseReport[];
+  summary: Record<ComparisonAssessment, number>;
+}
