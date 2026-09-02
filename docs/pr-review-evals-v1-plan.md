@@ -367,6 +367,112 @@ Implement in this order:
 Do not interpret the old-versus-new results until both noise-floor controls
 complete.
 
+## Session progress: Martian importer and reports
+
+### Completed
+
+1. **Martian importer** — `worker/src/review/eval/martian-importer.ts`
+
+   Reads the `withmartian/code-review-benchmark` golden_comments format:
+
+   ```json
+   [
+     {
+       "pr_title": "...",
+       "url": "https://github.com/owner/repo/pull/N",
+       "original_url": "...",
+       "comments": [
+         { "comment": "...", "severity": "High", "category": "bug" }
+       ]
+     }
+   ]
+   ```
+
+   Converts to `EvalCase` + `EvalDefect`:
+
+   - Filters to relevant categories: bug, security, concurrency, data, api
+   - Drops style, doc_defect, speculative, test_gap, perf (logged as filtered)
+   - Maps severity to UPPERCASE (critical→CRITICAL, etc.)
+   - Handles `original_url` for forked repos
+   - Marks PRs with zero relevant comments as negative controls
+   - Generates unique case/defect IDs with repo and PR number
+   - Optional snapshot fetcher fills real base/head SHAs, diff, and files
+
+2. **GitHub snapshot fetcher** — `worker/src/review/eval/github-snapshot.ts`
+
+   Fetches PR data from the GitHub API:
+
+   - PR base/head SHAs via `/repos/{owner}/{repo}/pulls/{number}`
+   - Unified diff via diff URL
+   - Changed file contents via `/repos/{owner}/{repo}/contents/{path}?ref={sha}`
+   - `SnapshotCache` persists fetched snapshots to `.eval-cache/snapshots.json`
+   - Handles rate limits and errors gracefully (returns null)
+
+3. **Markdown report generator** — `worker/src/review/eval/report.ts`
+
+   `generateMarkdownReport(report)` produces:
+
+   - Configuration table (gold set version, pipeline SHAs, judge model)
+   - Summary table (assessment counts)
+   - Aggregate metrics (old vs new precision, recall, F1, false positives)
+   - Per-case comparison table with deltas
+   - Per-case noise floor tables (old-vs-old, new-vs-new)
+   - Held-out findings section
+
+   `generateAdjudicationReview(report)` produces:
+
+   - Per-case held-out findings with file:line, severity, body
+   - Judge verdict details for each held-out finding
+   - Checkbox form for human resolution
+
+4. **CLI extensions** — `run-evals.test-helper.ts`
+
+   New options:
+
+   - `--import-martian <path>` — Import Martian golden_comments and produce a corpus
+   - `--martian-out <path>` — Output path for imported corpus (default: `worker/src/review/eval/fixtures/martian-corpus.json`)
+   - `--gold-version <version>` — Gold set version for imported corpus
+   - `--output-md <path>` — Write Markdown report alongside JSON
+   - `--output-review <path>` — Write adjudication review file
+
+5. **Tests** — 22 new tests, 60 total eval tests passing
+
+   - `martian-importer.test.ts`: 11 tests covering filtering, corpus building,
+     severity mapping, fork handling, negative controls
+   - `report.test.ts`: 9 tests covering Markdown generation, adjudication review,
+     held-out findings rendering
+
+### Next steps
+
+1. **Download Martian golden_comments** and run the importer:
+
+   ```bash
+   GITHUB_TOKEN=ghp_... npm run eval:reviews -- \
+     --import-martian path/to/sentry.json \
+     --gold-version martian-gold-v1
+   ```
+
+2. **Select 15-20 PRs** from the Martian dataset for the first real benchmark:
+
+   - Prioritize HIGH/CRITICAL severity defects
+   - Include 2-3 PRs with zero relevant comments as negative controls
+   - Prefer PRs from different repos (sentry, grafana, cal.com, keycloak, discourse)
+   - Verify `original_url` points to real upstream PRs with fetchable diffs
+
+3. **Run the full eval** with API keys:
+
+   ```bash
+   GEMINI_API_KEY=... GROQ_API_KEY=... GITHUB_TOKEN=ghp_... \
+   npm run eval:reviews -- \
+     --corpus worker/src/review/eval/fixtures/martian-corpus.json \
+     --output-md .eval-cache/reports/latest.md \
+     --output-review .eval-cache/reports/adjudication.md
+   ```
+
+4. **Manually review** held-out findings via the adjudication report
+
+5. **Compare** v2 improvement against noise floors
+
 ## Later extensions
 
 Only after this loop is trusted should we add mutation testing, larger external

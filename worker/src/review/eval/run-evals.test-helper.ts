@@ -12,9 +12,21 @@ import {
   DEFAULT_EVAL_JUDGE_MODEL,
   GroqJudgeTransport,
 } from './groq-judge.js';
+import { fetchPrSnapshot, SnapshotCache } from './github-snapshot.js';
+import {
+  buildCorpusFromMartian,
+  filterToRelevantCategories,
+  loadMartianFile,
+  summarizeImport,
+} from './martian-importer.js';
 import { evaluateCase } from './orchestrator.test-helper.js';
+import {
+  generateAdjudicationReview,
+  generateMarkdownReport,
+} from './report.js';
 import type {
   ComparisonAssessment,
+  EvalCorpus,
   EvalReport,
   EvalRunConfig,
 } from './types.js';
@@ -24,10 +36,15 @@ const optionNames = new Map([
   ['--new-ref', 'newRef'],
   ['--corpus', 'corpus'],
   ['--output', 'output'],
+  ['--output-md', 'outputMd'],
+  ['--output-review', 'outputReview'],
   ['--reviewer-model', 'reviewerModel'],
   ['--judge-model', 'judgeModel'],
   ['--context-budget', 'contextBudget'],
   ['--timeout-ms', 'timeoutMs'],
+  ['--import-martian', 'importMartian'],
+  ['--martian-out', 'martianOut'],
+  ['--gold-version', 'goldVersion'],
 ] as const);
 
 function parseArgs(args: string[]) {
@@ -36,13 +53,19 @@ function parseArgs(args: string[]) {
     newRef: 'pranshu/better-implementation',
     corpus: 'worker/src/review/eval/fixtures/gold-v1.json',
     output: '.eval-cache/reports/latest.json',
+    outputMd: '',
+    outputReview: '',
     reviewerModel: 'gemini-2.5-flash',
     judgeModel: DEFAULT_EVAL_JUDGE_MODEL,
     contextBudget: '20000',
     timeoutMs: '120000',
     verifyRefs: false,
+    importMartian: '',
+    martianOut: 'worker/src/review/eval/fixtures/martian-corpus.json',
+    goldVersion: 'martian-gold-v1',
   };
   for (let index = 0; index < args.length; index++) {
+    if (args[index] === '--') continue;
     if (args[index] === '--verify-refs') {
       values.verifyRefs = true;
       continue;
@@ -58,11 +81,16 @@ function parseArgs(args: string[]) {
     newRef: string;
     corpus: string;
     output: string;
+    outputMd: string;
+    outputReview: string;
     reviewerModel: string;
     judgeModel: string;
     contextBudget: string;
     timeoutMs: string;
     verifyRefs: boolean;
+    importMartian: string;
+    martianOut: string;
+    goldVersion: string;
   };
 }
 
@@ -83,9 +111,86 @@ function groqApiKey(): string {
   return key;
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const repoRoot = process.cwd();
+async function runMartianImport(args: ReturnType<typeof parseArgs>, repoRoot: string): Promise<void> {
+  const githubToken = process.env.GITHUB_TOKEN;
+  const prs = await loadMartianFile(resolve(repoRoot, args.importMartian));
+  const result = filterToRelevantCategories(prs);
+  process.stdout.write(summarizeImport(result) + '\n\n');
+
+  if (githubToken) {
+    process.stdout.write('Fetching PR snapshots from GitHub...\n');
+    const cache = new SnapshotCache();
+    const cachePath = resolve(repoRoot, '.eval-cache', 'snapshots.json');
+    await cache.load(cachePath);
+
+    const snapshotFetcher = async (
+      owner: string,
+      repo: string,
+      number: number
+    ) => {
+      const key = `${owner}/${repo}#${number}`;
+      return cache.getOrFetch(key, () =>
+        fetchPrSnapshot(owner, repo, number, githubToken, {
+          fetchFiles: true,
+          fileBudget: 30,
+        })
+      );
+    };
+
+    for (const pr of result.prs) {
+      const parsed = pr.original_url ?? pr.url;
+      const match = parsed.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+      if (match) {
+        process.stdout.write(`  Fetching ${match[1]}/${match[2]}#${match[3]}...\n`);
+        await snapshotFetcher(match[1], match[2], Number(match[3]));
+      }
+    }
+
+    await cache.save(cachePath);
+    process.stdout.write(`Saved ${cache.size} snapshots to ${cachePath}\n\n`);
+  } else {
+    process.stdout.write(
+      'No GITHUB_TOKEN found. Corpus will have placeholder SHAs.\n'
+      + 'Set GITHUB_TOKEN to fetch real PR snapshots.\n\n'
+    );
+  }
+
+  const corpus = await buildCorpusFromMartian(
+    result.prs,
+    args.goldVersion,
+    githubToken
+      ? async (owner, repo, number) => {
+          const cache = new SnapshotCache();
+          const cachePath = resolve(repoRoot, '.eval-cache', 'snapshots.json');
+          await cache.load(cachePath);
+          const key = `${owner}/${repo}#${number}`;
+          return cache.getOrFetch(key, () =>
+            fetchPrSnapshot(owner, repo, number, githubToken!, {
+              fetchFiles: true,
+              fileBudget: 30,
+            })
+          );
+        }
+      : undefined
+  );
+
+  await validateCorpus(corpus);
+
+  const outPath = resolve(repoRoot, args.martianOut);
+  await mkdir(dirname(outPath), { recursive: true });
+  await writeFile(outPath, JSON.stringify(corpus, null, 2));
+  process.stdout.write(
+    `Wrote corpus: ${corpus.cases.length} cases, ${corpus.defects.length} defects\n`
+    + `  to ${outPath}\n`
+  );
+}
+
+async function validateCorpus(corpus: EvalCorpus): Promise<void> {
+  const { validateEvalCorpus } = await import('./corpus.test-helper.js');
+  validateEvalCorpus(corpus);
+}
+
+async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Promise<void> {
   const corpus = await loadEvalCorpus(resolve(repoRoot, args.corpus));
   const oldPipeline = await resolveGitPipelineVersion(
     'old',
@@ -188,10 +293,37 @@ async function main(): Promise<void> {
       ])
     ) as Record<ComparisonAssessment, number>,
   };
+
   const output = resolve(repoRoot, args.output);
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify(report, null, 2));
-  process.stdout.write(`Wrote eval report to ${output}\n`);
+  process.stdout.write(`Wrote JSON report to ${output}\n`);
+
+  if (args.outputMd) {
+    const mdPath = resolve(repoRoot, args.outputMd);
+    await mkdir(dirname(mdPath), { recursive: true });
+    await writeFile(mdPath, generateMarkdownReport(report));
+    process.stdout.write(`Wrote Markdown report to ${mdPath}\n`);
+  }
+
+  if (args.outputReview) {
+    const reviewPath = resolve(repoRoot, args.outputReview);
+    await mkdir(dirname(reviewPath), { recursive: true });
+    await writeFile(reviewPath, generateAdjudicationReview(report));
+    process.stdout.write(`Wrote adjudication review to ${reviewPath}\n`);
+  }
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const repoRoot = process.cwd();
+
+  if (args.importMartian) {
+    await runMartianImport(args, repoRoot);
+    return;
+  }
+
+  await runEval(args, repoRoot);
 }
 
 await main();
