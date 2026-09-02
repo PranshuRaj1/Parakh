@@ -45,6 +45,7 @@ export interface PipelineVersion {
 export interface EvalRunConfig {
   reviewerModel: string;
   contextBudget: number;
+  judgeContextBudget?: number;
   tools: string[];
   rulesHash: string;
   timeoutMs: number;

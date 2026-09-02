@@ -46,11 +46,13 @@ export function reviewRunCacheKey(input: {
   caseSnapshotHash: string;
   config: EvalRunConfig;
 }): string {
+  const { judgeContextBudget: _judgeContextBudget, ...reviewerConfig } =
+    input.config;
   return JSON.stringify({
     slot: input.slot,
     sha: input.version.resolvedSha,
     snapshot: input.caseSnapshotHash,
-    config: input.config,
+    config: reviewerConfig,
   });
 }
 

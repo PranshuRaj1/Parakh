@@ -3,6 +3,7 @@ import {
   assertComparableRuns,
   hashEvalCase,
   resolvePipelineVersion,
+  reviewRunCacheKey,
   runPairedCase,
 } from './runner.js';
 import type {
@@ -109,6 +110,22 @@ describe('eval runner', () => {
     expect(await hashEvalCase(reversed)).toBe(await hashEvalCase(ordered));
     expect(await hashEvalCase({ ...ordered, diff: 'changed' }))
       .not.toBe(await hashEvalCase(ordered));
+  });
+
+  it('keeps the review cache key independent of the judge context budget', async () => {
+    const snapshot = await hashEvalCase(testCase);
+    const base = {
+      slot: 'oldA' as const,
+      version: version('old'),
+      caseSnapshotHash: snapshot,
+    };
+    expect(reviewRunCacheKey({ ...base, config })).toBe(reviewRunCacheKey({
+      ...base,
+      config: { ...config, judgeContextBudget: 2_000 },
+    }));
+    expect(reviewRunCacheKey({ ...base, config })).not.toBe(
+      reviewRunCacheKey({ ...base, config: { ...config, timeoutMs: 30_000 } })
+    );
   });
 
   it('fails loudly when snapshots or configs differ', () => {

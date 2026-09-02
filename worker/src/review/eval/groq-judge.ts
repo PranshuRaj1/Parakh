@@ -61,43 +61,70 @@ export class GroqJudgeTransport implements JudgeTransport {
   ) {}
 
   async judge(prompt: string): Promise<VerdictBody> {
-    const waitMs = this.nextRequestAt - Date.now();
-    if (waitMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-    }
-    this.nextRequestAt = Date.now() + this.minIntervalMs;
-    const response = await this.request(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          temperature: 0.1,
-          messages: [{ role: 'user', content: prompt }],
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: 'pr_review_judge_verdict',
-              strict: true,
-              schema: verdictSchema,
-            },
-          },
-        }),
+    for (let attempt = 0; ; attempt++) {
+      const waitMs = this.nextRequestAt - Date.now();
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
       }
-    );
-    if (!response.ok) {
-      throw new Error(`Groq judge failed with status ${response.status}`);
-    }
+      this.nextRequestAt = Date.now() + this.minIntervalMs;
+      const response = await this.request(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            temperature: 0.1,
+            messages: [{ role: 'user', content: prompt }],
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: 'pr_review_judge_verdict',
+                strict: true,
+                schema: verdictSchema,
+              },
+            },
+          }),
+        }
+      );
+      if (response.status === 429 && attempt < 10) {
+        const body = await response.text().catch(() => '');
+        const retryAfterMs = retryDelayMsFrom(body, response.headers);
+        if (retryAfterMs > 0 && retryAfterMs <= 5 * 60_000) {
+          this.nextRequestAt = Date.now() + Math.max(retryAfterMs, 1_000);
+          continue;
+        }
+        throw new Error(
+          `Groq judge failed with status ${response.status}: ${body.slice(0, 400)}`
+        );
+      }
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(
+          `Groq judge failed with status ${response.status}: ${body.slice(0, 400)}`
+        );
+      }
 
-    const payload = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Groq judge returned no content');
-    return parseVerdict(content);
+      const payload = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Groq judge returned no content');
+      return parseVerdict(content);
+    }
   }
+}
+
+function retryDelayMsFrom(body: string, headers: Headers): number {
+  const header = headers.get('retry-after');
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) return seconds * 1000;
+  }
+  const match = body.match(/try again in ([\d.]+)s/);
+  if (match) return Number(match[1]) * 1000;
+  return 0;
 }

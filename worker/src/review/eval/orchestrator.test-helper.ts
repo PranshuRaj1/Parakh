@@ -17,20 +17,69 @@ import type {
   EvalRun,
   EvalRunConfig,
   EvaluatedRun,
+  Finding,
   FindingAdjudication,
   PipelineVersion,
   ReviewCache,
   RunSlot,
 } from './types.js';
 
-function codeContext(testCase: EvalCase, file: string, budget: number): string {
-  return Object.entries(testCase.files)
-    .sort(([left], [right]) =>
-      left === file ? -1 : right === file ? 1 : left.localeCompare(right)
-    )
+function windowAroundLine(
+  content: string,
+  line: number,
+  maxChars: number
+): string {
+  const lines = content.split('\n');
+  const targetIndex = Math.max(
+    0,
+    Math.min(lines.length - 1, Math.max(1, line) - 1)
+  );
+  if (maxChars <= 0) return '';
+  if (lines[targetIndex].length + 1 > maxChars) {
+    return lines[targetIndex].slice(0, maxChars);
+  }
+  const before: string[] = [];
+  const after: string[] = [];
+  let used = lines[targetIndex].length + 1;
+  let left = targetIndex - 1;
+  let right = targetIndex + 1;
+  while (used < maxChars && (left >= 0 || right < lines.length)) {
+    if (left >= 0) {
+      before.unshift(lines[left]);
+      used += lines[left].length + 1;
+      left--;
+    }
+    if (used >= maxChars) break;
+    if (right < lines.length) {
+      after.push(lines[right]);
+      used += lines[right].length + 1;
+      right++;
+    }
+  }
+  return [...before, lines[targetIndex], ...after].join('\n');
+}
+
+function codeContext(
+  testCase: EvalCase,
+  finding: Finding,
+  budget: number
+): string {
+  const maxChars = budget * 4;
+  const entries = Object.entries(testCase.files).sort(([left], [right]) =>
+    left === finding.file ? -1 : right === finding.file ? 1 : left.localeCompare(right)
+  );
+  if (entries.length === 0) return '';
+  const [[file, content], ...rest] = entries;
+  const fileContext = content.length <= maxChars
+    ? content
+    : windowAroundLine(content, finding.line ?? 1, maxChars);
+  const remaining = Math.max(0, maxChars - fileContext.length);
+  const restContext = rest
     .map(([path, content]) => `FILE: ${path}\n${content}`)
     .join('\n\n')
-    .slice(0, budget * 4);
+    .slice(0, remaining);
+  if (!restContext) return fileContext;
+  return `FILE: ${file}\n${fileContext}\n\n${restContext}`;
 }
 
 async function evaluateRun(input: {
@@ -53,8 +102,8 @@ async function evaluateRun(input: {
       defects: input.defects,
       codeContext: codeContext(
         input.testCase,
-        finding.file,
-        input.config.contextBudget
+        finding,
+        input.config.judgeContextBudget ?? input.config.contextBudget
       ),
     }, input.judge, input.cache, matchedDefectIds);
     const matchedDefectId = result.verdicts[0].matchedDefectId;

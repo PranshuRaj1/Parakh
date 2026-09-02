@@ -43,6 +43,7 @@ const optionNames = new Map([
   ['--reviewer-model', 'reviewerModel'],
   ['--judge-model', 'judgeModel'],
   ['--context-budget', 'contextBudget'],
+  ['--judge-context-budget', 'judgeContextBudget'],
   ['--timeout-ms', 'timeoutMs'],
   ['--import-martian', 'importMartian'],
   ['--martian-out', 'martianOut'],
@@ -61,6 +62,7 @@ function parseArgs(args: string[]) {
     reviewerModel: 'gemini-2.5-flash',
     judgeModel: DEFAULT_EVAL_JUDGE_MODEL,
     contextBudget: '20000',
+    judgeContextBudget: '2000',
     timeoutMs: '120000',
     verifyRefs: false,
     importMartian: '',
@@ -90,6 +92,7 @@ function parseArgs(args: string[]) {
     reviewerModel: string;
     judgeModel: string;
     contextBudget: string;
+    judgeContextBudget: string;
     timeoutMs: string;
     verifyRefs: boolean;
     importMartian: string;
@@ -223,6 +226,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
   const config: EvalRunConfig = {
     reviewerModel: args.reviewerModel,
     contextBudget: positiveNumber(args.contextBudget, 'context-budget'),
+    judgeContextBudget: positiveNumber(args.judgeContextBudget, 'judge-context-budget'),
     tools: [],
     rulesHash: 'none',
     timeoutMs: positiveNumber(args.timeoutMs, 'timeout-ms'),

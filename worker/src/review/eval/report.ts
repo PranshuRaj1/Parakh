@@ -204,6 +204,7 @@ export function generateMarkdownReport(report: EvalReport): string {
     `| Judge Tier | ${report.judgeTier} |`,
     `| Reviewer Model | ${report.config.reviewerModel} |`,
     `| Context Budget | ${report.config.contextBudget} |`,
+    `| Judge Context Budget | ${report.config.judgeContextBudget ?? report.config.contextBudget} |`,
     `| Cases | ${report.cases.length} |`,
     ``,
     `## Summary`,
