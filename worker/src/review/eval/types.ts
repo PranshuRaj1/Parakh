@@ -29,6 +29,13 @@ export interface EvalCorpus {
 
 export type PipelineLabel = 'old' | 'new';
 
+export type RunSlot = 'oldA' | 'oldB' | 'newA' | 'newB';
+
+export interface ReviewCache {
+  get(key: string): Promise<EvalRun | null>;
+  set(key: string, run: EvalRun): Promise<void>;
+}
+
 export interface PipelineVersion {
   label: PipelineLabel;
   branchRef: string;

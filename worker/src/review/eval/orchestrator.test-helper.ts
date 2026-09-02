@@ -19,6 +19,8 @@ import type {
   EvaluatedRun,
   FindingAdjudication,
   PipelineVersion,
+  ReviewCache,
+  RunSlot,
 } from './types.js';
 
 function codeContext(testCase: EvalCase, file: string, budget: number): string {
@@ -129,19 +131,23 @@ export async function evaluateCase(input: {
   config: EvalRunConfig;
   judge: JudgeTransport;
   cache: JudgeCache;
+  reviewCache?: ReviewCache;
 }): Promise<EvalCaseReport> {
-  const run = (pipeline: EvalPipeline, version: PipelineVersion) =>
+  const run = (pipeline: EvalPipeline, version: PipelineVersion, slot: RunSlot) =>
     runEvalCase(
       pipeline,
       version,
       input.testCase,
       input.goldSetVersion,
-      input.config
+      input.config,
+      undefined,
+      input.reviewCache,
+      slot
     );
-  const oldA = await run(input.oldPipeline, input.oldVersion);
-  const oldB = await run(input.oldPipeline, input.oldVersion);
-  const newA = await run(input.newPipeline, input.newVersion);
-  const newB = await run(input.newPipeline, input.newVersion);
+  const oldA = await run(input.oldPipeline, input.oldVersion, 'oldA');
+  const oldB = await run(input.oldPipeline, input.oldVersion, 'oldB');
+  const newA = await run(input.newPipeline, input.newVersion, 'newA');
+  const newB = await run(input.newPipeline, input.newVersion, 'newB');
 
   assertComparableRuns(oldA, newA);
   assertComparableRuns(oldB, newB);

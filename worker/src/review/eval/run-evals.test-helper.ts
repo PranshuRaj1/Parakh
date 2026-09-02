@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { loadBranchPipeline } from './branch-pipeline.test-helper.js';
 import { loadEvalCorpus } from './corpus.test-helper.js';
 import { FileJudgeCache } from './file-judge-cache.test-helper.js';
+import { FileReviewCache } from './file-review-cache.test-helper.js';
 import {
   resolveGitPipelineVersion,
   withDetachedWorktree,
@@ -35,6 +36,7 @@ const optionNames = new Map([
   ['--old-ref', 'oldRef'],
   ['--new-ref', 'newRef'],
   ['--corpus', 'corpus'],
+  ['--case', 'caseId'],
   ['--output', 'output'],
   ['--output-md', 'outputMd'],
   ['--output-review', 'outputReview'],
@@ -52,6 +54,7 @@ function parseArgs(args: string[]) {
     oldRef: 'main',
     newRef: 'pranshu/better-implementation',
     corpus: 'worker/src/review/eval/fixtures/gold-v1.json',
+    caseId: '',
     output: '.eval-cache/reports/latest.json',
     outputMd: '',
     outputReview: '',
@@ -80,6 +83,7 @@ function parseArgs(args: string[]) {
     oldRef: string;
     newRef: string;
     corpus: string;
+    caseId: string;
     output: string;
     outputMd: string;
     outputReview: string;
@@ -192,6 +196,20 @@ async function validateCorpus(corpus: EvalCorpus): Promise<void> {
 
 async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Promise<void> {
   const corpus = await loadEvalCorpus(resolve(repoRoot, args.corpus));
+  const casesToRun = args.caseId
+    ? corpus.cases.filter((testCase) => testCase.id === args.caseId)
+    : corpus.cases;
+  if (args.caseId && casesToRun.length === 0) {
+    throw new Error(`Case not found in corpus: ${args.caseId}`);
+  }
+  if (args.caseId) {
+    const missingDefects = corpus.defects.filter(
+      (defect) => defect.caseId === args.caseId
+    );
+    if (missingDefects.length === 0) process.stdout.write(
+      `Note: no defects found for case ${args.caseId}\n`
+    );
+  }
   const oldPipeline = await resolveGitPipelineVersion(
     'old',
     args.oldRef,
@@ -239,8 +257,11 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
         const cache = new FileJudgeCache(
           resolve(repoRoot, '.eval-cache', 'judge-verdicts.json')
         );
+        const reviewCache = new FileReviewCache(
+          resolve(repoRoot, '.eval-cache', 'review-runs.json')
+        );
         const reports = [];
-        for (const testCase of corpus.cases) {
+        for (const testCase of casesToRun) {
           reports.push(await evaluateCase({
             testCase,
             defects: corpus.defects.filter(
@@ -254,6 +275,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
             config,
             judge,
             cache,
+            reviewCache,
           }));
         }
         return reports;

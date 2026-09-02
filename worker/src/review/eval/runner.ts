@@ -5,6 +5,8 @@ import type {
   EvalRunConfig,
   PipelineLabel,
   PipelineVersion,
+  ReviewCache,
+  RunSlot,
 } from './types.js';
 
 export async function hashEvalCase(testCase: EvalCase): Promise<string> {
@@ -38,19 +40,43 @@ export async function resolvePipelineVersion(
   return { label, branchRef, resolvedSha };
 }
 
+export function reviewRunCacheKey(input: {
+  slot: RunSlot;
+  version: PipelineVersion;
+  caseSnapshotHash: string;
+  config: EvalRunConfig;
+}): string {
+  return JSON.stringify({
+    slot: input.slot,
+    sha: input.version.resolvedSha,
+    snapshot: input.caseSnapshotHash,
+    config: input.config,
+  });
+}
+
 export async function runEvalCase(
   pipeline: EvalPipeline,
   version: PipelineVersion,
   testCase: EvalCase,
   goldSetVersion: string,
   config: EvalRunConfig,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  cache?: ReviewCache,
+  slot?: RunSlot
 ): Promise<EvalRun> {
   const startedAt = now();
+  const caseSnapshotHash = await hashEvalCase(testCase);
+  const cacheKey = slot
+    ? reviewRunCacheKey({ slot, version, caseSnapshotHash, config })
+    : null;
+  if (cache && cacheKey) {
+    const cached = await cache.get(cacheKey);
+    if (cached) return cached;
+  }
   const output = await pipeline.review(testCase, config);
-  return {
+  const run: EvalRun = {
     caseId: testCase.id,
-    caseSnapshotHash: await hashEvalCase(testCase),
+    caseSnapshotHash,
     isNegativeControl: testCase.isNegativeControl,
     goldSetVersion,
     pipeline: version,
@@ -58,6 +84,8 @@ export async function runEvalCase(
     output,
     latencyMs: Math.max(0, now() - startedAt),
   };
+  if (cache && cacheKey) await cache.set(cacheKey, run);
+  return run;
 }
 
 export function assertComparableRuns(left: EvalRun, right: EvalRun): void {
