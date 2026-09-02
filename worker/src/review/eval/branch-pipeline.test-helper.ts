@@ -71,7 +71,8 @@ function isRetryableReviewError(error: unknown): boolean {
     || message.includes('resource exhausted')
     || message.includes('503')
     || message.includes('service unavailable')
-    || message.includes('high demand');
+    || message.includes('high demand')
+    || message.includes('fetch failed');
 }
 
 export function createBranchPipelineFromModules(input: {

@@ -165,4 +165,33 @@ describe('branch pipeline adapter', () => {
     });
     expect(attempted).toEqual(['daily-key', 'capacity-key', 'working-key']);
   });
+
+  it('retries a transient fetch failure with the next eval key', async () => {
+    const attempted: string[] = [];
+    const pipeline = createBranchPipelineFromModules({
+      apiKeys: 'network-key,working-key',
+      gemini: {
+        GeminiClient: class {
+          constructor(private readonly env: { GEMINI_API_KEY?: string }) {}
+
+          async reviewDiff() {
+            const key = this.env.GEMINI_API_KEY ?? '';
+            attempted.push(key);
+            if (key === 'network-key') throw new TypeError('fetch failed');
+            return { genericFindings: [], ruleFindings: [], thinking: null };
+          }
+        },
+      },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', 'diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    await expect(pipeline.review(testCase, config)).resolves.toMatchObject({
+      providerCalls: 1,
+    });
+    expect(attempted).toEqual(['network-key', 'working-key']);
+  });
 });
