@@ -66,6 +66,8 @@ export interface EvalPipeline {
 }
 
 export interface JudgeVerdict {
+  judgeModel: string;
+  judgeTier: 'free' | 'paid_spotcheck';
   defectExists: boolean;
   matchedDefectId: string | null;
   correctness: 0 | 1 | 2;
@@ -74,6 +76,22 @@ export interface JudgeVerdict {
   unsupportedClaim: boolean;
   evidenceQuote: string;
   reason: string;
+}
+
+export interface JudgeInput {
+  caseId: string;
+  goldSetVersion: string;
+  judgePromptVersion: string;
+  finding: Finding;
+  defects: EvalDefect[];
+  codeContext: string;
+}
+
+export interface JudgeResult {
+  cacheKey: string;
+  verdicts: [JudgeVerdict, JudgeVerdict];
+  outcome: AdjudicationOutcome;
+  cacheHit: boolean;
 }
 
 export type AdjudicationOutcome =

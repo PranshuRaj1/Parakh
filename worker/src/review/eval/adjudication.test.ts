@@ -7,6 +7,8 @@ import type { JudgeVerdict } from './types.js';
 
 function verdict(overrides: Partial<JudgeVerdict> = {}): JudgeVerdict {
   return {
+    judgeModel: 'judge',
+    judgeTier: 'free',
     defectExists: true,
     matchedDefectId: 'defect-1',
     correctness: 2,
