@@ -43,4 +43,3 @@ describe('eval corpus', () => {
     expect(() => validateEvalCorpus(corpus)).toThrow('Negative control has gold defects');
   });
 });
-

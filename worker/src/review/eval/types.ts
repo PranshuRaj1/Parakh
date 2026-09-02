@@ -10,7 +10,6 @@ export interface EvalCase {
   diff: string;
   files: Record<string, string>;
 }
-
 export interface EvalDefect {
   id: string;
   caseId: string;
@@ -55,4 +54,3 @@ export interface FindingAdjudication {
   verdicts: JudgeVerdict[];
   reason: string;
 }
-

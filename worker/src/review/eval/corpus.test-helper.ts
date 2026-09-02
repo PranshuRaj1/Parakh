@@ -8,7 +8,6 @@ export async function loadEvalCorpus(path: string): Promise<EvalCorpus> {
   validateEvalCorpus(corpus);
   return corpus;
 }
-
 export function validateEvalCorpus(corpus: EvalCorpus): void {
   if (corpus.schemaVersion !== 1) throw new Error('Unsupported eval corpus schema');
   if (!corpus.goldSetVersion.trim()) throw new Error('Missing gold set version');
@@ -39,4 +38,3 @@ export function validateEvalCorpus(corpus: EvalCorpus): void {
     }
   }
 }
-

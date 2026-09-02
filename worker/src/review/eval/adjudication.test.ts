@@ -44,4 +44,3 @@ describe('adjudicateVerdicts', () => {
     expect(adjudicateVerdicts(verdicts)).toBe('needs_human_review');
   });
 });
-

@@ -13,7 +13,6 @@ export function verdictsDisagree(verdicts: JudgeVerdict[]): boolean {
     || verdict.unsupportedClaim !== first.unsupportedClaim
   );
 }
-
 export function adjudicateVerdicts(
   verdicts: JudgeVerdict[],
   matchedDefectIds: ReadonlySet<string> = new Set()
@@ -39,4 +38,3 @@ export function adjudicateVerdicts(
   }
   return 'needs_human_review';
 }
-
