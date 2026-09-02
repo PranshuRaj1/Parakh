@@ -29,6 +29,8 @@ describe('isRateLimitError', () => {
       'Quota exceeded for this project',
       'rate limit exceeded',
       'RESOURCE_EXHAUSTED: resource exhausted',
+      'Request failed with status 503',
+      '503 Service Unavailable',
     ]) {
       expect(isRateLimitError(new Error(msg))).toBe(true);
     }

@@ -84,7 +84,10 @@ export function isRateLimitError(err: unknown): boolean {
   return msg.includes('429')
     || msg.includes('quota')
     || msg.includes('rate limit')
-    || msg.includes('resource exhausted');
+    || msg.includes('resource exhausted')
+    || msg.includes('503')
+    || msg.includes('service unavailable')
+    || msg.includes('high demand');
 }
 
 /**
