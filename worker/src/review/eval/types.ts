@@ -57,6 +57,10 @@ export interface PipelineOutput {
   inputTokens: number;
   outputTokens: number;
   providerCalls: number;
+  planningGroups?: number;
+  planningChanges?: number;
+  planningMoves?: number;
+  planningFallbackGroups?: number;
 }
 
 export interface EvalRun {

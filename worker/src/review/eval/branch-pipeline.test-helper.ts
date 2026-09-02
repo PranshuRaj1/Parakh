@@ -8,6 +8,9 @@ import type {
   EvalRunConfig,
   PipelineOutput,
 } from './types.js';
+import { buildRepositoryIndex } from '../../indexer/repository-index.js';
+import { buildChangeUnderstandingPlan } from '../semantic-diff/plan.js';
+import type { BehaviorGroup } from '../grouping/types.js';
 
 interface ReviewModule {
   parseDiffByFile(diff: string): Map<string, string>;
@@ -63,6 +66,7 @@ export function createBranchPipelineFromModules(input: {
   gemini: GeminiModule;
   apiKey?: string;
   apiKeys?: string;
+  strategy?: 'file' | 'grouped';
 }): EvalPipeline {
   return {
     async review(testCase: EvalCase, config: EvalRunConfig): Promise<PipelineOutput> {
@@ -74,8 +78,39 @@ export function createBranchPipelineFromModules(input: {
       let inputCharacters = 0;
       let outputCharacters = 0;
       let providerCalls = 0;
+      let planningGroups: number | undefined;
+      let planningChanges: number | undefined;
+      let planningMoves: number | undefined;
+      let planningFallbackGroups: number | undefined;
 
-      for (const [file, diff] of input.review.parseDiffByFile(testCase.diff)) {
+      const grouped = input.strategy === 'grouped';
+      const reviewUnits: Array<{ file: string; diff: string }> = [];
+      if (grouped) {
+        const plan = await buildChangeUnderstandingPlan({
+          repository: testCase.repo,
+          oldSha: testCase.baseSha,
+          newSha: testCase.headSha,
+          diff: testCase.diff,
+          sources: Object.fromEntries(Object.entries(testCase.files).map(([file, source]) => [file, { newSource: source }])),
+          ...buildRepositoryIndex(testCase.repo, testCase.headSha, testCase.files),
+        });
+        planningGroups = plan.groups.length;
+        planningChanges = plan.changes.length;
+        planningMoves = plan.moves.length;
+        planningFallbackGroups = plan.groups.filter((group) => group.demotionReason).length;
+        const hunkByHash = new Map(plan.files.flatMap((file) => file.hunks).map((hunk) => [hunk.evidence.patchHash, hunk]));
+        for (const group of plan.groups) {
+          reviewUnits.push({
+            file: group.changes[0]?.file ?? group.anchor,
+            diff: renderGroup(group, hunkByHash),
+          });
+        }
+      } else {
+        reviewUnits.push(...Array.from(input.review.parseDiffByFile(testCase.diff))
+          .map(([file, diff]) => ({ file, diff })));
+      }
+
+      for (const { file, diff } of reviewUnits) {
         if (input.review.isIgnoredLockfile(file)) continue;
         const maxCharacters = config.contextBudget * 4;
         const boundedDiff = diff.slice(0, maxCharacters);
@@ -120,15 +155,35 @@ export function createBranchPipelineFromModules(input: {
         inputTokens: Math.ceil(inputCharacters / 4),
         outputTokens: Math.ceil(outputCharacters / 4),
         providerCalls,
+        planningGroups,
+        planningChanges,
+        planningMoves,
+        planningFallbackGroups,
       };
     },
   };
+}
+
+function renderGroup(group: BehaviorGroup, hunkByHash: Map<string, { header: string; lines: string[] }>): string {
+  const manifest = [
+    `BEHAVIOR_GROUP: ${group.id}`,
+    `ANCHOR: ${group.anchor}`,
+    `CONFIDENCE: ${group.confidence}`,
+    group.riskSignals.length > 0 ? `RISKS: ${group.riskSignals.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+  const hunks = group.changes.map((change) => {
+    const hunk = hunkByHash.get(change.evidence.patchHash);
+    if (!hunk) return '';
+    return [`FILE: ${change.file}`, hunk.header, ...hunk.lines].join('\n');
+  }).filter(Boolean).join('\n');
+  return `${manifest}\n${hunks}`;
 }
 
 export async function loadBranchPipeline(input: {
   worktreePath: string;
   apiKey?: string;
   apiKeys?: string;
+  strategy?: 'file' | 'grouped';
 }): Promise<EvalPipeline> {
   const moduleUrl = (path: string) =>
     pathToFileURL(join(input.worktreePath, path)).href;
@@ -141,5 +196,6 @@ export async function loadBranchPipeline(input: {
     gemini,
     apiKey: input.apiKey,
     apiKeys: input.apiKeys,
+    strategy: input.strategy,
   });
 }

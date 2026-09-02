@@ -22,6 +22,54 @@ const config: EvalRunConfig = {
 };
 
 describe('branch pipeline adapter', () => {
+  it('reviews planner-generated behavior groups without changing the file adapter', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({
+      genericFindings: [],
+      ruleFindings: [],
+      thinking: null,
+    });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      apiKey: 'key',
+      gemini: {
+        GeminiClient: class {
+          reviewDiff = reviewDiff;
+        },
+      },
+      review: {
+        parseDiffByFile: () => new Map(),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    const output = await pipeline.review({
+      ...testCase,
+      diff: [
+        'diff --git a/src/a.ts b/src/a.ts',
+        '--- a/src/a.ts',
+        '+++ b/src/a.ts',
+        '@@ -1,3 +1,3 @@',
+        ' export function update() {',
+        '-  return value == null;',
+        '+  return value !== null;',
+        '}',
+      ].join('\n'),
+      files: { 'src/a.ts': 'export function update() {\n  return value !== null;\n}' },
+    }, config);
+
+    expect(reviewDiff).toHaveBeenCalledWith(
+      'src/a.ts',
+      expect.stringContaining('BEHAVIOR_GROUP:'),
+      [],
+      expect.objectContaining({ timeoutMs: 1_000 }),
+      expect.any(String),
+    );
+    expect(output.planningGroups).toBe(1);
+    expect(output.planningChanges).toBe(1);
+    expect(output.providerCalls).toBe(1);
+  });
+
   it('reviews the frozen diff with the branch modules', async () => {
     const reviewDiff = vi.fn().mockResolvedValue({
       genericFindings: [{

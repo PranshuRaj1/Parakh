@@ -248,8 +248,8 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
           ? undefined
           : process.env.GEMINI_API_KEYS;
         const [oldAdapter, newAdapter] = await Promise.all([
-          loadBranchPipeline({ worktreePath: oldPath, apiKey, apiKeys }),
-          loadBranchPipeline({ worktreePath: newPath, apiKey, apiKeys }),
+          loadBranchPipeline({ worktreePath: oldPath, apiKey, apiKeys, strategy: 'file' }),
+          loadBranchPipeline({ worktreePath: newPath, apiKey, apiKeys, strategy: 'grouped' }),
         ]);
         if (args.verifyRefs) return [];
 
