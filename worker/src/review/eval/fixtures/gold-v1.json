@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "goldSetVersion": "gold-v1",
+  "cases": [
+    {
+      "id": "fixture-missing-owner-check",
+      "repo": "fixture/parakh",
+      "baseSha": "1111111111111111111111111111111111111111",
+      "headSha": "2222222222222222222222222222222222222222",
+      "language": "typescript",
+      "isNegativeControl": false,
+      "diff": "diff --git a/src/delete-project.ts b/src/delete-project.ts\nindex 1111111..2222222 100644\n--- a/src/delete-project.ts\n+++ b/src/delete-project.ts\n@@ -1 +1,4 @@\n-export const enabled = false;\n+export async function deleteProject(userId: string, projectId: string) {\n+  await requireAuthenticated(userId);\n+  return database.projects.delete(projectId);\n+}\n",
+      "files": {
+        "src/delete-project.ts": "export async function deleteProject(userId: string, projectId: string) {\n  await requireAuthenticated(userId);\n  return database.projects.delete(projectId);\n}\n"
+      }
+    },
+    {
+      "id": "fixture-clean-validation",
+      "repo": "fixture/parakh",
+      "baseSha": "3333333333333333333333333333333333333333",
+      "headSha": "4444444444444444444444444444444444444444",
+      "language": "typescript",
+      "isNegativeControl": true,
+      "diff": "diff --git a/src/input.ts b/src/input.ts\nindex 3333333..4444444 100644\n--- a/src/input.ts\n+++ b/src/input.ts\n@@ -1 +1,4 @@\n-export const parse = JSON.parse;\n+export function parse(value: string) {\n+  if (!value.trim()) return null;\n+  return JSON.parse(value);\n+}\n",
+      "files": {
+        "src/input.ts": "export function parse(value: string) {\n  if (!value.trim()) return null;\n  return JSON.parse(value);\n}\n"
+      }
+    }
+  ],
+  "defects": [
+    {
+      "id": "fixture-auth-001",
+      "caseId": "fixture-missing-owner-check",
+      "claim": "An authenticated non-owner can delete another user's project.",
+      "evidence": "deleteProject authenticates the caller but never checks project ownership before deletion.",
+      "files": ["src/delete-project.ts"],
+      "severity": "HIGH",
+      "fixCondition": "Identify the missing ownership authorization check in deleteProject."
+    }
+  ]
+}
