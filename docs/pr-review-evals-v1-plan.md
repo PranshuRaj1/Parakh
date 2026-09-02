@@ -48,6 +48,10 @@ inspect the affected cases.
 - Use the existing baseline replay harness as the execution foundation.
 - Compare only runs that use the same PR snapshot, context budget, tools, rules,
   provider settings, and timeouts.
+- Limit v1 to single-round first-pass reviews from base SHA to head SHA.
+  Incremental re-review and ledger carry-forward belong to multi-round evals.
+- Resolve every pipeline branch ref to a commit SHA before running and store
+  both the human-readable ref and resolved SHA.
 
 ## Phase 1: Build the case set
 
@@ -113,6 +117,8 @@ run record per case and pipeline version:
 ```text
 case_id
 pipeline_version
+pipeline_ref
+pipeline_sha
 reviewer_model
 prompt_version
 feature_flags
@@ -170,6 +176,10 @@ separately. This keeps strict v1 F1 easy to interpret.
 Use a judge from a different model family than the reviewer when possible. If
 Parakh generates with Gemini, use a Claude or GPT-class judge. The judge is an
 adjudication assistant, not the source of truth.
+
+The default free-tier judge is Groq's openai/gpt-oss-120b. Store judge_tier as
+free for these verdicts. A later paid spot check must use a different model
+family and store judge_tier as paid_spotcheck.
 
 For each finding, provide only:
 
