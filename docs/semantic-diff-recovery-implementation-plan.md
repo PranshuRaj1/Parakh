@@ -144,6 +144,14 @@ Implementation:
 6. Prefer the smallest enclosing changed symbol when ranges overlap.
 7. Keep hunk-level fallback for unsupported files and parser failures.
 
+Confidence contract for every new adapter:
+
+- `high`: an exact declaration boundary and changed-line containment are both verified.
+- `medium`: the declaration is identified but one boundary is approximate or overlapping.
+- `low`: no declaration can be identified reliably, or the parser rejects the construct.
+
+Before an adapter merges, run it against representative corpus fixtures and report its high, medium, and low-confidence distribution. The existing 25 percent low-confidence demotion threshold remains fixed during Commit 3. An adapter is not considered supported if ordinary valid files exceed that threshold broadly; those files continue through deterministic file fallback until the adapter improves. Do not tune the threshold independently per language to make grouping metrics look better.
+
 Do not add a native parser dependency until Cloudflare Worker bundle size and CPU compatibility are verified. A stronger parser can replace an adapter later without changing downstream contracts.
 
 Regression fixtures must cover the actual language patterns seen in Sentry, Grafana, and Keycloak.
@@ -203,9 +211,20 @@ Implementation:
 3. Resolve direct imports and referenced symbols into unchanged files.
 4. Include directly related tests and callers when they are already available through existing repository-context facilities.
 5. Bound expansion by depth, files, symbols, bytes, and subrequests.
-6. Cache resolved source by repository, SHA, and path.
+6. Cache resolved source in the existing Upstash Redis state store by repository, SHA, and path. Do not introduce a second cache backend.
 7. Treat unchanged files as context only. They never become primary changed evidence.
 8. Record truncation and unresolved-dependency metrics.
+
+Subrequest rules:
+
+1. Use the existing review-wide `SubrequestBudget`; context loading does not create a separate counter that can exceed the Worker's 44-subrequest guard.
+2. Persist `contextSubrequestsUsed` in review checkpoint state so queue redelivery cannot restart the context allowance.
+3. Allow at most 8 additional context-loading subrequests across the complete review execution, not per group.
+4. Stop context expansion when either the 8-subrequest ceiling is reached or the shared budget cannot preserve `FINALIZE_BUDGET_RESERVE`.
+5. Count Redis reads, Redis writes, GitHub source fetches, and retries against the context ceiling and shared budget.
+6. Batch candidate cache reads and cache writes through Upstash Redis so one file does not automatically consume separate read and write requests.
+7. Reuse source already present in the pinned review input without spending context budget.
+8. Record whether expansion stopped because of file, byte, symbol, depth, or subrequest limits.
 
 Initial limits:
 
@@ -214,9 +233,10 @@ dependency depth: 1
 unchanged context files: 20
 symbols per group candidate: 40
 edges per group candidate: 80
+context subrequests per review execution: 8
 ```
 
-Tests use mocked repository fetches and verify that limits are deterministic. No live GitHub requests are used in tests.
+The Redis cache uses one versioned namespace, a bounded default TTL of 24 hours, and batched reads and writes. Pinned SHA content is immutable, but the TTL bounds storage growth. Tests use mocked Redis and repository fetches and verify that limits are deterministic. They must prove that several groups share one review-wide allowance, redelivery resumes the persisted count, cache misses cannot exceed the ceiling, and finalization reserve is preserved. No live GitHub or Redis requests are used in tests.
 
 How this helps:
 
