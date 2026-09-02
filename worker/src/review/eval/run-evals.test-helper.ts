@@ -51,6 +51,8 @@ const optionNames = new Map([
 ] as const);
 
 function parseArgs(args: string[]) {
+  const reviewerModelDefault =
+    process.env.GEMINI_GENERATION_MODEL ?? 'gemini-2.5-flash';
   const values: Record<string, string | boolean> = {
     oldRef: 'main',
     newRef: 'pranshu/better-implementation',
@@ -59,11 +61,11 @@ function parseArgs(args: string[]) {
     output: '.eval-cache/reports/latest.json',
     outputMd: '',
     outputReview: '',
-    reviewerModel: 'gemini-2.5-flash',
+    reviewerModel: reviewerModelDefault,
     judgeModel: DEFAULT_EVAL_JUDGE_MODEL,
     contextBudget: '20000',
     judgeContextBudget: '2000',
-    timeoutMs: '120000',
+    timeoutMs: '600000',
     verifyRefs: false,
     importMartian: '',
     martianOut: 'worker/src/review/eval/fixtures/martian-corpus.json',
