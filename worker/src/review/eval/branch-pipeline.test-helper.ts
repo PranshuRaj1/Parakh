@@ -58,22 +58,37 @@ async function withTimeout<T>(
   }
 }
 
+function isRetryableReviewError(error: unknown): boolean {
+  const status = typeof error === 'object' && error !== null && 'status' in error
+    ? Number(error.status)
+    : 0;
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return status === 429
+    || status === 503
+    || message.includes('429')
+    || message.includes('quota')
+    || message.includes('rate limit')
+    || message.includes('resource exhausted')
+    || message.includes('503')
+    || message.includes('service unavailable')
+    || message.includes('high demand');
+}
+
 export function createBranchPipelineFromModules(input: {
   review: ReviewModule;
   gemini: GeminiModule;
   apiKey?: string;
   apiKeys?: string;
 }): EvalPipeline {
+  const keys = input.apiKeys?.split(',').map((key) => key.trim()).filter(Boolean)
+    ?? (input.apiKey ? [input.apiKey] : [undefined]);
+  let keyHint = 0;
+
   return {
     async review(testCase: EvalCase, config: EvalRunConfig): Promise<PipelineOutput> {
       if (config.tools.length > 0 || config.rulesHash !== 'none') {
         throw new Error('Eval v1 supports only empty tools and rules');
       }
-      const client = new input.gemini.GeminiClient({
-        GEMINI_API_KEY: input.apiKey,
-        GEMINI_API_KEYS: input.apiKeys,
-        GEMINI_GENERATION_MODEL: config.reviewerModel,
-      });
       const rawFindings: Finding[] = [];
       const finalFindings: Finding[] = [];
       let inputCharacters = 0;
@@ -88,16 +103,33 @@ export function createBranchPipelineFromModules(input: {
           0,
           Math.max(0, maxCharacters - boundedDiff.length)
         );
-        const result = await withTimeout(
-          (signal) => client.reviewDiff(
-            file,
-            boundedDiff,
-            [],
-            { signal, timeoutMs: config.timeoutMs },
-            reference
-          ),
-          config.timeoutMs
-        );
+        let result: ReviewResult | undefined;
+        let lastError: unknown;
+        for (let attempt = 0; attempt < keys.length; attempt++) {
+          const keyIndex = (keyHint + attempt) % keys.length;
+          const client = new input.gemini.GeminiClient({
+            GEMINI_API_KEY: keys[keyIndex],
+            GEMINI_GENERATION_MODEL: config.reviewerModel,
+          });
+          try {
+            result = await withTimeout(
+              (signal) => client.reviewDiff(
+                file,
+                boundedDiff,
+                [],
+                { signal, timeoutMs: config.timeoutMs },
+                reference
+              ),
+              config.timeoutMs
+            );
+            keyHint = keyIndex;
+            break;
+          } catch (error) {
+            if (!isRetryableReviewError(error)) throw error;
+            lastError = error;
+          }
+        }
+        if (!result) throw lastError;
         providerCalls++;
         inputCharacters += boundedDiff.length + (reference?.length ?? 0);
 

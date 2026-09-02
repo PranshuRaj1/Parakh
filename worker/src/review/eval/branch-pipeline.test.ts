@@ -131,4 +131,38 @@ describe('branch pipeline adapter', () => {
       timeoutMs: 5,
     })).rejects.toThrow('Eval review timed out after 5ms');
   });
+
+  it('rotates eval keys when a branch client does not retry capacity errors', async () => {
+    const attempted: string[] = [];
+    const pipeline = createBranchPipelineFromModules({
+      apiKeys: 'daily-key,capacity-key,working-key',
+      gemini: {
+        GeminiClient: class {
+          private readonly key: string;
+
+          constructor(env: { GEMINI_API_KEY?: string; GEMINI_API_KEYS?: string }) {
+            this.key = env.GEMINI_API_KEY ?? env.GEMINI_API_KEYS ?? '';
+          }
+
+          async reviewDiff() {
+            attempted.push(this.key);
+            if (this.key === 'daily-key') throw new Error('429 daily quota exceeded');
+            if (this.key === 'capacity-key') throw new Error('503 Service Unavailable');
+            if (this.key !== 'working-key') throw new Error('503 Service Unavailable');
+            return { genericFindings: [], ruleFindings: [], thinking: null };
+          }
+        },
+      },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', 'diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    await expect(pipeline.review(testCase, config)).resolves.toMatchObject({
+      providerCalls: 1,
+    });
+    expect(attempted).toEqual(['daily-key', 'capacity-key', 'working-key']);
+  });
 });
