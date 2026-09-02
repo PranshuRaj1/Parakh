@@ -27,6 +27,44 @@ export interface EvalCorpus {
   defects: EvalDefect[];
 }
 
+export type PipelineLabel = 'old' | 'new';
+
+export interface PipelineVersion {
+  label: PipelineLabel;
+  branchRef: string;
+  resolvedSha: string;
+}
+
+export interface EvalRunConfig {
+  reviewerModel: string;
+  contextBudget: number;
+  tools: string[];
+  rulesHash: string;
+  timeoutMs: number;
+}
+
+export interface PipelineOutput {
+  rawFindings: Finding[];
+  finalFindings: Finding[];
+  inputTokens: number;
+  outputTokens: number;
+  providerCalls: number;
+}
+
+export interface EvalRun {
+  caseId: string;
+  caseSnapshotHash: string;
+  goldSetVersion: string;
+  pipeline: PipelineVersion;
+  config: EvalRunConfig;
+  output: PipelineOutput;
+  latencyMs: number;
+}
+
+export interface EvalPipeline {
+  review(testCase: EvalCase, config: EvalRunConfig): Promise<PipelineOutput>;
+}
+
 export interface JudgeVerdict {
   defectExists: boolean;
   matchedDefectId: string | null;
