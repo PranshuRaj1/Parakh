@@ -132,23 +132,17 @@ describe('branch pipeline adapter', () => {
     })).rejects.toThrow('Eval review timed out after 5ms');
   });
 
-  it('rotates eval keys when a branch client does not retry capacity errors', async () => {
-    const attempted: string[] = [];
+  it('passes the complete key pool to the branch client', async () => {
+    const environments: Array<{ GEMINI_API_KEY?: string; GEMINI_API_KEYS?: string }> = [];
     const pipeline = createBranchPipelineFromModules({
       apiKeys: 'daily-key,capacity-key,working-key',
       gemini: {
         GeminiClient: class {
-          private readonly key: string;
-
           constructor(env: { GEMINI_API_KEY?: string; GEMINI_API_KEYS?: string }) {
-            this.key = env.GEMINI_API_KEY ?? env.GEMINI_API_KEYS ?? '';
+            environments.push(env);
           }
 
           async reviewDiff() {
-            attempted.push(this.key);
-            if (this.key === 'daily-key') throw new Error('429 daily quota exceeded');
-            if (this.key === 'capacity-key') throw new Error('503 Service Unavailable');
-            if (this.key !== 'working-key') throw new Error('503 Service Unavailable');
             return { genericFindings: [], ruleFindings: [], thinking: null };
           }
         },
@@ -163,35 +157,10 @@ describe('branch pipeline adapter', () => {
     await expect(pipeline.review(testCase, config)).resolves.toMatchObject({
       providerCalls: 1,
     });
-    expect(attempted).toEqual(['daily-key', 'capacity-key', 'working-key']);
-  });
-
-  it('retries a transient fetch failure with the next eval key', async () => {
-    const attempted: string[] = [];
-    const pipeline = createBranchPipelineFromModules({
-      apiKeys: 'network-key,working-key',
-      gemini: {
-        GeminiClient: class {
-          constructor(private readonly env: { GEMINI_API_KEY?: string }) {}
-
-          async reviewDiff() {
-            const key = this.env.GEMINI_API_KEY ?? '';
-            attempted.push(key);
-            if (key === 'network-key') throw new TypeError('fetch failed');
-            return { genericFindings: [], ruleFindings: [], thinking: null };
-          }
-        },
-      },
-      review: {
-        parseDiffByFile: () => new Map([['src/a.ts', 'diff']]),
-        isIgnoredLockfile: () => false,
-        resolveReviewResult: () => ({ findings: [] }),
-      },
-    });
-
-    await expect(pipeline.review(testCase, config)).resolves.toMatchObject({
-      providerCalls: 1,
-    });
-    expect(attempted).toEqual(['network-key', 'working-key']);
+    expect(environments).toEqual([{
+      GEMINI_API_KEY: undefined,
+      GEMINI_API_KEYS: 'daily-key,capacity-key,working-key',
+      GEMINI_GENERATION_MODEL: 'gemini-test',
+    }]);
   });
 });
