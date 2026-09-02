@@ -115,6 +115,7 @@ describe('eval runner', () => {
     const baseRun: EvalRun = {
       caseId: testCase.id,
       caseSnapshotHash: 'snapshot',
+      isNegativeControl: false,
       goldSetVersion: 'gold-v1',
       pipeline: version('old'),
       config,

@@ -51,6 +51,7 @@ export async function runEvalCase(
   return {
     caseId: testCase.id,
     caseSnapshotHash: await hashEvalCase(testCase),
+    isNegativeControl: testCase.isNegativeControl,
     goldSetVersion,
     pipeline: version,
     config,
@@ -65,6 +66,9 @@ export function assertComparableRuns(left: EvalRun, right: EvalRun): void {
   }
   if (left.caseSnapshotHash !== right.caseSnapshotHash) {
     throw new Error(`Eval snapshot mismatch for case ${left.caseId}`);
+  }
+  if (left.isNegativeControl !== right.isNegativeControl) {
+    throw new Error(`Negative-control mismatch for case ${left.caseId}`);
   }
   if (left.goldSetVersion !== right.goldSetVersion) {
     throw new Error(

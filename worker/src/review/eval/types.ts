@@ -54,6 +54,7 @@ export interface PipelineOutput {
 export interface EvalRun {
   caseId: string;
   caseSnapshotHash: string;
+  isNegativeControl: boolean;
   goldSetVersion: string;
   pipeline: PipelineVersion;
   config: EvalRunConfig;
@@ -109,4 +110,46 @@ export interface FindingAdjudication {
   matchedDefectId: string | null;
   verdicts: JudgeVerdict[];
   reason: string;
+}
+
+export interface CaseMetrics {
+  caseId: string;
+  pipeline: PipelineVersion;
+  knownPrecision: number;
+  recall: number | null;
+  strictF1: number | null;
+  weightedRecall: number | null;
+  strictFalsePositives: number;
+  relaxedFalsePositives: number;
+  unsupportedRate: number;
+  duplicateRate: number;
+  partialRate: number;
+  judgeDisagreementRate: number;
+  heldOutCount: number;
+  heldOutRate: number;
+  latencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  providerCalls: number;
+}
+
+export interface CaseComparison {
+  caseId: string;
+  oldMetrics: CaseMetrics;
+  newMetrics: CaseMetrics;
+  precisionDelta: number;
+  recallDelta: number | null;
+  f1Delta: number | null;
+  weightedRecallDelta: number | null;
+  falsePositiveDelta: number;
+  latencyDeltaMs: number;
+}
+
+export interface NoiseFloor {
+  pipeline: PipelineVersion;
+  reviewerDisagreementRate: number;
+  precisionDelta: number;
+  recallDelta: number | null;
+  f1Delta: number | null;
+  falsePositiveDelta: number;
 }
