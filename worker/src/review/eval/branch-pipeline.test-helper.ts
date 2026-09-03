@@ -10,7 +10,7 @@ import type {
 } from './types.js';
 import { buildRepositoryIndex } from '../../indexer/repository-index.js';
 import { buildChangeUnderstandingPlan } from '../semantic-diff/plan.js';
-import type { BehaviorGroup } from '../grouping/types.js';
+import { renderBehaviorGroup } from '../grouping/group-renderer.js';
 
 interface ReviewModule {
   parseDiffByFile(diff: string): Map<string, string>;
@@ -102,7 +102,12 @@ export function createBranchPipelineFromModules(input: {
         for (const group of plan.groups) {
           reviewUnits.push({
             file: group.changes[0]?.file ?? group.anchor,
-            diff: renderGroup(group, hunkByHash),
+            diff: renderBehaviorGroup({
+              group,
+              graph: plan.graph,
+              hunks: hunkByHash,
+              sources: Object.fromEntries(Object.entries(testCase.files).map(([file, source]) => [file, { newSource: source }])),
+            }),
           });
         }
       } else {
@@ -162,21 +167,6 @@ export function createBranchPipelineFromModules(input: {
       };
     },
   };
-}
-
-function renderGroup(group: BehaviorGroup, hunkByHash: Map<string, { header: string; lines: string[] }>): string {
-  const manifest = [
-    `BEHAVIOR_GROUP: ${group.id}`,
-    `ANCHOR: ${group.anchor}`,
-    `CONFIDENCE: ${group.confidence}`,
-    group.riskSignals.length > 0 ? `RISKS: ${group.riskSignals.join(', ')}` : '',
-  ].filter(Boolean).join('\n');
-  const hunks = group.changes.map((change) => {
-    const hunk = hunkByHash.get(change.evidence.patchHash);
-    if (!hunk) return '';
-    return [`FILE: ${change.file}`, hunk.header, ...hunk.lines].join('\n');
-  }).filter(Boolean).join('\n');
-  return `${manifest}\n${hunks}`;
 }
 
 export async function loadBranchPipeline(input: {
