@@ -48,6 +48,8 @@ const optionNames = new Map([
   ['--import-martian', 'importMartian'],
   ['--martian-out', 'martianOut'],
   ['--gold-version', 'goldVersion'],
+  ['--old-strategy', 'oldStrategy'],
+  ['--new-strategy', 'newStrategy'],
 ] as const);
 
 function parseArgs(args: string[]) {
@@ -70,6 +72,8 @@ function parseArgs(args: string[]) {
     importMartian: '',
     martianOut: 'worker/src/review/eval/fixtures/martian-corpus.json',
     goldVersion: 'martian-gold-v1',
+    oldStrategy: 'file',
+    newStrategy: 'grouped',
   };
   for (let index = 0; index < args.length; index++) {
     if (args[index] === '--') continue;
@@ -100,7 +104,14 @@ function parseArgs(args: string[]) {
     importMartian: string;
     martianOut: string;
     goldVersion: string;
+    oldStrategy: 'file' | 'grouped';
+    newStrategy: 'file' | 'grouped';
   };
+}
+
+function strategy(value: string, name: string): 'file' | 'grouped' {
+  if (value === 'file' || value === 'grouped') return value;
+  throw new Error(`${name} must be file or grouped`);
 }
 
 function positiveNumber(value: string, name: string): number {
@@ -225,6 +236,8 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
     args.newRef,
     repoRoot
   );
+  oldPipeline.strategy = strategy(args.oldStrategy, 'old-strategy');
+  newPipeline.strategy = strategy(args.newStrategy, 'new-strategy');
   const config: EvalRunConfig = {
     reviewerModel: args.reviewerModel,
     contextBudget: positiveNumber(args.contextBudget, 'context-budget'),
@@ -248,8 +261,8 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
           ? undefined
           : process.env.GEMINI_API_KEYS;
         const [oldAdapter, newAdapter] = await Promise.all([
-          loadBranchPipeline({ worktreePath: oldPath, apiKey, apiKeys, strategy: 'file' }),
-          loadBranchPipeline({ worktreePath: newPath, apiKey, apiKeys, strategy: 'grouped' }),
+          loadBranchPipeline({ worktreePath: oldPath, apiKey, apiKeys, strategy: oldPipeline.strategy }),
+          loadBranchPipeline({ worktreePath: newPath, apiKey, apiKeys, strategy: newPipeline.strategy }),
         ]);
         if (args.verifyRefs) return [];
 

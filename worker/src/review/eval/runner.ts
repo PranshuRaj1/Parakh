@@ -51,6 +51,7 @@ export function reviewRunCacheKey(input: {
   return JSON.stringify({
     slot: input.slot,
     sha: input.version.resolvedSha,
+    strategy: input.version.strategy ?? 'file',
     snapshot: input.caseSnapshotHash,
     config: reviewerConfig,
   });

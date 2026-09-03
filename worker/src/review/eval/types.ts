@@ -40,6 +40,7 @@ export interface PipelineVersion {
   label: PipelineLabel;
   branchRef: string;
   resolvedSha: string;
+  strategy?: 'file' | 'grouped';
 }
 
 export interface EvalRunConfig {

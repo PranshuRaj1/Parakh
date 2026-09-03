@@ -128,6 +128,13 @@ describe('eval runner', () => {
     );
   });
 
+  it('keeps file and grouped strategies in separate cache entries', async () => {
+    const snapshot = await hashEvalCase(testCase);
+    const base = { slot: 'oldA' as const, caseSnapshotHash: snapshot, config };
+    expect(reviewRunCacheKey({ ...base, version: { ...version('old'), strategy: 'file' } }))
+      .not.toBe(reviewRunCacheKey({ ...base, version: { ...version('old'), strategy: 'grouped' } }));
+  });
+
   it('fails loudly when snapshots or configs differ', () => {
     const baseRun: EvalRun = {
       caseId: testCase.id,
