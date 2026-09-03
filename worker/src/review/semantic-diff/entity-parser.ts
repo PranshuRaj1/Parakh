@@ -1,5 +1,5 @@
 import type { IndexedSymbol } from '@parakh/shared';
-import { parseTypeScriptFile } from '../../indexer/parser.js';
+import { parseSourceFile } from '../../indexer/parser.js';
 import type { SemanticHunk } from './unified-parser.js';
 import type { TokenDelta } from './token-delta.js';
 
@@ -60,8 +60,8 @@ function changedLines(hunk: SemanticHunk, side: 'old' | 'new'): number[] {
 }
 
 function symbolsForSource(repo: string, sha: string, file: string, source: string | undefined): IndexedSymbol[] {
-  if (!source || !/\.(?:ts|tsx|js|jsx)$/.test(file)) return [];
-  return parseTypeScriptFile(repo, sha, file, source);
+  if (!source) return [];
+  return parseSourceFile(repo, sha, file, source);
 }
 
 function mapLines(symbols: IndexedSymbol[], lines: number[]): EntityMapping {
