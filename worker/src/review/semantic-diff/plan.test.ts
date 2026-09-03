@@ -64,4 +64,31 @@ describe('change understanding plan', () => {
       confidence: 'high',
     });
   });
+
+  it('uses one file fallback group for unsupported-language hunks', async () => {
+    const plan = await buildChangeUnderstandingPlan({
+      repository: 'acme/app',
+      oldSha: 'base',
+      newSha: 'head',
+      diff: [
+        'diff --git a/src/buffer.py b/src/buffer.py',
+        '--- a/src/buffer.py',
+        '+++ b/src/buffer.py',
+        '@@ -1,1 +1,1 @@',
+        '-old one',
+        '+new one',
+        '@@ -10,1 +10,1 @@',
+        '-old two',
+        '+new two',
+        '@@ -20,1 +20,1 @@',
+        '-old three',
+        '+new three',
+      ].join('\n'),
+    });
+
+    expect(plan.changes).toHaveLength(3);
+    expect(plan.groups).toHaveLength(1);
+    expect(plan.groups[0].demotionReason).toContain('file fallback');
+    expect(plan.groups[0].changes).toHaveLength(3);
+  });
 });

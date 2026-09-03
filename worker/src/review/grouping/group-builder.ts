@@ -34,10 +34,12 @@ function components(graph: ChangeGraph): string[][] {
   return result;
 }
 
-function split(ids: string[], graph: ChangeGraph): string[][] {
-  const result: string[][] = [];
-  for (let index = 0; index < ids.length; index += MAX_SYMBOLS) result.push(ids.slice(index, index + MAX_SYMBOLS));
-  return result.length > 0 ? result : [[]];
+function split<T>(items: T[]): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += MAX_SYMBOLS) {
+    result.push(items.slice(index, index + MAX_SYMBOLS));
+  }
+  return result;
 }
 
 function confidence(nodes: ChangeGraphNode[]): BehaviorGroup['confidence'] {
@@ -58,27 +60,60 @@ function risks(nodes: ChangeGraphNode[]): string[] {
 export function buildBehaviorGroups(repository: string, graph: ChangeGraph): BehaviorGroup[] {
   const byId = new Map(graph.nodes.map((node) => [node.change.id, node]));
   const groups: BehaviorGroup[] = [];
+  const fallbackByFile = new Map<string, ChangeGraphNode[]>();
+
+  const createGroup = (
+    nodes: ChangeGraphNode[],
+    demotionReason?: string,
+  ): BehaviorGroup => {
+    const changes = nodes.map((node) => node.change);
+    const ids = new Set(changes.map((change) => change.id));
+    const edges = graph.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+    return {
+      id: groupId(repository, changes),
+      anchor: canonicalAnchor(changes),
+      changes: [...changes].sort((left, right) => left.file.localeCompare(right.file) || left.id.localeCompare(right.id)),
+      context: edges.length > MAX_EDGES ? [`graph truncated at ${MAX_EDGES} edges`] : [],
+      riskSignals: risks(nodes),
+      confidence: confidence(nodes),
+      ...(demotionReason ? { demotionReason } : {}),
+    };
+  };
+
   for (const component of components(graph)) {
-    for (const ids of split(component, graph)) {
-      const nodes = ids.map((id) => byId.get(id)!).filter(Boolean);
-      const changes = nodes.map((node) => node.change);
-      const lowCount = changes.filter((change) => change.confidence === 'low').length;
-      const demotionReason = changes.length > 0 && lowCount / changes.length > LOW_CONFIDENCE_LIMIT
-        ? `more than 25% low-confidence changes (${lowCount}/${changes.length})`
-        : undefined;
-      const edges = graph.edges.filter((edge) => ids.includes(edge.from) && ids.includes(edge.to));
-      const group: BehaviorGroup = {
-        id: groupId(repository, changes),
-        anchor: canonicalAnchor(changes),
-        changes: [...changes].sort((left, right) => left.file.localeCompare(right.file) || left.id.localeCompare(right.id)),
-        context: [],
-        riskSignals: risks(nodes),
-        confidence: confidence(nodes),
-        ...(demotionReason ? { demotionReason } : {}),
-      };
-      if (edges.length > MAX_EDGES) group.context.push(`graph truncated at ${MAX_EDGES} edges`);
-      groups.push(group);
+    const nodes = component.map((id) => byId.get(id)).filter((node): node is ChangeGraphNode => Boolean(node));
+    const lowCount = nodes.filter((node) => node.change.confidence === 'low').length;
+    if (lowCount / nodes.length > LOW_CONFIDENCE_LIMIT) {
+      for (const node of nodes) {
+        fallbackByFile.set(node.change.file, [...(fallbackByFile.get(node.change.file) ?? []), node]);
+      }
+      continue;
+    }
+
+    for (const ids of split(component)) {
+      groups.push(createGroup(
+        ids.map((id) => byId.get(id)).filter((node): node is ChangeGraphNode => Boolean(node)),
+      ));
     }
   }
+
+  for (const file of [...fallbackByFile.keys()].sort()) {
+    const nodes = fallbackByFile.get(file)!;
+    nodes.sort((left, right) =>
+      (left.change.evidence.newStart ?? left.change.evidence.oldStart ?? 0)
+      - (right.change.evidence.newStart ?? right.change.evidence.oldStart ?? 0)
+      || left.change.id.localeCompare(right.change.id));
+    for (const chunk of split(nodes)) {
+      groups.push(createGroup(chunk, 'file fallback for low-confidence changes'));
+    }
+  }
+
+  const expected = new Set(graph.nodes.map((node) => node.change.id));
+  const assigned = groups.flatMap((group) => group.changes.map((change) => change.id));
+  if (assigned.length !== expected.size || new Set(assigned).size !== expected.size
+    || assigned.some((id) => !expected.has(id))) {
+    throw new Error('Behavior grouping must assign every change exactly once');
+  }
+
   return groups.sort((left, right) => left.id.localeCompare(right.id));
 }
