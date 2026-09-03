@@ -42,6 +42,32 @@ export function buildChangeGraph(
       graphEdges.push({ from: ids[0], to: ids[index], strength: 'weak', reason: 'same file' });
     }
   }
+  const weakSignals = new Map<string, Set<string>>();
+  const pairKey = (left: string, right: string) => [left, right].sort().join('\u0000');
+  const addWeakSignal = (left: ChangeGraphNode, right: ChangeGraphNode, reason: string) => {
+    const key = pairKey(left.change.id, right.change.id);
+    weakSignals.set(key, new Set([...(weakSignals.get(key) ?? []), reason]));
+  };
+  for (let leftIndex = 0; leftIndex < nodes.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex++) {
+      const left = nodes[leftIndex];
+      const right = nodes[rightIndex];
+      if (left.change.file === right.change.file) addWeakSignal(left, right, 'same file');
+      const leftName = left.symbol?.split('#').pop();
+      const rightName = right.symbol?.split('#').pop();
+      if (leftName && leftName === rightName) addWeakSignal(left, right, 'matching changed identifier');
+      const leftTest = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i.test(left.change.file);
+      const rightTest = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i.test(right.change.file);
+      if (leftTest !== rightTest && leftName && leftName === rightName) {
+        addWeakSignal(left, right, 'implementation and test pairing');
+      }
+    }
+  }
+  for (const [key, reasons] of weakSignals) {
+    if (reasons.size < 2) continue;
+    const [from, to] = key.split('\u0000');
+    graphEdges.push({ from, to, strength: 'strong', reason: `corroborated weak signals: ${[...reasons].sort().join(', ')}` });
+  }
   const uniqueEdges = new Map(graphEdges.map((edge) => [`${edge.from}:${edge.to}:${edge.reason}`, edge]));
   return {
     nodes: [...nodes].sort((left, right) => left.change.id.localeCompare(right.change.id)),

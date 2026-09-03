@@ -49,6 +49,20 @@ describe('behavior grouping', () => {
     expect(buildBehaviorGroups('acme/app', graph)).toHaveLength(1);
   });
 
+  it('requires corroboration before weak signals form a component', () => {
+    const first = change('one', 'src/api.ts', 'src/api.ts#save');
+    const second = change('two', 'src/api.ts', 'src/api.ts#save');
+    const graph = buildChangeGraph([first, second], [], []);
+
+    expect(graph.edges).toContainEqual(expect.objectContaining({
+      from: 'one',
+      to: 'two',
+      strength: 'strong',
+      reason: expect.stringContaining('corroborated weak signals'),
+    }));
+    expect(buildBehaviorGroups('acme/app', graph)).toHaveLength(1);
+  });
+
   it('demotes groups with more than 25 percent low-confidence changes', () => {
     const changes = [
       change('one', 'a.ts', 'a.ts#one', 'high'),
