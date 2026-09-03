@@ -11,7 +11,8 @@ export class FileJudgeCache implements JudgeCache {
   constructor(private readonly path: string) {}
 
   async get(key: string): Promise<[JudgeVerdict, JudgeVerdict] | null> {
-    return (await this.load())[key] ?? null;
+    const value = (await this.load())[key];
+    return value?.[0] && value[1] ? [value[0], value[1]] : null;
   }
 
   async set(key: string, verdicts: [JudgeVerdict, JudgeVerdict]): Promise<void> {

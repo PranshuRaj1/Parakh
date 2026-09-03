@@ -27,4 +27,14 @@ describe('FileJudgeCache', () => {
     expect(await new FileJudgeCache(path).get('key')).toEqual([verdict, verdict]);
     expect(JSON.parse(await readFile(path, 'utf8'))).toHaveProperty('key');
   });
+
+  it('does not expose a partial pair as a complete cache hit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'parakh-eval-'));
+    const path = join(directory, 'judge.json');
+    const cache = new FileJudgeCache(path);
+    await cache.setPartial('key', [verdict, null]);
+
+    expect(await cache.get('key')).toBeNull();
+    expect(await cache.getPartial('key')).toEqual([verdict, null]);
+  });
 });
