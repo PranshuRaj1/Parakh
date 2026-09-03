@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { JudgeCache } from './judge.js';
 import type { JudgeVerdict } from './types.js';
 
-type CacheData = Record<string, [JudgeVerdict, JudgeVerdict]>;
+type CacheData = Record<string, [JudgeVerdict | null, JudgeVerdict | null]>;
 
 export class FileJudgeCache implements JudgeCache {
   private data: CacheData | null = null;
@@ -15,6 +15,19 @@ export class FileJudgeCache implements JudgeCache {
   }
 
   async set(key: string, verdicts: [JudgeVerdict, JudgeVerdict]): Promise<void> {
+    const data = await this.load();
+    data[key] = verdicts;
+    await mkdir(dirname(this.path), { recursive: true });
+    const temporaryPath = `${this.path}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify(data, null, 2));
+    await rename(temporaryPath, this.path);
+  }
+
+  async getPartial(key: string): Promise<[JudgeVerdict | null, JudgeVerdict | null] | null> {
+    return (await this.load())[key] ?? null;
+  }
+
+  async setPartial(key: string, verdicts: [JudgeVerdict | null, JudgeVerdict | null]): Promise<void> {
     const data = await this.load();
     data[key] = verdicts;
     await mkdir(dirname(this.path), { recursive: true });

@@ -57,7 +57,8 @@ export class GroqJudgeTransport implements JudgeTransport {
     private readonly apiKey: string,
     readonly model = DEFAULT_EVAL_JUDGE_MODEL,
     private readonly request: typeof fetch = fetch,
-    private readonly minIntervalMs = 2_000
+    private readonly minIntervalMs = 2_000,
+    private readonly maxRetryWaitMs = 5 * 60_000
   ) {}
 
   async judge(prompt: string): Promise<VerdictBody> {
@@ -93,13 +94,11 @@ export class GroqJudgeTransport implements JudgeTransport {
       if (response.status === 429 && attempt < 10) {
         const body = await response.text().catch(() => '');
         const retryAfterMs = retryDelayMsFrom(body, response.headers);
-        if (retryAfterMs > 0 && retryAfterMs <= 5 * 60_000) {
+        if (retryAfterMs > 0 && retryAfterMs <= this.maxRetryWaitMs) {
           this.nextRequestAt = Date.now() + Math.max(retryAfterMs, 1_000);
           continue;
         }
-        throw new Error(
-          `Groq judge failed with status ${response.status}: ${body.slice(0, 400)}`
-        );
+        throw new Error(`Groq judge quota wait exceeds retry limit; rerun the eval to resume cached passes. ${body.slice(0, 200)}`);
       }
       if (!response.ok) {
         const body = await response.text().catch(() => '');

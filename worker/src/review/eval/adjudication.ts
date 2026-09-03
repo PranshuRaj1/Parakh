@@ -10,7 +10,9 @@ export function verdictsDisagree(verdicts: JudgeVerdict[]): boolean {
     verdict.defectExists !== first.defectExists
     || verdict.matchedDefectId !== first.matchedDefectId
     || verdict.correctness !== first.correctness
-    || verdict.unsupportedClaim !== first.unsupportedClaim
+    || (verdict.unsupportedClaim !== first.unsupportedClaim
+      && !(verdict.defectExists === false && first.defectExists === false
+        && verdict.correctness === 0 && first.correctness === 0))
   );
 }
 export function adjudicateVerdicts(

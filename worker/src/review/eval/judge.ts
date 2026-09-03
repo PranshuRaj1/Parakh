@@ -14,6 +14,8 @@ export interface JudgeTransport {
 export interface JudgeCache {
   get(key: string): Promise<[JudgeVerdict, JudgeVerdict] | null>;
   set(key: string, verdicts: [JudgeVerdict, JudgeVerdict]): Promise<void>;
+  getPartial?(key: string): Promise<[JudgeVerdict | null, JudgeVerdict | null] | null>;
+  setPartial?(key: string, verdicts: [JudgeVerdict | null, JudgeVerdict | null]): Promise<void>;
 }
 
 export function buildJudgePrompt(input: JudgeInput): string {
@@ -71,6 +73,8 @@ export async function judgeFindingTwice(
     };
   }
 
+  const partial = cache.getPartial ? await cache.getPartial(cacheKey) : null;
+
   const prompt = buildJudgePrompt(input);
   const addMetadata = (
     verdict: Omit<JudgeVerdict, 'judgeModel' | 'judgeTier'>
@@ -79,8 +83,9 @@ export async function judgeFindingTwice(
     judgeModel: transport.model,
     judgeTier: transport.tier,
   });
-  const first = addMetadata(await transport.judge(prompt));
-  const second = addMetadata(await transport.judge(prompt));
+  const first = partial?.[0] ?? addMetadata(await transport.judge(prompt));
+  if (!partial?.[0] && cache.setPartial) await cache.setPartial(cacheKey, [first, null]);
+  const second = partial?.[1] ?? addMetadata(await transport.judge(prompt));
   const verdicts: [JudgeVerdict, JudgeVerdict] = [first, second];
 
   await cache.set(cacheKey, verdicts);

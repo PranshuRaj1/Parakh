@@ -93,6 +93,28 @@ describe('judgeFindingTwice', () => {
     expect(result.outcome).toBe('needs_human_review');
   });
 
+  it('normalizes unsupported-claim-only negative disagreement as incorrect', async () => {
+    const result = await judgeFindingTwice(
+      input,
+      transport(
+        body({ defectExists: false, matchedDefectId: null, correctness: 0 }),
+        body({ defectExists: false, matchedDefectId: null, correctness: 0, unsupportedClaim: true }),
+      ),
+      memoryCache()
+    );
+    expect(result.outcome).toBe('incorrect');
+  });
+
+  it('resumes the second pass from a partial cache', async () => {
+    const cache = memoryCache();
+    const firstJudge = transport(body(), body());
+    await judgeFindingTwice(input, firstJudge, cache);
+    const secondJudge = transport(body());
+    const result = await judgeFindingTwice(input, secondJudge, cache);
+    expect(result.cacheHit).toBe(true);
+    expect(secondJudge.judge).not.toHaveBeenCalled();
+  });
+
   it('changes the cache key when evidence or gold version changes', async () => {
     const cache = memoryCache();
     const judge = transport(body(), body(), body(), body());
