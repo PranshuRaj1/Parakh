@@ -88,6 +88,15 @@ describe('getFeatureFlags', () => {
     );
   });
 
+  it('fails closed when grouped execution and shadow mode are both enabled', () => {
+    const flags = getFeatureFlags(env({
+      BEHAVIOR_GROUPING_ENABLED: 'true',
+      BEHAVIOR_GROUPING_SHADOW: 'true',
+    }));
+    expect(flags.behaviorGrouping).toBe(false);
+    expect(flags.behaviorGroupingShadow).toBe(true);
+  });
+
   it('does not mutate or cache the environment or returned snapshot', () => {
     const firstEnv = Object.freeze({ SEMANTIC_DIFF_ENABLED: 'true' }) as Env;
     const first = getFeatureFlags(firstEnv);

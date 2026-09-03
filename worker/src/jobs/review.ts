@@ -145,6 +145,7 @@ import { buildAttentionFocus } from '../review/attention-focus.js';
 import { boundDiff } from '../review/diff-bounding.js';
 import { renderFocusBlock, validateFocusResponse } from '../review/review-focus.js';
 import { loadConventionRules } from '../review/conventions/loader.js';
+import { buildShadowPlan } from '../review/semantic-diff/shadow-planner.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1010,6 +1011,19 @@ async function executeReviewJobInternal(
       (file) => !isIgnoredLockfile(file)
     ).length;
     metrics.captureInput(fullDiff, fullDiffHash, fullFileChunks.size, fullReviewableFileCount);
+    if (featureFlags.semanticDiff || featureFlags.behaviorGroupingShadow) {
+      try {
+        const shadow = await buildShadowPlan({
+          repository: fullRepo,
+          oldSha: baseSha ?? 'unknown',
+          newSha: headSha ?? 'unknown',
+          diff: fullDiff,
+        });
+        console.log(`[semantic-shadow] ${JSON.stringify(shadow.metrics)}`);
+      } catch (err) {
+        console.warn('[semantic-shadow] Planner failed; continuing with file review:', err);
+      }
+    }
     await completeStage(reviewId, 'FETCHING_DIFF', stageAttempt, env, metrics.stageDetail());
 
 

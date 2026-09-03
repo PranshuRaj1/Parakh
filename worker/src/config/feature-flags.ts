@@ -147,5 +147,10 @@ export function getFeatureFlags(env: Env): FeatureFlags {
     flags.groupedReviewOutput = false;
   }
 
+  if (flags.behaviorGrouping && flags.behaviorGroupingShadow) {
+    console.warn('[config] BEHAVIOR_GROUPING_ENABLED conflicts with shadow mode; disabling grouped execution');
+    flags.behaviorGrouping = false;
+  }
+
   return Object.freeze(flags);
 }
