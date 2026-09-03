@@ -74,6 +74,28 @@ describe('GroqJudgeTransport', () => {
     expect(verdict.correctness).toBe(1);
   });
 
+  it('rotates to the next Groq key before waiting on a rate limit', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'TPD limit, try again in 1500s.' } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          defectExists: true,
+          matchedDefectId: null,
+          correctness: 1,
+          localization: 1,
+          actionability: 1,
+          unsupportedClaim: false,
+          evidenceQuote: 'code',
+          reason: 'reason',
+        }) } }],
+      }), { status: 200 }));
+    const judge = new GroqJudgeTransport(['first-account', 'second-account'], undefined, request, 0);
+    await judge.judge('prompt');
+
+    expect((request.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer first-account' });
+    expect((request.mock.calls[1][1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer second-account' });
+  });
+
   it('rejects malformed structured output', async () => {
     const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({ correctness: 2 }) } }],

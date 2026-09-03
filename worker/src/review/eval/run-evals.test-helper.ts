@@ -122,13 +122,13 @@ function positiveNumber(value: string, name: string): number {
   return parsed;
 }
 
-function groqApiKey(): string {
-  const key = process.env.GROQ_API_KEY
-    ?? process.env.GROQ_API_KEYS?.split(',').map((item) => item.trim()).find(Boolean);
-  if (!key) {
+function groqApiKeys(): string[] {
+  const keys = process.env.GROQ_API_KEYS?.split(',').map((item) => item.trim()).filter(Boolean)
+    ?? (process.env.GROQ_API_KEY ? [process.env.GROQ_API_KEY] : []);
+  if (keys.length === 0) {
     throw new Error('Missing GROQ_API_KEY or GROQ_API_KEYS');
   }
-  return key;
+  return keys;
 }
 
 async function runMartianImport(args: ReturnType<typeof parseArgs>, repoRoot: string): Promise<void> {
@@ -270,7 +270,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
           throw new Error('Missing GEMINI_API_KEY or GEMINI_API_KEYS');
         }
         const judge = new GroqJudgeTransport(
-          groqApiKey(),
+          groqApiKeys(),
           args.judgeModel
         );
         const cache = new FileJudgeCache(

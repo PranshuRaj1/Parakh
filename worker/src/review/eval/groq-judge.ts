@@ -54,14 +54,23 @@ export class GroqJudgeTransport implements JudgeTransport {
   private nextRequestAt = 0;
 
   constructor(
-    private readonly apiKey: string,
+    apiKey: string | string[],
     readonly model = DEFAULT_EVAL_JUDGE_MODEL,
     private readonly request: typeof fetch = fetch,
     private readonly minIntervalMs = 2_000,
     private readonly maxRetryWaitMs = 5 * 60_000
-  ) {}
+  ) {
+    this.apiKeys = (Array.isArray(apiKey) ? apiKey : apiKey.split(','))
+      .map((key) => key.trim())
+      .filter(Boolean);
+    if (this.apiKeys.length === 0) throw new Error('Groq judge requires at least one API key');
+  }
+
+  private readonly apiKeys: string[];
+  private keyIndex = 0;
 
   async judge(prompt: string): Promise<VerdictBody> {
+    const attemptedKeys = new Set<number>();
     for (let attempt = 0; ; attempt++) {
       const waitMs = this.nextRequestAt - Date.now();
       if (waitMs > 0) {
@@ -73,7 +82,7 @@ export class GroqJudgeTransport implements JudgeTransport {
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${this.apiKey}`,
+            Authorization: `Bearer ${this.apiKeys[this.keyIndex]}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -94,7 +103,14 @@ export class GroqJudgeTransport implements JudgeTransport {
       if (response.status === 429 && attempt < 10) {
         const body = await response.text().catch(() => '');
         const retryAfterMs = retryDelayMsFrom(body, response.headers);
+        attemptedKeys.add(this.keyIndex);
+        if (attemptedKeys.size < this.apiKeys.length) {
+          this.keyIndex = (this.keyIndex + 1) % this.apiKeys.length;
+          this.nextRequestAt = Date.now() + this.minIntervalMs;
+          continue;
+        }
         if (retryAfterMs > 0 && retryAfterMs <= this.maxRetryWaitMs) {
+          attemptedKeys.clear();
           this.nextRequestAt = Date.now() + Math.max(retryAfterMs, 1_000);
           continue;
         }
