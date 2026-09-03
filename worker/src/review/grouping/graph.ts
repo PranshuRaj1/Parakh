@@ -13,14 +13,27 @@ export function buildChangeGraph(
   edges: IndexedEdge[],
 ): ChangeGraph {
   const nodes: ChangeGraphNode[] = changes.map((change) => ({ change, symbol: symbolName(change.symbol) }));
-  const bySymbol = new Map(nodes.filter((node) => node.symbol).map((node) => [node.symbol!, node.change.id]));
+  const bySymbol = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.symbol) continue;
+    bySymbol.set(node.symbol, [...(bySymbol.get(node.symbol) ?? []), node.change.id]);
+  }
+  for (const ids of bySymbol.values()) ids.sort();
   const symbolById = new Map(symbols.map((symbol) => [symbol.id, symbol.qualifiedName]));
   const graphEdges: ChangeGraphEdge[] = [];
+  for (const ids of bySymbol.values()) {
+    for (let index = 1; index < ids.length; index++) {
+      graphEdges.push({ from: ids[0], to: ids[index], strength: 'strong', reason: 'same symbol' });
+    }
+  }
   for (const edge of edges) {
-    const from = bySymbol.get(symbolById.get(edge.from) ?? '');
-    const to = bySymbol.get(symbolById.get(edge.to) ?? '');
-    if (!from || !to || from === to) continue;
-    graphEdges.push({ from, to, strength: 'strong', reason: edge.type });
+    const from = bySymbol.get(symbolById.get(edge.from) ?? '') ?? [];
+    const to = bySymbol.get(symbolById.get(edge.to) ?? '') ?? [];
+    for (const fromId of from) {
+      for (const toId of to) {
+        if (fromId !== toId) graphEdges.push({ from: fromId, to: toId, strength: 'strong', reason: edge.type });
+      }
+    }
   }
   const byFile = new Map<string, string[]>();
   for (const node of nodes) byFile.set(node.change.file, [...(byFile.get(node.change.file) ?? []), node.change.id]);

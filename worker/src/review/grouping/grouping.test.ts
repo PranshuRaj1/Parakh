@@ -35,6 +35,20 @@ describe('behavior grouping', () => {
     expect(groups[0].confidence).toBe('high');
   });
 
+  it('preserves all changes mapped to the same symbol', () => {
+    const first = change('one', 'src/api.ts', 'src/api.ts#update');
+    const second = change('two', 'src/api.ts', 'src/api.ts#update');
+    const graph = buildChangeGraph([first, second], [], []);
+
+    expect(graph.edges).toContainEqual({
+      from: 'one',
+      to: 'two',
+      strength: 'strong',
+      reason: 'same symbol',
+    });
+    expect(buildBehaviorGroups('acme/app', graph)).toHaveLength(1);
+  });
+
   it('demotes groups with more than 25 percent low-confidence changes', () => {
     const changes = [
       change('one', 'a.ts', 'a.ts#one', 'high'),
