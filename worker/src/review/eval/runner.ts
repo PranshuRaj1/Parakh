@@ -46,15 +46,18 @@ export function reviewRunCacheKey(input: {
   caseSnapshotHash: string;
   config: EvalRunConfig;
 }): string {
-  const { judgeContextBudget: _judgeContextBudget, ...reviewerConfig } =
-    input.config;
   return JSON.stringify({
     slot: input.slot,
     sha: input.version.resolvedSha,
     strategy: input.version.strategy ?? 'file',
     snapshot: input.caseSnapshotHash,
-    config: reviewerConfig,
+    config: reviewerConfigIdentity(input.config),
   });
+}
+
+function reviewerConfigIdentity(config: EvalRunConfig): Omit<EvalRunConfig, 'judgeContextBudget'> {
+  const { judgeContextBudget: _judgeContextBudget, ...reviewerConfig } = config;
+  return reviewerConfig;
 }
 
 export async function runEvalCase(
@@ -106,7 +109,7 @@ export function assertComparableRuns(left: EvalRun, right: EvalRun): void {
       `Gold set mismatch: ${left.goldSetVersion} != ${right.goldSetVersion}`
     );
   }
-  if (JSON.stringify(left.config) !== JSON.stringify(right.config)) {
+  if (JSON.stringify(reviewerConfigIdentity(left.config)) !== JSON.stringify(reviewerConfigIdentity(right.config))) {
     throw new Error(`Eval config mismatch for case ${left.caseId}`);
   }
 }

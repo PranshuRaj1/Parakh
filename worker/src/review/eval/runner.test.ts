@@ -162,4 +162,22 @@ describe('eval runner', () => {
       config: { ...config, contextBudget: 10_000 },
     })).toThrow('Eval config mismatch');
   });
+
+  it('allows judge budget changes when reviewer configuration is unchanged', () => {
+    const baseRun: EvalRun = {
+      caseId: testCase.id,
+      caseSnapshotHash: 'snapshot',
+      isNegativeControl: false,
+      goldSetVersion: 'gold-v1',
+      pipeline: version('old'),
+      config: { ...config, judgeContextBudget: 800 },
+      output,
+      latencyMs: 1,
+    };
+
+    expect(() => assertComparableRuns(baseRun, {
+      ...baseRun,
+      config: { ...config, judgeContextBudget: 1_200 },
+    })).not.toThrow();
+  });
 });
