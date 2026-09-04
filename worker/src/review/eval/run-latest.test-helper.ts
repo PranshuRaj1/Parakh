@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { execFile } from 'node:child_process';
+import { access } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
 import { loadEvalState } from './eval-state.js';
 
 const exec = promisify(execFile);
@@ -27,7 +28,9 @@ const evalArgs = [
   ...(has('--output-review') ? [] : ['--output-review', '.eval-cache/reports/latest-comparison-adjudication.md']),
 ];
 
-const result = await exec('npm.cmd', ['run', 'eval:reviews', '--', ...evalArgs], {
+const viteNode = join(repoRoot, 'node_modules', 'vite-node', 'dist', 'cli.mjs');
+await access(viteNode);
+const result = await exec(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs], {
   cwd: repoRoot,
   env: process.env,
   maxBuffer: 10 * 1024 * 1024,
@@ -35,5 +38,8 @@ const result = await exec('npm.cmd', ['run', 'eval:reviews', '--', ...evalArgs],
 process.stdout.write(result.stdout);
 process.stderr.write(result.stderr);
 
-await exec('npm.cmd', ['run', 'eval:dashboard'], { cwd: repoRoot, env: process.env });
+await exec(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--'], {
+  cwd: repoRoot,
+  env: process.env,
+});
 process.stdout.write('Open .eval-cache/reports/index.html to view the comparison.\n');
