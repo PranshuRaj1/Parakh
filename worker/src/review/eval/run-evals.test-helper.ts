@@ -25,6 +25,7 @@ import {
   generateAdjudicationReview,
   generateMarkdownReport,
 } from './report.js';
+import { loadEvalState, saveEvalState } from './eval-state.js';
 import type {
   ComparisonAssessment,
   EvalCorpus,
@@ -56,8 +57,8 @@ function parseArgs(args: string[]) {
   const reviewerModelDefault =
     process.env.GEMINI_GENERATION_MODEL ?? 'gemini-2.5-flash';
   const values: Record<string, string | boolean> = {
-    oldRef: 'main',
-    newRef: 'pranshu/better-implementation',
+    oldRef: '',
+    newRef: 'HEAD',
     corpus: 'worker/src/review/eval/fixtures/gold-v1.json',
     caseId: '',
     output: '.eval-cache/reports/latest.json',
@@ -226,9 +227,15 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
       `Note: no defects found for case ${args.caseId}\n`
     );
   }
+  const statePath = resolve(repoRoot, '.eval-cache', 'last-comparison.json');
+  const previousState = await loadEvalState(statePath);
+  const oldRef = args.oldRef || previousState?.newPipeline.resolvedSha;
+  if (!oldRef) {
+    throw new Error('No previous comparison found. Supply --old-ref for the first comparison.');
+  }
   const oldPipeline = await resolveGitPipelineVersion(
     'old',
-    args.oldRef,
+    oldRef,
     repoRoot
   );
   const newPipeline = await resolveGitPipelineVersion(
@@ -338,6 +345,14 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
   const output = resolve(repoRoot, args.output);
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify(report, null, 2));
+  await saveEvalState(statePath, {
+    oldPipeline,
+    newPipeline,
+    corpus: args.corpus,
+    config,
+    report: args.output,
+    updatedAt: report.createdAt,
+  });
   process.stdout.write(`Wrote JSON report to ${output}\n`);
 
   if (args.outputMd) {
