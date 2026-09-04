@@ -28,12 +28,18 @@ describe('branch pipeline adapter', () => {
       ruleFindings: [],
       thinking: null,
     });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({
+      genericFindings: [],
+      ruleFindings: [],
+      thinking: null,
+    });
     const pipeline = createBranchPipelineFromModules({
       strategy: 'grouped',
       apiKey: 'key',
       gemini: {
         GeminiClient: class {
           reviewDiff = reviewDiff;
+          reviewBehaviorGroup = reviewBehaviorGroup;
         },
       },
       review: {
@@ -58,13 +64,12 @@ describe('branch pipeline adapter', () => {
       files: { 'src/a.ts': 'export function update() {\n  return value !== null;\n}' },
     }, config);
 
-    expect(reviewDiff).toHaveBeenCalledWith(
-      'src/a.ts',
+    expect(reviewBehaviorGroup).toHaveBeenCalledWith(
       expect.stringContaining('BEHAVIOR_GROUP:'),
       [],
       expect.objectContaining({ timeoutMs: 1_000 }),
-      expect.any(String),
     );
+    expect(reviewDiff).not.toHaveBeenCalled();
     expect(output.planningGroups).toBe(1);
     expect(output.planningChanges).toBe(1);
     expect(output.providerCalls).toBe(1);

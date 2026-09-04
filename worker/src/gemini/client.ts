@@ -32,6 +32,7 @@ import {
   reviewFocusResponseSchema,
 } from './schemas.js';
 import {
+  buildBehaviorReviewPrompt,
   buildReviewPrompt,
   buildIncrementalReviewPrompt,
   buildIntentPrompt,
@@ -327,9 +328,23 @@ export class GeminiClient implements LLMProvider {
     referenceFileContent?: string,
     attentionFocus?: string
   ): Promise<ReviewResult> {
+    return this.generateReview(
+      buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus),
+      context,
+    );
+  }
+
+  async reviewBehaviorGroup(
+    behaviorGroup: string,
+    activeRules: Rule[],
+    context?: LLMRequestContext,
+  ): Promise<ReviewResult> {
+    return this.generateReview(buildBehaviorReviewPrompt(behaviorGroup, activeRules), context);
+  }
+
+  private async generateReview(prompt: string, context?: LLMRequestContext): Promise<ReviewResult> {
     return this.withKeyRotation(async (apiKey) => {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const prompt = buildReviewPrompt(fileName, diff, activeRules, referenceFileContent, attentionFocus);
 
       const generationConfig: Record<string, unknown> = {
         temperature: 0,

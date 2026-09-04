@@ -31,6 +31,11 @@ interface GeminiLike {
     context?: unknown,
     referenceFileContent?: string
   ): Promise<ReviewResult>;
+  reviewBehaviorGroup?(
+    behaviorGroup: string,
+    rules: Rule[],
+    context?: unknown,
+  ): Promise<ReviewResult>;
 }
 
 interface GeminiModule {
@@ -129,13 +134,9 @@ export function createBranchPipelineFromModules(input: {
           GEMINI_GENERATION_MODEL: config.reviewerModel,
         });
         const result = await withTimeout(
-          (signal) => client.reviewDiff(
-            file,
-            boundedDiff,
-            [],
-            { signal, timeoutMs: config.timeoutMs },
-            reference
-          ),
+          (signal) => grouped && client.reviewBehaviorGroup
+            ? client.reviewBehaviorGroup(boundedDiff, [], { signal, timeoutMs: config.timeoutMs })
+            : client.reviewDiff(file, boundedDiff, [], { signal, timeoutMs: config.timeoutMs }, reference),
           config.timeoutMs
         );
         providerCalls++;

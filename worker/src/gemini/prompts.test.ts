@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildIntentPrompt, buildReplyPrompt, buildReviewPrompt } from './prompts.js';
+import { buildBehaviorReviewPrompt, buildIntentPrompt, buildReplyPrompt, buildReviewPrompt } from './prompts.js';
 import type { Rule } from '@parakh/shared';
 
 function rule(overrides: Partial<Rule> = {}): Rule {
@@ -61,6 +61,18 @@ describe('buildReviewPrompt', () => {
 
   it('omits the attention-focus section when not provided', () => {
     expect(buildReviewPrompt('a.ts', 'diff', [])).not.toContain('## Attention Focus');
+  });
+});
+
+describe('buildBehaviorReviewPrompt', () => {
+  it('frames grouped evidence as a multi-file execution path', () => {
+    const prompt = buildBehaviorReviewPrompt('BEHAVIOR_GROUP: auth\nFILE: api.ts\nFILE: store.ts', []);
+
+    expect(prompt).toContain('multi-file behavior group');
+    expect(prompt).toContain('Trace control flow, data flow, state changes, and error propagation');
+    expect(prompt).toContain('Cross-file findings are allowed');
+    expect(prompt).not.toContain('Review the following diff for the file');
+    expect(prompt).toContain('BEHAVIOR_GROUP: auth');
   });
 });
 

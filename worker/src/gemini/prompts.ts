@@ -8,6 +8,32 @@
 import { SEVERITY_TAXONOMY } from '@parakh/shared';
 import type { Finding, Rule } from '@parakh/shared';
 
+function severityTable(): string {
+  return Object.entries(SEVERITY_TAXONOMY)
+    .map(([level, info]) => `| ${level} | ${info.weight} | ${info.definition} | ${info.examples} |`)
+    .join('\n');
+}
+
+function ruleSections(activeRules: Rule[]): string {
+  const enforceRules = activeRules.filter((rule) => rule.kind !== 'instruction');
+  const instructions = activeRules.filter((rule) => rule.kind === 'instruction');
+  const rules = enforceRules.length > 0 ? `
+## Active Coding Rules for This Repository
+
+Only report a rule finding when the evidence genuinely violates one of these rules. Return its ID and omit severity.
+
+${enforceRules.map((rule) => `- **[${rule.id}]** (priority: ${rule.priority}): ${rule.body}`).join('\n')}
+` : '';
+  const suppressions = instructions.length > 0 ? `
+## Suppressed Issues
+
+Do not report findings in these categories:
+
+${instructions.map((rule) => `- ${rule.body}`).join('\n')}
+` : '';
+  return `${rules}${suppressions}`;
+}
+
 // ─── Review Prompt ───────────────────────────────────────────────────────────
 
 /**
@@ -23,9 +49,7 @@ export function buildReviewPrompt(
   referenceFileContent?: string,
   attentionFocus?: string
 ): string {
-  const severityTable = Object.entries(SEVERITY_TAXONOMY)
-    .map(([level, info]) => `| ${level} | ${info.weight} | ${info.definition} | ${info.examples} |`)
-    .join('\n');
+  const taxonomy = severityTable();
 
   // 'standard' rules are enforceable coding standards; 'instruction' rules are
   // suppression directives ("stop flagging X") and must NEVER be reported as
@@ -67,7 +91,7 @@ Classify each GENERIC finding (not tied to a stored rule) into exactly one of th
 
 | Severity | Weight | Definition | Examples |
 |---|---|---|---|
-| ${severityTable}
+| ${taxonomy}
 
 ## What NOT to Flag
 
@@ -136,6 +160,42 @@ not changed in this diff. Cite line numbers from the diff, never from this refer
 \`\`\`
 ${referenceFileContent}
 \`\`\`` : ''}
+`;
+}
+
+export function buildBehaviorReviewPrompt(
+  behaviorGroup: string,
+  activeRules: Rule[],
+): string {
+  return `You are Parakh, an expert code reviewer. Review the following multi-file behavior group as one execution path.
+
+Trace control flow, data flow, state changes, and error propagation across every FILE section, including concurrency hazards. Cross-file findings are allowed when the supplied evidence supports the complete claim. Do not treat the anchor file as the only file under review.
+
+## Severity Taxonomy
+
+| Severity | Weight | Definition | Examples |
+|---|---|---|---|
+${severityTable()}
+
+## What NOT to Flag
+
+- Style-only preferences, missing newlines, trailing whitespace, or generic documentation requests
+- Claims requiring code that is not present in the behavior group
+- Speculative caller effects not supported by a relationship or changed evidence section
+
+LOW findings must materially affect readability or maintainability. When in doubt, do not report it.
+
+${ruleSections(activeRules)}
+
+## Output Instructions
+
+Return genericFindings, ruleFindings, and overview. Every finding must identify the exact FILE and changed line from the supplied evidence. Generic findings include severity, file, line, body, and optional suggestion. Rule findings include file, line, body, optional suggestion, and rule_id without severity. Return empty finding arrays when the behavior is correct.
+
+## Behavior Group Evidence
+
+\`\`\`text
+${behaviorGroup}
+\`\`\`
 `;
 }
 
