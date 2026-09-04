@@ -71,6 +71,7 @@ describe('buildBehaviorReviewPrompt', () => {
     expect(prompt).toContain('multi-file behavior group');
     expect(prompt).toContain('Trace control flow, data flow, state changes, and error propagation');
     expect(prompt).toContain('Cross-file findings are allowed');
+    expect(prompt).toContain('Matching test names or scenarios in different files are not duplicates');
     expect(prompt).not.toContain('Review the following diff for the file');
     expect(prompt).toContain('BEHAVIOR_GROUP: auth');
   });

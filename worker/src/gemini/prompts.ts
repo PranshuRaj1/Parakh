@@ -182,6 +182,7 @@ ${severityTable()}
 - Style-only preferences, missing newlines, trailing whitespace, or generic documentation requests
 - Claims requiring code that is not present in the behavior group
 - Speculative caller effects not supported by a relationship or changed evidence section
+- Matching test names or scenarios in different files are not duplicates when they exercise distinct implementations or execution paths
 
 LOW findings must materially affect readability or maintainability. When in doubt, do not report it.
 
