@@ -1,11 +1,20 @@
 import 'dotenv/config';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { loadEvalState } from './eval-state.js';
 
-const exec = promisify(execFile);
+function run(command: string, args: string[]): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { cwd: repoRoot, env: process.env, stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}`));
+    });
+  });
+}
+
 const args = process.argv.slice(2).filter((arg) => arg !== '--');
 const has = (name: string) => args.includes(name);
 const repoRoot = process.cwd();
@@ -30,16 +39,7 @@ const evalArgs = [
 
 const viteNode = join(repoRoot, 'node_modules', 'vite-node', 'dist', 'cli.mjs');
 await access(viteNode);
-const result = await exec(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs], {
-  cwd: repoRoot,
-  env: process.env,
-  maxBuffer: 10 * 1024 * 1024,
-});
-process.stdout.write(result.stdout);
-process.stderr.write(result.stderr);
+await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs]);
 
-await exec(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--'], {
-  cwd: repoRoot,
-  env: process.env,
-});
+await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--']);
 process.stdout.write('Open .eval-cache/reports/index.html to view the comparison.\n');
