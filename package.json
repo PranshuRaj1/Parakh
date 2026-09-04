@@ -14,6 +14,7 @@
     "baseline:generate": "vite-node --script worker/src/review/baseline/generate-baseline.ts",
     "baseline:accept": "vite-node --script worker/src/review/baseline/generate-baseline.ts --accept",
     "eval:reviews": "vite-node --script worker/src/review/eval/run-evals.test-helper.ts --",
+    "eval:dashboard": "vite-node --script worker/src/review/eval/dashboard-cli.test-helper.ts --",
     "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
     "test:memory": "vitest run worker/src/smoke/memory-smoke.test.ts",
     "db:push": "drizzle-kit push",
