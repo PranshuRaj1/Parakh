@@ -65,12 +65,19 @@ function symbolsForSource(repo: string, sha: string, file: string, source: strin
 }
 
 function mapLines(symbols: IndexedSymbol[], lines: number[]): EntityMapping {
-  const matches = symbols.filter((symbol) =>
-    lines.some((line) => line >= symbol.startLine && line <= symbol.endLine)
-  );
-  if (matches.length === 1) return { symbol: matches[0], confidence: 'high', reason: 'exact symbol range match' };
-  if (matches.length > 1) return { symbol: matches[0], confidence: 'medium', reason: 'multiple overlapping symbol ranges' };
-  return { symbol: null, confidence: 'low', reason: 'no reliable symbol range match' };
+  if (lines.length === 0) return { symbol: null, confidence: 'low', reason: 'no reliable symbol range match' };
+  const matches = symbols
+    .filter((symbol) => lines.every((line) => line >= symbol.startLine && line <= symbol.endLine))
+    .sort((left, right) =>
+      (left.endLine - left.startLine) - (right.endLine - right.startLine)
+      || right.startLine - left.startLine
+      || left.qualifiedName.localeCompare(right.qualifiedName));
+  if (matches.length === 0) return { symbol: null, confidence: 'low', reason: 'no reliable symbol range match' };
+  const [match, next] = matches;
+  if (!next || match.startLine !== next.startLine || match.endLine !== next.endLine) {
+    return { symbol: match, confidence: 'high', reason: 'smallest enclosing symbol range match' };
+  }
+  return { symbol: match, confidence: 'medium', reason: 'multiple overlapping symbol ranges' };
 }
 
 function operation(hunk: SemanticHunk): SemanticChange['operation'] {

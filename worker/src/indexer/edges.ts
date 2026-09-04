@@ -6,33 +6,71 @@ export interface IndexedEdge {
   type: CodeEdgeType;
 }
 
-export function buildEdges(symbols: IndexedSymbol[]): IndexedEdge[] {
-  const byName = new Map<string, IndexedSymbol>();
-  for (const symbol of symbols) byName.set(symbol.qualifiedName.split('#')[1], symbol);
-  const byPath = new Map<string, IndexedSymbol>();
-  for (const symbol of symbols) {
-    byPath.set(symbol.path, symbol);
-    byPath.set(symbol.path.replace(/\.(?:tsx?|jsx?)$/, ''), symbol);
+function name(symbol: IndexedSymbol): string {
+  return symbol.qualifiedName.split('#')[1];
+}
+
+function withoutExtension(path: string): string {
+  return path.replace(/\.(?:tsx?|jsx?)$/, '');
+}
+
+function normalizePath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
   }
-  const calls = [...byName].map(([name, target]) => ({
-    name,
-    target,
-    pattern: new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`),
-  }));
+  return parts.join('/');
+}
+
+function importedPath(symbol: IndexedSymbol, imported: string): string {
+  if (!imported.startsWith('.')) return imported;
+  const directory = symbol.path.slice(0, Math.max(0, symbol.path.lastIndexOf('/') + 1));
+  return normalizePath(`${directory}${imported}`);
+}
+
+function add<K>(map: Map<K, IndexedSymbol[]>, key: K, symbol: IndexedSymbol): void {
+  map.set(key, [...(map.get(key) ?? []), symbol]);
+}
+
+export function buildEdges(symbols: IndexedSymbol[]): IndexedEdge[] {
+  const byName = new Map<string, IndexedSymbol[]>();
+  const byPath = new Map<string, IndexedSymbol[]>();
+  for (const symbol of symbols) {
+    add(byName, name(symbol), symbol);
+    add(byPath, symbol.path, symbol);
+    add(byPath, withoutExtension(symbol.path), symbol);
+    if (/\/index\.(?:tsx?|jsx?)$/.test(symbol.path)) {
+      add(byPath, symbol.path.replace(/\/index\.(?:tsx?|jsx?)$/, ''), symbol);
+    }
+  }
+  const patterns = new Map([...byName].map(([symbolName]) => [
+    symbolName,
+    new RegExp(`\\b${symbolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`),
+  ]));
   const edges: IndexedEdge[] = [];
 
   for (const symbol of symbols) {
-    for (const imported of symbol.imports) {
-      const directory = symbol.path.includes('/') ? symbol.path.slice(0, symbol.path.lastIndexOf('/')) : '';
-      const resolved = imported.startsWith('./') ? `${directory}/${imported.slice(2)}` : imported;
-      const target = byPath.get(resolved) ?? byPath.get(imported);
-      if (target) edges.push({ from: symbol.id, to: target.id, type: 'imports' });
-    }
-    for (const { name, target, pattern } of calls) {
-      if (name !== symbol.qualifiedName.split('#')[1] && pattern.test(symbol.normalizedBody)) {
-        edges.push({ from: symbol.id, to: target.id, type: 'calls' });
-      }
+    const imported = symbol.imports.flatMap((path) => {
+      const resolved = importedPath(symbol, path);
+      return byPath.get(resolved) ?? byPath.get(withoutExtension(resolved)) ?? [];
+    });
+    const scoped = new Set([
+      ...symbols.filter((candidate) => candidate.path === symbol.path),
+      ...imported,
+    ]);
+
+    if (imported.length === 1) edges.push({ from: symbol.id, to: imported[0].id, type: 'imports' });
+
+    for (const [symbolName, candidates] of byName) {
+      if (!patterns.get(symbolName)!.test(symbol.normalizedBody)) continue;
+      const scopedCandidates = candidates.filter((candidate) => candidate.id !== symbol.id && scoped.has(candidate));
+      const targets = scopedCandidates.length > 0
+        ? scopedCandidates
+        : candidates.length === 1 && candidates[0].id !== symbol.id ? candidates : [];
+      for (const target of targets) edges.push({ from: symbol.id, to: target.id, type: 'calls' });
     }
   }
-  return edges;
+  return [...new Map(edges.map((edge) => [`${edge.from}:${edge.to}:${edge.type}`, edge])).values()];
 }

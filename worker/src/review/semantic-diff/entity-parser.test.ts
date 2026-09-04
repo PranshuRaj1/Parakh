@@ -79,6 +79,24 @@ describe('entity parser', () => {
     expect(change.evidence.newStart).toBe(1);
   });
 
+  it('maps nested Python changes to the smallest enclosing symbol', async () => {
+    const [file] = await parseUnifiedDiff([
+      'diff --git a/user.py b/user.py',
+      '--- a/user.py',
+      '+++ b/user.py',
+      '@@ -2,2 +2,2 @@',
+      '     def save(self):',
+      '-        return False',
+      '+        return True',
+    ].join('\n'));
+
+    const change = mapHunkToChange('acme/app', 'base', 'head', file.hunks[0], {
+      newSource: 'class User:\n    def save(self):\n        return True\n',
+    });
+
+    expect(change).toMatchObject({ symbol: 'user.py#save', confidence: 'high' });
+  });
+
   it('returns deterministic ordering for multiple hunks', async () => {
     const files = await parseUnifiedDiff([
       'diff --git a/z.ts b/z.ts',

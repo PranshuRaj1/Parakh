@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { parseSourceFile } from './parser.js';
 
 describe('language parser adapters', () => {
+  it('does not index TypeScript call expressions or declarations from earlier lines', () => {
+    const source = `
+await deleteScheduledEmailReminder(booking.id);
+
+items.map((item) => {
+  deleteScheduledEmailReminder(item.id);
+});
+
+async function deleteScheduledEmailReminder(id: number) {
+  await removeReminder(id);
+}
+`;
+
+    const symbols = parseSourceFile('acme/app', 'head', 'src/reminders.ts', source);
+
+    expect(symbols.map((symbol) => ({
+      name: symbol.qualifiedName.split('#')[1],
+      startLine: symbol.startLine,
+    }))).toEqual([{ name: 'deleteScheduledEmailReminder', startLine: 8 }]);
+  });
+
   it.each([
     ['py', 'class User:\n    def save(self):\n        return True\n', ['User', 'save']],
     ['go', 'package users\n\n type User struct {}\n func Save(user User) error { return nil }\n', ['User', 'Save']],

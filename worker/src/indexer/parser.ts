@@ -1,7 +1,7 @@
 import type { CodeSymbolKind, IndexedSymbol } from '@parakh/shared';
 
-const DECLARATION = /^\s*(export\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|class\s+([A-Za-z_$][\w$]*)|interface\s+([A-Za-z_$][\w$]*)|type\s+([A-Za-z_$][\w$]*)\s*=|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([\s\S]*?\)\s*=>)/;
-const METHOD = /^\s*(?:export\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([\s\S]*?\)\s*\{/;
+const DECLARATION = /^[ \t]*(export\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|class\s+([A-Za-z_$][\w$]*)|interface\s+([A-Za-z_$][\w$]*)|type\s+([A-Za-z_$][\w$]*)\s*=|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([\s\S]*?\)\s*=>)/;
+const METHOD_START = /^[ \t]*(?:export\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/;
 const TEST = /^\s*(test|it|describe)\s*\(/;
 const IMPORT = /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['\"]([^'\"]+)['\"]/g;
 const GENERIC_IMPORT = /(?:import\s+(?:[\s\S]*?\s+from\s+)?|from\s+|require\s*\(\s*|dofile\s*\(\s*)['\"]([^'\"]+)['\"]/g;
@@ -56,6 +56,20 @@ function stripStringsAndComments(source: string): string {
     .replace(/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g, (value) => value.replace(/[^\n]/g, ' '));
 }
 
+function methodName(header: string): string | null {
+  const sanitized = stripStringsAndComments(header);
+  const match = METHOD_START.exec(sanitized);
+  if (!match) return null;
+  let depth = 0;
+  for (let index = match[0].lastIndexOf('('); index < sanitized.length; index++) {
+    if (sanitized[index] === '(') depth++;
+    if (sanitized[index] !== ')') continue;
+    depth--;
+    if (depth === 0) return sanitized.slice(index + 1).trimStart().startsWith('{') ? match[1] : null;
+  }
+  return null;
+}
+
 export function parseTypeScriptFile(
   repo: string,
   commitSha: string,
@@ -70,18 +84,17 @@ export function parseTypeScriptFile(
   lines.forEach((line, index) => {
     const header = lines.slice(index, index + 10).join('\n');
     const declarationMatch = DECLARATION.exec(header);
-    const methodMatch = declarationMatch ? null : METHOD.exec(header);
-    const testMatch = declarationMatch || methodMatch || TEST.exec(line);
-    const declaration = declarationMatch || methodMatch || testMatch;
-    if (!declaration) return;
+    const method = declarationMatch ? null : methodName(header);
+    const testMatch = declarationMatch || method ? null : TEST.exec(line);
+    if (!declarationMatch && !method && !testMatch) return;
     const symbolName = declarationMatch
-      ? declaration.slice(2, 7).find(Boolean) ?? ''
-      : declaration[1];
+      ? declarationMatch.slice(2, 7).find(Boolean) ?? ''
+      : method ?? testMatch?.[1] ?? '';
     if (!symbolName || ['if', 'for', 'while', 'switch', 'catch'].includes(symbolName)) return;
     const end = endLine(lines, sanitized, index);
     const body = lines.slice(index, end).join('\n');
     const normalizedBody = normalize(body);
-    const symbolKind = declarationMatch ? kind(declaration) : 'method';
+    const symbolKind = declarationMatch ? kind(declarationMatch) : 'method';
     symbols.push({
       id: `${path}:${index + 1}:${symbolName}`,
       repo,
@@ -92,7 +105,7 @@ export function parseTypeScriptFile(
       startLine: index + 1,
       endLine: end,
       signature: line.trim(),
-      exported: Boolean(declaration[1]),
+      exported: declarationMatch ? Boolean(declarationMatch[1]) : Boolean(method),
       normalizedBody,
       bodyHash: hash(normalizedBody),
       imports,
