@@ -9,7 +9,7 @@ import type {
   PipelineOutput,
 } from './types.js';
 import { buildRepositoryIndex } from '../../indexer/repository-index.js';
-import { buildChangeUnderstandingPlan } from '../semantic-diff/plan.js';
+import { buildChangeUnderstandingPlan, type ChangeUnderstandingPlan } from '../semantic-diff/plan.js';
 import { renderBehaviorGroup } from '../grouping/group-renderer.js';
 
 interface ReviewModule {
@@ -44,6 +44,54 @@ interface GeminiModule {
     GEMINI_API_KEYS?: string;
     GEMINI_GENERATION_MODEL?: string;
   }) => GeminiLike;
+}
+
+interface ReviewUnit {
+  file: string;
+  diff: string;
+  kind: 'file' | 'behavior';
+}
+
+function fileReviewUnits(fileDiffs: Map<string, string>, files = new Set(fileDiffs.keys())): ReviewUnit[] {
+  return [...files].sort().flatMap((file) => {
+    const diff = fileDiffs.get(file);
+    return diff ? [{ file, diff, kind: 'file' as const }] : [];
+  });
+}
+
+function groupedReviewUnits(
+  plan: ChangeUnderstandingPlan,
+  fileDiffs: Map<string, string>,
+  sources: Record<string, { newSource: string }>,
+): ReviewUnit[] {
+  const fallbackFiles = new Set(plan.groups
+    .filter((group) => group.demotionReason)
+    .flatMap((group) => group.changes.map((change) => change.file)));
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const group of plan.groups) {
+      const files = new Set(group.changes.map((change) => change.file));
+      if (![...files].some((file) => fallbackFiles.has(file))) continue;
+      for (const file of files) {
+        if (fallbackFiles.has(file)) continue;
+        fallbackFiles.add(file);
+        expanded = true;
+      }
+    }
+  }
+
+  const hunks = new Map(plan.files.flatMap((file) => file.hunks)
+    .map((hunk) => [hunk.evidence.patchHash, hunk]));
+  const behaviorUnits = plan.groups
+    .filter((group) => group.changes.every((change) => !fallbackFiles.has(change.file)))
+    .map((group): ReviewUnit => ({
+      file: group.changes[0]?.file ?? group.anchor,
+      diff: renderBehaviorGroup({ group, graph: plan.graph, hunks, sources }),
+      kind: 'behavior',
+    }));
+  const units = [...behaviorUnits, ...fileReviewUnits(fileDiffs, fallbackFiles)];
+  return units.length <= fileDiffs.size ? units : fileReviewUnits(fileDiffs);
 }
 
 async function withTimeout<T>(
@@ -89,52 +137,43 @@ export function createBranchPipelineFromModules(input: {
       let planningFallbackGroups: number | undefined;
 
       const grouped = input.strategy === 'grouped';
-      const reviewUnits: Array<{ file: string; diff: string }> = [];
+      const fileDiffs = input.review.parseDiffByFile(testCase.diff);
+      let reviewUnits: ReviewUnit[];
       if (grouped) {
+        const sources = Object.fromEntries(Object.entries(testCase.files)
+          .map(([file, source]) => [file, { newSource: source }]));
         const plan = await buildChangeUnderstandingPlan({
           repository: testCase.repo,
           oldSha: testCase.baseSha,
           newSha: testCase.headSha,
           diff: testCase.diff,
-          sources: Object.fromEntries(Object.entries(testCase.files).map(([file, source]) => [file, { newSource: source }])),
+          sources,
           ...buildRepositoryIndex(testCase.repo, testCase.headSha, testCase.files),
         });
         planningGroups = plan.groups.length;
         planningChanges = plan.changes.length;
         planningMoves = plan.moves.length;
         planningFallbackGroups = plan.groups.filter((group) => group.demotionReason).length;
-        const hunkByHash = new Map(plan.files.flatMap((file) => file.hunks).map((hunk) => [hunk.evidence.patchHash, hunk]));
-        for (const group of plan.groups) {
-          reviewUnits.push({
-            file: group.changes[0]?.file ?? group.anchor,
-            diff: renderBehaviorGroup({
-              group,
-              graph: plan.graph,
-              hunks: hunkByHash,
-              sources: Object.fromEntries(Object.entries(testCase.files).map(([file, source]) => [file, { newSource: source }])),
-            }),
-          });
-        }
+        reviewUnits = groupedReviewUnits(plan, fileDiffs, sources);
       } else {
-        reviewUnits.push(...Array.from(input.review.parseDiffByFile(testCase.diff))
-          .map(([file, diff]) => ({ file, diff })));
+        reviewUnits = fileReviewUnits(fileDiffs);
       }
 
-      for (const { file, diff } of reviewUnits) {
+      for (const { file, diff, kind } of reviewUnits) {
         if (input.review.isIgnoredLockfile(file)) continue;
         const maxCharacters = config.contextBudget * 4;
         const boundedDiff = diff.slice(0, maxCharacters);
-        const reference = testCase.files[file]?.slice(
+        const reference = kind === 'file' ? testCase.files[file]?.slice(
           0,
           Math.max(0, maxCharacters - boundedDiff.length)
-        );
+        ) : undefined;
         const client = new input.gemini.GeminiClient({
           GEMINI_API_KEY: input.apiKey,
           GEMINI_API_KEYS: input.apiKeys,
           GEMINI_GENERATION_MODEL: config.reviewerModel,
         });
         const result = await withTimeout(
-          (signal) => grouped && client.reviewBehaviorGroup
+          (signal) => kind === 'behavior' && client.reviewBehaviorGroup
             ? client.reviewBehaviorGroup(boundedDiff, [], { signal, timeoutMs: config.timeoutMs })
             : client.reviewDiff(file, boundedDiff, [], { signal, timeoutMs: config.timeoutMs }, reference),
           config.timeoutMs

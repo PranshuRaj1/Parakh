@@ -43,7 +43,7 @@ describe('branch pipeline adapter', () => {
         },
       },
       review: {
-        parseDiffByFile: () => new Map(),
+        parseDiffByFile: () => new Map([['src/a.ts', 'raw file diff']]),
         isIgnoredLockfile: () => false,
         resolveReviewResult: () => ({ findings: [] }),
       },
@@ -72,6 +72,71 @@ describe('branch pipeline adapter', () => {
     expect(reviewDiff).not.toHaveBeenCalled();
     expect(output.planningGroups).toBe(1);
     expect(output.planningChanges).toBe(1);
+    expect(output.providerCalls).toBe(1);
+  });
+
+  it('uses the raw file diff for low-confidence fallback groups', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const rawDiff = 'raw markdown diff';
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['README.md', rawDiff]]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    const output = await pipeline.review({
+      ...testCase,
+      diff: ['diff --git a/README.md b/README.md', '--- a/README.md', '+++ b/README.md', '@@ -1 +1 @@', '-old', '+new'].join('\n'),
+      files: { 'README.md': 'new' },
+    }, config);
+
+    expect(reviewDiff).toHaveBeenCalledWith('README.md', rawDiff, [], expect.any(Object), 'new');
+    expect(reviewBehaviorGroup).not.toHaveBeenCalled();
+    expect(output.providerCalls).toBe(1);
+  });
+
+  it('falls back to file review when semantic groups would increase calls', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const rawDiff = 'one raw file review';
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', rawDiff]]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    const output = await pipeline.review({
+      ...testCase,
+      diff: [
+        'diff --git a/src/a.ts b/src/a.ts',
+        '--- a/src/a.ts',
+        '+++ b/src/a.ts',
+        '@@ -1,3 +1,3 @@',
+        ' export function first() {',
+        '-  return 1;',
+        '+  return 2;',
+        ' }',
+        '@@ -5,3 +5,3 @@',
+        ' export function second() {',
+        '-  return 1;',
+        '+  return 2;',
+        ' }',
+      ].join('\n'),
+      files: { 'src/a.ts': 'export function first() { return 2; }\n\nexport function second() { return 2; }' },
+    }, config);
+
+    expect(reviewDiff).toHaveBeenCalledTimes(1);
+    expect(reviewDiff).toHaveBeenCalledWith('src/a.ts', rawDiff, [], expect.any(Object), expect.any(String));
+    expect(reviewBehaviorGroup).not.toHaveBeenCalled();
     expect(output.providerCalls).toBe(1);
   });
 
