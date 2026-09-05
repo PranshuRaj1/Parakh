@@ -103,7 +103,7 @@ describe('eval orchestrator', () => {
     expect(report.oldNoiseFloor.reviewerDisagreementRate).toBe(0);
     expect(report.newNoiseFloor.reviewerDisagreementRate).toBe(0);
     expect(report.comparison.f1Delta).toBe(0);
-    expect(report.assessment).toBe('inconclusive');
+    expect(report.assessment).toBe('parity');
   });
 
   it('caps the judge code context with judgeContextBudget', async () => {
@@ -292,7 +292,7 @@ describe('assessComparison', () => {
       comparison: comparison({ f1Delta: 0.1 }),
       oldNoise: noise(0.1),
       newNoise: noise(0),
-    })).toBe('inconclusive');
+    })).toBe('parity');
     expect(assessComparison({
       comparison: comparison({ f1Delta: 0.2 }),
       oldNoise: noise(0.1),

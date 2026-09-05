@@ -146,14 +146,16 @@ export function assessComparison(input: {
   if (input.comparison.f1Delta === null) {
     if (input.comparison.falsePositiveDelta < 0) return 'better';
     if (input.comparison.falsePositiveDelta > 0) return 'worse';
-    return 'inconclusive';
+    const oldFp = input.comparison.oldMetrics.strictFalsePositives ?? 0;
+    const newFp = input.comparison.newMetrics.strictFalsePositives ?? 0;
+    return oldFp === 0 && newFp === 0 ? 'pass' : 'parity';
   }
 
   const noise = Math.max(
     Math.abs(input.oldNoise.f1Delta ?? 0),
     Math.abs(input.newNoise.f1Delta ?? 0)
   );
-  if (Math.abs(input.comparison.f1Delta) <= noise) return 'inconclusive';
+  if (Math.abs(input.comparison.f1Delta) <= noise) return 'parity';
   if (
     input.comparison.f1Delta > 0
     && input.comparison.falsePositiveDelta <= 0

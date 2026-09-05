@@ -9,6 +9,8 @@ export interface EvalCase {
   isNegativeControl: boolean;
   diff: string;
   files: Record<string, string>;
+  baseFiles?: Record<string, string>;
+  expectedRelatedFiles?: string[];
 }
 export interface EvalDefect {
   id: string;
@@ -41,6 +43,7 @@ export interface PipelineVersion {
   branchRef: string;
   resolvedSha: string;
   strategy?: 'file' | 'grouped';
+  workingTreeHash?: string;
 }
 
 export interface EvalRunConfig {
@@ -62,6 +65,16 @@ export interface PipelineOutput {
   planningChanges?: number;
   planningMoves?: number;
   planningFallbackGroups?: number;
+  retrieval?: {
+    expectedFiles: string[] | null;
+    retrievedFiles: string[];
+    renderedFiles: string[];
+    recall: number | null;
+    fallbackRate: number;
+    behaviorCalls: number;
+    fileCalls: number;
+    truncatedReviewUnits: number;
+  };
 }
 
 export interface EvalRun {
@@ -144,6 +157,7 @@ export interface CaseMetrics {
   inputTokens: number;
   outputTokens: number;
   providerCalls: number;
+  retrieval?: PipelineOutput['retrieval'];
 }
 
 export interface CaseComparison {
@@ -177,7 +191,8 @@ export type ComparisonAssessment =
   | 'better'
   | 'worse'
   | 'mixed'
-  | 'inconclusive'
+  | 'pass'
+  | 'parity'
   | 'judge_unstable';
 
 export interface EvalCaseReport {

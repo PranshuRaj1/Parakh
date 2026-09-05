@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { saveEvalReport } from './run-history.js';
 import { dirname, resolve } from 'node:path';
 import { loadBranchPipeline } from './branch-pipeline.test-helper.js';
 import { loadEvalCorpus } from './corpus.test-helper.js';
@@ -321,7 +322,8 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
     'better',
     'worse',
     'mixed',
-    'inconclusive',
+    'pass',
+    'parity',
     'judge_unstable',
   ];
   const report: EvalReport = {
@@ -344,7 +346,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
 
   const output = resolve(repoRoot, args.output);
   await mkdir(dirname(output), { recursive: true });
-  await writeFile(output, JSON.stringify(report, null, 2));
+  await saveEvalReport(output, report);
   await saveEvalState(statePath, {
     oldPipeline,
     newPipeline,

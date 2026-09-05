@@ -150,7 +150,7 @@ function sampleReport(): EvalReport {
       timeoutMs: 120000,
     },
     cases: [sampleCaseReport()],
-    summary: { better: 1, worse: 0, mixed: 0, inconclusive: 0, judge_unstable: 0 },
+    summary: { better: 1, worse: 0, mixed: 0, pass: 1, parity: 0, judge_unstable: 0 },
   };
 }
 
