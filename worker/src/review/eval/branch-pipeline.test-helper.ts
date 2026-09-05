@@ -10,7 +10,10 @@ import type {
 } from './types.js';
 import { buildRepositoryIndex } from '../../indexer/repository-index.js';
 import { buildChangeUnderstandingPlan, type ChangeUnderstandingPlan } from '../semantic-diff/plan.js';
-import { renderBehaviorGroup } from '../grouping/group-renderer.js';
+import { renderBehaviorGroup, renderGroupContext } from '../grouping/group-renderer.js';
+import type { BehaviorGroup } from '../grouping/types.js';
+import { parseUnifiedDiff } from '../semantic-diff/unified-parser.js';
+import { canonicalAnchor, groupId } from '../grouping/group-id.js';
 
 interface ReviewModule {
   parseDiffByFile(diff: string): Map<string, string>;
@@ -50,6 +53,7 @@ interface ReviewUnit {
   file: string;
   diff: string;
   kind: 'file' | 'behavior';
+  reference?: string;
 }
 
 function fileReviewUnits(fileDiffs: Map<string, string>, files = new Set(fileDiffs.keys())): ReviewUnit[] {
@@ -59,39 +63,61 @@ function fileReviewUnits(fileDiffs: Map<string, string>, files = new Set(fileDif
   });
 }
 
-function groupedReviewUnits(
-  plan: ChangeUnderstandingPlan,
-  fileDiffs: Map<string, string>,
-  sources: Record<string, { newSource: string }>,
-): ReviewUnit[] {
+const TEST_FILE_PATTERN = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i;
+
+function groupedReviewUnits(input: {
+  repository: string;
+  plan: ChangeUnderstandingPlan;
+  fileDiffs: Map<string, string>;
+  sources: Record<string, { oldSource?: string; newSource?: string }>;
+  maxCharacters: number;
+  contextExclude?: RegExp[];
+}): ReviewUnit[] {
+  const { repository, plan, fileDiffs, sources, maxCharacters, contextExclude } = input;
   const fallbackFiles = new Set(plan.groups
     .filter((group) => group.demotionReason)
     .flatMap((group) => group.changes.map((change) => change.file)));
-  let expanded = true;
-  while (expanded) {
-    expanded = false;
-    for (const group of plan.groups) {
-      const files = new Set(group.changes.map((change) => change.file));
-      if (![...files].some((file) => fallbackFiles.has(file))) continue;
-      for (const file of files) {
-        if (fallbackFiles.has(file)) continue;
-        fallbackFiles.add(file);
-        expanded = true;
-      }
-    }
-  }
-
   const hunks = new Map(plan.files.flatMap((file) => file.hunks)
     .map((hunk) => [hunk.evidence.patchHash, hunk]));
-  const behaviorUnits = plan.groups
-    .filter((group) => group.changes.every((change) => !fallbackFiles.has(change.file)))
-    .map((group): ReviewUnit => ({
-      file: group.changes[0]?.file ?? group.anchor,
-      diff: renderBehaviorGroup({ group, graph: plan.graph, hunks, sources }),
+  const merged = new Map<string, BehaviorGroup>();
+  for (const group of plan.groups) {
+    const changes = group.changes.filter(change => !fallbackFiles.has(change.file));
+    if (!changes.length) continue;
+    const key = [...new Set(changes.map(change => change.file))].sort().join('\n');
+    const previous = merged.get(key);
+    merged.set(key, { ...group, changes: [...(previous?.changes ?? []), ...changes],
+      riskSignals: [...new Set([...(previous?.riskSignals ?? []), ...group.riskSignals])],
+      confidence: previous?.confidence === 'medium' ? 'medium' : group.confidence,
+    });
+  }
+  const behaviorUnits: ReviewUnit[] = [];
+  for (const group of merged.values()) {
+    let changes: BehaviorGroup['changes'] = [];
+    const evidence = new Map<string, BehaviorGroup['changes']>();
+    for (const change of group.changes) evidence.set(change.evidence.patchHash, [...(evidence.get(change.evidence.patchHash) ?? []), change]);
+    const emit = () => behaviorUnits.push({
+      file: changes[0].file,
+      diff: renderBehaviorGroup({ group: { ...group, id: groupId(repository, changes), anchor: canonicalAnchor(changes), changes }, graph: plan.graph, hunks, sources, maxCharacters, contextExclude }),
       kind: 'behavior',
-    }));
-  const units = [...behaviorUnits, ...fileReviewUnits(fileDiffs, fallbackFiles)];
-  return units.length <= fileDiffs.size ? units : fileReviewUnits(fileDiffs);
+    });
+    for (const next of evidence.values()) {
+      const candidate = { ...group, changes: [...changes, ...next] };
+      if (changes.length && renderBehaviorGroup({ group: candidate, graph: plan.graph, hunks, maxCharacters: 0 }).length > maxCharacters) {
+        emit();
+        changes = [];
+      }
+      changes.push(...next);
+    }
+    if (changes.length) emit();
+  }
+  const fallbackUnits = fileReviewUnits(fileDiffs, fallbackFiles).map(unit => {
+    const changes = plan.changes.filter(change => change.file === unit.file);
+    const group: BehaviorGroup = { id: unit.file, anchor: unit.file, changes, context: [], riskSignals: [], confidence: 'low' };
+    const context = renderGroupContext({ group, graph: plan.graph, sources, maxCharacters: Math.max(0, maxCharacters - unit.diff.length), contextExclude });
+    return { ...unit, reference: context.text ? `${context.text}\n\n${sources[unit.file]?.newSource ?? ''}` : undefined };
+  });
+  const covered = new Set(plan.changes.map(change => change.file));
+  return [...behaviorUnits, ...fallbackUnits, ...fileReviewUnits(fileDiffs, new Set([...fileDiffs.keys()].filter(file => !covered.has(file))))];
 }
 
 async function withTimeout<T>(
@@ -135,35 +161,56 @@ export function createBranchPipelineFromModules(input: {
       let planningChanges: number | undefined;
       let planningMoves: number | undefined;
       let planningFallbackGroups: number | undefined;
+      let retrieval: PipelineOutput['retrieval'];
 
       const grouped = input.strategy === 'grouped';
       const fileDiffs = input.review.parseDiffByFile(testCase.diff);
       let reviewUnits: ReviewUnit[];
       if (grouped) {
-        const sources = Object.fromEntries(Object.entries(testCase.files)
-          .map(([file, source]) => [file, { newSource: source }]));
+        const sources = Object.fromEntries([...new Set([...Object.keys(testCase.files), ...Object.keys(testCase.baseFiles ?? {})])]
+          .map(file => [file, { newSource: testCase.files[file], oldSource: testCase.baseFiles?.[file] }]));
+        for (const file of await parseUnifiedDiff(testCase.diff)) {
+          if (file.oldPath && file.newPath && sources[file.newPath]) sources[file.newPath].oldSource = testCase.baseFiles?.[file.oldPath];
+        }
+        const headIndex = buildRepositoryIndex(testCase.repo, testCase.headSha, testCase.files);
+        const baseIndex = buildRepositoryIndex(testCase.repo, testCase.baseSha, testCase.baseFiles ?? {});
         const plan = await buildChangeUnderstandingPlan({
           repository: testCase.repo,
           oldSha: testCase.baseSha,
           newSha: testCase.headSha,
           diff: testCase.diff,
           sources,
-          ...buildRepositoryIndex(testCase.repo, testCase.headSha, testCase.files),
+          symbols: [...baseIndex.symbols.map(symbol => ({ ...symbol, id: `base:${symbol.id}` })), ...headIndex.symbols],
+          edges: [...baseIndex.edges.map(edge => ({ ...edge, from: `base:${edge.from}`, to: `base:${edge.to}` })), ...headIndex.edges],
         });
         planningGroups = plan.groups.length;
         planningChanges = plan.changes.length;
         planningMoves = plan.moves.length;
         planningFallbackGroups = plan.groups.filter((group) => group.demotionReason).length;
-        reviewUnits = groupedReviewUnits(plan, fileDiffs, sources);
+        reviewUnits = groupedReviewUnits({ repository: testCase.repo, plan, fileDiffs, sources, maxCharacters: config.contextBudget * 4, contextExclude: [TEST_FILE_PATTERN] });
+        const retrievedFiles = [...new Set((plan.graph.contextNodes ?? [])
+          .map(node => node.symbol.path).filter(file => !fileDiffs.has(file)))].sort();
+        const renderedFiles = [...new Set(reviewUnits.flatMap(unit =>
+          [...(unit.diff + '\n' + (unit.reference ?? '')).slice(0, config.contextBudget * 4).matchAll(/^CONTEXT_FILE: (.+)$/gm)].map(match => match[1])))]
+          .filter(file => !fileDiffs.has(file)).sort();
+        const expectedFiles = testCase.expectedRelatedFiles ?? null;
+        retrieval = {
+          expectedFiles, retrievedFiles, renderedFiles,
+          recall: expectedFiles?.length ? expectedFiles.filter(file => renderedFiles.includes(file)).length / expectedFiles.length : null,
+          fallbackRate: reviewUnits.length ? reviewUnits.filter(unit => unit.kind === 'file').length / reviewUnits.length : 0,
+          behaviorCalls: reviewUnits.filter(unit => unit.kind === 'behavior').length,
+          fileCalls: reviewUnits.filter(unit => unit.kind === 'file').length,
+          truncatedReviewUnits: reviewUnits.filter(unit => unit.diff.length > config.contextBudget * 4).length,
+        };
       } else {
         reviewUnits = fileReviewUnits(fileDiffs);
       }
 
-      for (const { file, diff, kind } of reviewUnits) {
+      for (const { file, diff, kind, reference: groupReference } of reviewUnits) {
         if (input.review.isIgnoredLockfile(file)) continue;
         const maxCharacters = config.contextBudget * 4;
         const boundedDiff = diff.slice(0, maxCharacters);
-        const reference = kind === 'file' ? testCase.files[file]?.slice(
+        const reference = kind === 'file' ? (groupReference ?? testCase.files[file])?.slice(
           0,
           Math.max(0, maxCharacters - boundedDiff.length)
         ) : undefined;
@@ -204,6 +251,7 @@ export function createBranchPipelineFromModules(input: {
         planningChanges,
         planningMoves,
         planningFallbackGroups,
+        retrieval,
       };
     },
   };
@@ -217,11 +265,14 @@ export async function loadBranchPipeline(input: {
 }): Promise<EvalPipeline> {
   const moduleUrl = (path: string) =>
     pathToFileURL(join(input.worktreePath, path)).href;
-  const [review, gemini] = await Promise.all([
+  const [review, gemini, adapter] = await Promise.all([
     import(moduleUrl('worker/src/jobs/review.ts')) as Promise<ReviewModule>,
     import(moduleUrl('worker/src/gemini/client.ts')) as Promise<GeminiModule>,
+    import(moduleUrl('worker/src/review/eval/branch-pipeline.test-helper.ts')) as Promise<{
+      createBranchPipelineFromModules: typeof createBranchPipelineFromModules;
+    }>,
   ]);
-  return createBranchPipelineFromModules({
+  return adapter.createBranchPipelineFromModules({
     review,
     gemini,
     apiKey: input.apiKey,
