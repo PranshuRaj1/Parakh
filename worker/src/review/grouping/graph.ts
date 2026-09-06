@@ -12,7 +12,10 @@ export function buildChangeGraph(
   symbols: IndexedSymbol[],
   edges: IndexedEdge[],
 ): ChangeGraph {
-  const nodes: ChangeGraphNode[] = changes.map((change) => ({ change, symbol: symbolName(change.symbol) }));
+  const entities = new Map(symbols.map((symbol) => [symbol.qualifiedName, symbol]));
+  const nodes: ChangeGraphNode[] = changes.map((change) => ({
+    change, symbol: symbolName(change.symbol), entity: entities.get(change.symbol ?? ''),
+  }));
   const bySymbol = new Map<string, string[]>();
   for (const node of nodes) {
     if (!node.symbol) continue;
@@ -21,6 +24,8 @@ export function buildChangeGraph(
   for (const ids of bySymbol.values()) ids.sort();
   const symbolById = new Map(symbols.map((symbol) => [symbol.id, symbol.qualifiedName]));
   const graphEdges: ChangeGraphEdge[] = [];
+  const contextNodes = new Map<string, NonNullable<ChangeGraph['contextNodes']>[number]>();
+  const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
   for (const ids of bySymbol.values()) {
     for (let index = 1; index < ids.length; index++) {
       graphEdges.push({ from: ids[0], to: ids[index], strength: 'strong', reason: 'same symbol' });
@@ -29,6 +34,15 @@ export function buildChangeGraph(
   for (const edge of edges) {
     const from = bySymbol.get(symbolById.get(edge.from) ?? '') ?? [];
     const to = bySymbol.get(symbolById.get(edge.to) ?? '') ?? [];
+    for (const [changeIds, target] of [[from, edge.to], [to, edge.from]] as const) {
+      const indexed = byId.get(target);
+      const symbol = indexed && entities.get(indexed.qualifiedName);
+      if (!changeIds.length || !symbol || bySymbol.has(symbol.qualifiedName)) continue;
+      const previous = contextNodes.get(symbol.qualifiedName);
+      contextNodes.set(symbol.qualifiedName, {
+        symbol, changeIds: [...new Set([...(previous?.changeIds ?? []), ...changeIds])].sort(), reason: edge.type,
+      });
+    }
     for (const fromId of from) {
       for (const toId of to) {
         if (fromId !== toId) graphEdges.push({ from: fromId, to: toId, strength: 'strong', reason: edge.type });
@@ -70,6 +84,7 @@ export function buildChangeGraph(
   }
   const uniqueEdges = new Map(graphEdges.map((edge) => [`${edge.from}:${edge.to}:${edge.reason}`, edge]));
   return {
+    contextNodes: [...contextNodes.values()].sort((left, right) => left.symbol.qualifiedName.localeCompare(right.symbol.qualifiedName)),
     nodes: [...nodes].sort((left, right) => left.change.id.localeCompare(right.change.id)),
     edges: [...uniqueEdges.values()].sort((left, right) =>
       left.from.localeCompare(right.from) || left.to.localeCompare(right.to) || left.reason.localeCompare(right.reason)),

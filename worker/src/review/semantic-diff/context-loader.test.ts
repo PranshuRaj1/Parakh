@@ -17,6 +17,35 @@ function input(overrides: Partial<Parameters<typeof loadDependencyContext>[0]> =
 }
 
 describe('loadDependencyContext', () => {
+  it('prioritizes dependencies named in the changed code over import order', async () => {
+    const value = input({
+      changedSources: { 'src/api.ts': { newSource: "import { other } from './other';\nimport { service } from './service';" } },
+      repositoryPaths: ['src/other.ts', 'src/service.ts'],
+      changedCode: { 'src/api.ts': '+service.save();' }, requestLimit: 3,
+    });
+    const result = await loadDependencyContext(value);
+    expect(result.sources['src/service.ts']).toBeDefined();
+    expect(result.sources['src/other.ts']).toBeUndefined();
+  });
+
+  it('resolves parent imports against real paths even for large changed files', async () => {
+    const value = input({
+      changedSources: { 'src/routes/api.ts': { newSource: "import { save } from '../service.js';\n" + 'x'.repeat(130000) } },
+      repositoryPaths: ['src/routes/api.ts', 'src/service.ts'],
+    });
+    const result = await loadDependencyContext(value);
+    expect(result.sources['src/service.ts'].newSource).toContain('save');
+    expect(value.fetcher.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('charges failed fetches to the request limit', async () => {
+    const value = input({ fetcher: { fetch: vi.fn().mockResolvedValue(null) } });
+    const result = await loadDependencyContext(value);
+    expect(value.fetcher.fetch.mock.calls.length).toBeLessThan(CONTEXT_SUBREQUEST_LIMIT);
+    expect(result.contextSubrequestsUsed).toBe(CONTEXT_SUBREQUEST_LIMIT);
+    expect(result.truncatedBy).toBe('subrequests');
+  });
+
   it('loads bounded dependency context and persists usage', async () => {
     const value = input();
     const result = await loadDependencyContext(value);

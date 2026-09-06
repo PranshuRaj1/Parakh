@@ -3,6 +3,20 @@ import { mapDiffToChanges, mapHunkToChange } from './entity-parser.js';
 import { parseUnifiedDiff } from './unified-parser.js';
 
 describe('entity parser', () => {
+  it('maps one hunk spanning sibling functions to both symbols', async () => {
+    const [file] = await parseUnifiedDiff([
+      'diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts',
+      '@@ -1,6 +1,6 @@', ' export function first() {', '-  return 1;', '+  return 2;', ' }',
+      ' export function second() {', '-  return 3;', '+  return 4;', ' }',
+    ].join('\n'));
+    const changes = mapDiffToChanges('acme/app', 'base', 'head', file.hunks, {
+      'src/a.ts': { newSource: 'export function first() {\n  return 2;\n}\nexport function second() {\n  return 4;\n}' },
+    });
+    expect(changes.map(change => change.symbol)).toEqual(['src/a.ts#first', 'src/a.ts#second']);
+    expect(changes.every(change => change.confidence === 'high')).toBe(true);
+    expect(new Set(changes.map(change => change.id)).size).toBe(2);
+  });
+
   it('maps an edited hunk to its changed function', async () => {
     const [file] = await parseUnifiedDiff([
       'diff --git a/src/auth.ts b/src/auth.ts',

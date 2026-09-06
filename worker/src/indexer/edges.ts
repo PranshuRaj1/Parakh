@@ -63,6 +63,14 @@ export function buildEdges(symbols: IndexedSymbol[]): IndexedEdge[] {
 
     if (imported.length === 1) edges.push({ from: symbol.id, to: imported[0].id, type: 'imports' });
 
+    for (const target of scoped) {
+      if (target.id === symbol.id || !['class', 'interface', 'type'].includes(target.kind)) continue;
+      const identifier = name(target).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${identifier}\\b`).test(symbol.normalizedBody)) {
+        edges.push({ from: symbol.id, to: target.id, type: 'references' });
+      }
+    }
+
     for (const [symbolName, candidates] of byName) {
       if (!patterns.get(symbolName)!.test(symbol.normalizedBody)) continue;
       const scopedCandidates = candidates.filter((candidate) => candidate.id !== symbol.id && scoped.has(candidate));

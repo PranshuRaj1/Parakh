@@ -24,6 +24,7 @@ describe('renderBehaviorGroup', () => {
     expect(rendered).toContain('+new api');
     expect(rendered).toContain('+new service');
     expect(rendered).toContain('RELATIONSHIPS:');
-    expect(rendered).toContain('UNCHANGED_CONTEXT_SECTIONS: none');
+    expect(rendered).toContain('CONTEXT_FILE: src/service.ts');
+    expect(rendered).toContain('3: new service');
   });
 });

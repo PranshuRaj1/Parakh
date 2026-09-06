@@ -123,9 +123,34 @@ export function mapDiffToChanges(
   hunks: SemanticHunk[],
   sources: Record<string, FileSources>
 ): SemanticChange[] {
+  const parsed = new Map(Object.entries(sources).map(([file, source]) => [file, {
+    old: symbolsForSource(repo, oldSha, file, source.oldSource),
+    new: symbolsForSource(repo, newSha, file, source.newSource),
+  }]));
   return hunks
-    .map((hunk) => mapHunkToChange(repo, oldSha, newSha, hunk, sources[hunk.file] ?? {}))
+    .flatMap((hunk) => {
+      const mappings = new Map<string | null, EntityMapping>();
+      for (const side of ['new', 'old'] as const) {
+        if (!sources[hunk.file]?.[side === 'new' ? 'newSource' : 'oldSource']) continue;
+        for (const line of changedLines(hunk, side)) {
+          const mapping = mapLines(parsed.get(hunk.file)?.[side] ?? [], [line]);
+          const key = mapping.symbol?.qualifiedName ?? null;
+          if (!mappings.has(key)) mappings.set(key, mapping);
+        }
+      }
+      if (mappings.size === 0) return [mapHunkToChange(repo, oldSha, newSha, hunk, sources[hunk.file] ?? {})];
+      return [...mappings].map(([symbol, mapping]): SemanticChange => ({
+        id: `change:${hash(`${hunk.evidence.patchHash}:${operation(hunk)}:${symbol ?? hunk.file}`)}`,
+        file: hunk.file,
+        operation: operation(hunk),
+        symbol,
+        evidence: hunk.evidence,
+        confidence: mapping.confidence,
+        reason: mapping.reason,
+      }));
+    })
     .sort((left, right) => left.file.localeCompare(right.file)
       || (left.evidence.newStart ?? left.evidence.oldStart ?? 0) - (right.evidence.newStart ?? right.evidence.oldStart ?? 0)
+      || (left.symbol ?? '').localeCompare(right.symbol ?? '')
       || left.id.localeCompare(right.id));
 }

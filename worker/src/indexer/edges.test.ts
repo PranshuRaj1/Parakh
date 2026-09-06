@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildRepositoryIndex } from './repository-index.js';
 
 describe('index edges', () => {
+  it('keeps imported Java contracts referenced as types rather than function calls', () => {
+    const index = buildRepositoryIndex('acme/app', 'head', {
+      'src/main/java/app/Service.java': 'package app;\nimport app.Group;\npublic class Service {\n  public Group get() { return null; }\n}',
+      'src/main/java/app/Group.java': 'package app;\npublic interface Group {\n  String getId();\n}',
+    });
+    const caller = index.symbols.find(symbol => symbol.qualifiedName.endsWith('#get'))!;
+    const target = index.symbols.find(symbol => symbol.qualifiedName.endsWith('#Group'))!;
+    expect(index.edges).toContainEqual({ from: caller.id, to: target.id, type: 'references' });
+  });
+
   it('resolves calls to the imported module when symbol names collide', () => {
     const index = buildRepositoryIndex('acme/app', 'head', {
       'src/reminders.ts': 'export async function removeReminder(id: number) { return id; }',

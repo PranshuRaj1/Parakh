@@ -77,5 +77,6 @@ export async function buildChangeUnderstandingPlan(input: {
     files.flatMap((file) => changedBlocks(file.hunks, '+')),
   );
   const graph = buildChangeGraph(changes, input.symbols ?? [], input.edges ?? []);
+  graph.baseSha = input.oldSha;
   return { files, changes, moves, graph, groups: buildBehaviorGroups(input.repository, graph) };
 }
