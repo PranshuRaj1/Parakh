@@ -26,8 +26,9 @@ if (!has('--old-ref') && !state) {
 
 const evalArgs = [
   ...args,
-  ...(has('--old-ref') ? [] : ['--old-ref', state!.newPipeline.resolvedSha]),
+  ...(has('--old-ref') ? [] : ['--old-ref', state!.oldPipeline.resolvedSha]),
   ...(has('--new-ref') ? [] : ['--new-ref', 'HEAD']),
+  ...(has('--corpus') ? [] : ['--corpus', state!.corpus ?? 'worker/src/review/eval/fixtures/gold-v1.json']),
   ...(has('--reviewer-model') || !state ? [] : ['--reviewer-model', state.config.reviewerModel]),
   ...(has('--context-budget') || !state ? [] : ['--context-budget', String(state.config.contextBudget)]),
   ...(has('--judge-context-budget') || !state ? [] : ['--judge-context-budget', String(state.config.judgeContextBudget ?? state.config.contextBudget)]),
@@ -42,4 +43,12 @@ await access(viteNode);
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs]);
 
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--']);
-process.stdout.write('Open .eval-cache/reports/index.html to view the comparison.\n');
+const dashboardPath = resolve(repoRoot, '.eval-cache/reports/index.html');
+if (process.platform === 'win32') {
+  await run('cmd', ['/c', 'start', '', dashboardPath]);
+} else if (process.platform === 'darwin') {
+  await run('open', [dashboardPath]);
+} else {
+  await run('xdg-open', [dashboardPath]);
+}
+process.stdout.write('Dashboard opened.\n');

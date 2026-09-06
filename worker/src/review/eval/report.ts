@@ -180,6 +180,15 @@ function renderPerCaseReport(caseReport: EvalCaseReport): string[] {
 
   for (const [key, run] of Object.entries(caseReport.runs)) {
     const label = key.replace(/([A-Z])/g, ' $1').trim();
+    const retrieval = run.run.output.retrieval;
+    if (retrieval) {
+      lines.push(`  **${label} Retrieval**`, '',
+        `  - Expected related files: ${retrieval.expectedFiles?.join(', ') ?? 'not labeled'}`,
+        `  - Retrieved: ${retrieval.retrievedFiles.join(', ') || 'none'}`,
+        `  - Rendered: ${retrieval.renderedFiles.join(', ') || 'none'}`,
+        `  - Related-file recall: ${retrieval.recall === null ? 'N/A' : pct(retrieval.recall)}`,
+        `  - File fallback: ${pct(retrieval.fallbackRate)}; behavior calls: ${retrieval.behaviorCalls}; file calls: ${retrieval.fileCalls}; truncated inputs: ${retrieval.truncatedReviewUnits}`, '');
+    }
     lines.push(...renderAdjudications(run.adjudications, label));
     lines.push('');
   }

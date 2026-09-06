@@ -17,10 +17,24 @@ describe('eval dashboard', () => {
       cases: [{
         caseId: 'case-1',
         assessment: 'better',
+        oldNoiseFloor: {
+          reviewerDisagreementRate: 0.1,
+          precisionDelta: 0,
+          recallDelta: 0,
+          f1Delta: 0,
+          falsePositiveDelta: 0,
+        },
+        newNoiseFloor: {
+          reviewerDisagreementRate: 0.2,
+          precisionDelta: 0,
+          recallDelta: 0,
+          f1Delta: 0,
+          falsePositiveDelta: 0,
+        },
         comparison: {
           f1Delta: 0.2,
-          oldMetrics: { knownPrecision: 0.2, providerCalls: 2 },
-          newMetrics: { knownPrecision: 0.4, providerCalls: 3 },
+          oldMetrics: { knownPrecision: 0.2, providerCalls: 2, latencyMs: 15000, inputTokens: 1000, outputTokens: 100, strictFalsePositives: 1, recall: 0.5 },
+          newMetrics: { knownPrecision: 0.4, providerCalls: 3, latencyMs: 18000, inputTokens: 1000, outputTokens: 200, strictFalsePositives: 0, recall: 0.75 },
         },
       }],
     }));
@@ -28,5 +42,12 @@ describe('eval dashboard', () => {
     expect(html).toContain('case-1');
     expect(html).toContain('better');
     expect(html).toContain('0.200');
+    expect(html).toContain('2 / 3');
+    expect(html).toContain('15.0s');
+    expect(html).toContain('Show all metrics');
+    expect(html).toContain('Provider calls');
+    expect(html).toContain('Input tokens');
+    expect(html).toContain('Reviewer disagreement');
+    expect(html).toContain('False positives (strict)');
   });
 });

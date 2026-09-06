@@ -55,6 +55,12 @@ function pipeline(): EvalPipeline {
 }
 
 describe('eval runner', () => {
+  it('invalidates cached reviews when base context or retrieval expectations change', async () => {
+    const original = await hashEvalCase(testCase);
+    expect(await hashEvalCase({ ...testCase, baseFiles: { 'src/a.ts': 'old content' } })).not.toBe(original);
+    expect(await hashEvalCase({ ...testCase, expectedRelatedFiles: ['src/b.ts'] })).not.toBe(original);
+  });
+
   it('resolves and pins moving branch refs', async () => {
     const resolved = await resolvePipelineVersion(
       'old',

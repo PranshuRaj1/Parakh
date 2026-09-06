@@ -98,6 +98,7 @@ export function computeCaseMetrics(input: {
     inputTokens: input.run.output.inputTokens,
     outputTokens: input.run.output.outputTokens,
     providerCalls: input.run.output.providerCalls,
+    retrieval: input.run.output.retrieval,
   };
 }
 

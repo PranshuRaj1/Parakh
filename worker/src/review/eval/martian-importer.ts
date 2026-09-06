@@ -107,6 +107,7 @@ export function buildCorpusFromMartian(
     headSha: string;
     diff: string;
     files: Record<string, string>;
+    baseFiles?: Record<string, string>;
   } | null>
 ): Promise<EvalCorpus> {
   return buildCorpusFromMartianAsync(prs, goldSetVersion, snapshotFetcher);
@@ -120,6 +121,7 @@ async function buildCorpusFromMartianAsync(
     headSha: string;
     diff: string;
     files: Record<string, string>;
+    baseFiles?: Record<string, string>;
   } | null>
 ): Promise<EvalCorpus> {
   const cases: EvalCase[] = [];
@@ -138,6 +140,7 @@ async function buildCorpusFromMartianAsync(
       headSha: string;
       diff: string;
       files: Record<string, string>;
+      baseFiles?: Record<string, string>;
     } | null = null;
 
     if (snapshotFetcher) {
@@ -155,6 +158,7 @@ async function buildCorpusFromMartianAsync(
       isNegativeControl: pr.comments.length === 0,
       diff: snapshot?.diff ?? '',
       files: snapshot?.files ?? {},
+      ...(snapshot?.baseFiles ? { baseFiles: snapshot.baseFiles } : {}),
     });
 
     for (const comment of pr.comments) {

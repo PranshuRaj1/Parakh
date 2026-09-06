@@ -22,6 +22,63 @@ const config: EvalRunConfig = {
 };
 
 describe('branch pipeline adapter', () => {
+  it('keeps reliable groups when another file needs fallback', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', 'a diff'], ['config.yaml', 'config diff']]),
+        isIgnoredLockfile: () => false, resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+    const output = await pipeline.review({
+      ...testCase,
+      diff: ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts',
+        '@@ -1,3 +1,3 @@', ' export function first() {', '-  return 1;', '+  return 2;', ' }',
+        '@@ -4,3 +4,3 @@', ' export function second() {', '-  return 1;', '+  return 2;', ' }',
+        'diff --git a/config.yaml b/config.yaml', '--- a/config.yaml', '+++ b/config.yaml',
+        '@@ -1 +1 @@', '-timeout: 1', '+timeout: 2'].join('\n'),
+      files: { 'src/a.ts': 'export function first() {\n  return 2;\n}\nexport function second() {\n  return 2;\n}', 'config.yaml': 'timeout: 2' },
+    }, { ...config, contextBudget: 12000 });
+    expect(reviewBehaviorGroup).toHaveBeenCalledTimes(1);
+    expect(reviewBehaviorGroup.mock.calls[0][0]).toContain('@@ -4,3 +4,3 @@');
+    expect(reviewDiff).toHaveBeenCalledTimes(1);
+    expect(reviewDiff.mock.calls[0][0]).toBe('config.yaml');
+    expect(output.retrieval?.fallbackRate).toBe(0.5);
+  });
+
+  it('renders an unchanged callee and measures its retrieval', async () => {
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = vi.fn(); reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['src/api.ts', 'api diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+    const output = await pipeline.review({
+      ...testCase,
+      expectedRelatedFiles: ['src/service.ts'],
+      files: {
+        'src/api.ts': "import { save } from './service';\nexport function update() {\n  return save(false);\n}",
+        'src/service.ts': 'export function save(authorized) {\n  if (!authorized) throw new Error("authorization required");\n  return true;\n}',
+        'src/unrelated.ts': 'export function other() { return "unrelated sentinel"; }',
+      },
+      diff: ['diff --git a/src/api.ts b/src/api.ts', '--- a/src/api.ts', '+++ b/src/api.ts',
+        '@@ -1,4 +1,4 @@', " import { save } from './service';", ' export function update() {',
+        '-  return save(true);', '+  return save(false);', ' }'].join('\n'),
+    }, { ...config, contextBudget: 12000 });
+    expect(reviewBehaviorGroup.mock.calls[0][0]).toContain('authorization required');
+    expect(reviewBehaviorGroup.mock.calls[0][0]).not.toContain('unrelated sentinel');
+    expect(output.retrieval).toMatchObject({
+      retrievedFiles: ['src/service.ts'], renderedFiles: ['src/service.ts'], recall: 1,
+    });
+  });
+
   it('reviews planner-generated behavior groups without changing the file adapter', async () => {
     const reviewDiff = vi.fn().mockResolvedValue({
       genericFindings: [],

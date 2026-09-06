@@ -18,6 +18,8 @@ export async function hashEvalCase(testCase: EvalCase): Promise<string> {
     files: Object.entries(testCase.files).sort(([left], [right]) =>
       left.localeCompare(right)
     ),
+    baseFiles: Object.entries(testCase.baseFiles ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+    expectedRelatedFiles: testCase.expectedRelatedFiles?.slice().sort(),
   });
   const digest = await crypto.subtle.digest(
     'SHA-256',
@@ -47,8 +49,10 @@ export function reviewRunCacheKey(input: {
   config: EvalRunConfig;
 }): string {
   return JSON.stringify({
+    adapterVersion: 'branch-owned-v2',
     slot: input.slot,
     sha: input.version.resolvedSha,
+    workingTreeHash: input.version.workingTreeHash,
     strategy: input.version.strategy ?? 'file',
     snapshot: input.caseSnapshotHash,
     config: reviewerConfigIdentity(input.config),

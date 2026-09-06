@@ -1,10 +1,15 @@
 import { readFile } from 'node:fs/promises';
+import { loadDependencyContext } from '../semantic-diff/context-loader.js';
+import { parseUnifiedDiff } from '../semantic-diff/unified-parser.js';
+import { SubrequestBudget } from '../../jobs/subrequest-budget.js';
 
 export interface GitHubSnapshot {
   baseSha: string;
   headSha: string;
   diff: string;
   files: Record<string, string>;
+  baseFiles?: Record<string, string>;
+  contextTruncatedBy?: string | null;
 }
 
 interface GhPrResponse {
@@ -35,7 +40,7 @@ async function ghFetch<T>(
 ): Promise<T> {
   const response = await fetch(url, {
     headers: {
-      Authorization: `token ${token}`,
+      ...(token ? { Authorization: `token ${token}` } : {}),
       Accept: accept,
       'X-GitHub-Api-Version': '2022-11-28',
     },
@@ -55,7 +60,7 @@ async function fetchRawDiff(
 ): Promise<string> {
   const response = await fetch(diffUrl, {
     headers: {
-      Authorization: `token ${token}`,
+      ...(token ? { Authorization: `token ${token}` } : {}),
       Accept: 'application/vnd.github.v3.diff',
       'X-GitHub-Api-Version': '2022-11-28',
     },
@@ -73,22 +78,56 @@ async function fetchFileContent(
   path: string,
   token: string
 ): Promise<string> {
-  const url = `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}?ref=${sha}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `token ${token}`,
+      ...(token ? { Authorization: `token ${token}` } : {}),
       Accept: 'application/vnd.github.v3.raw',
       'X-GitHub-Api-Version': '2022-11-28',
     },
   });
-  if (!response.ok) return '';
+  if (response.status === 404) return '';
+  if (!response.ok) throw new Error(`Failed to fetch ${path} at ${sha}: ${response.status}`);
   return response.text();
 }
 
-function parseRepoFromUrl(url: string): { owner: string; repo: string } | null {
-  const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (!match) return null;
-  return { owner: match[1], repo: match[2] };
+export async function expandSnapshotContext(
+  owner: string,
+  repo: string,
+  snapshot: GitHubSnapshot,
+  token: string,
+  fileBudget = 20,
+): Promise<GitHubSnapshot> {
+  const trees = await Promise.all([...new Set([snapshot.headSha, snapshot.baseSha])].map(sha =>
+    ghFetch<{ tree: Array<{ path: string; type: string }>; truncated: boolean }>(
+      `${GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`, token,
+    )));
+  if (trees.some(tree => tree.truncated)) throw new Error('Repository tree is truncated; cannot build a complete dependency inventory');
+  const diffFiles = await parseUnifiedDiff(snapshot.diff);
+  const baseFiles = { ...snapshot.baseFiles };
+  const oldPaths = [...new Set(diffFiles.flatMap(file => file.oldPath ? [file.oldPath] : []))];
+  for (const path of oldPaths.slice(0, 50)) {
+    if (path in baseFiles) continue;
+    const content = await fetchFileContent(owner, repo, snapshot.baseSha, path, token);
+    if (content) baseFiles[path] = content;
+  }
+  const sources = Object.fromEntries([...new Set([...Object.keys(snapshot.files), ...Object.keys(baseFiles)])]
+    .map(path => [path, { oldSource: baseFiles[path], newSource: snapshot.files[path] }]));
+  const context = await loadDependencyContext({
+    repository: `${owner}/${repo}`, oldSha: snapshot.baseSha, newSha: snapshot.headSha,
+    changedSources: sources, repositoryPaths: [...new Set(trees.flatMap(tree => tree.tree.filter(item => item.type === 'blob').map(item => item.path)))],
+    changedCode: Object.fromEntries(diffFiles.map(file => [file.newPath ?? file.oldPath ?? '', file.hunks.flatMap(hunk => hunk.lines).join('\n')])),
+    state: { contextSubrequestsUsed: 0 }, budget: new SubrequestBudget(fileBudget * 2 + 24),
+    requestLimit: fileBudget * 2 + 2, fileLimit: fileBudget,
+    cache: { getMany: async () => ({}), setMany: async () => {} },
+    fetcher: { fetch: async (path, sha) => (await fetchFileContent(owner, repo, sha, path, token)) || null },
+  });
+  return {
+    ...snapshot,
+    files: Object.fromEntries(Object.entries(context.sources).flatMap(([path, source]) => source.newSource === undefined ? [] : [[path, source.newSource]])),
+    baseFiles: Object.fromEntries(Object.entries(context.sources).flatMap(([path, source]) => source.oldSource === undefined ? [] : [[path, source.oldSource]])),
+    contextTruncatedBy: oldPaths.length > 50 ? 'base-files' : context.truncatedBy,
+  };
 }
 
 export async function fetchPrSnapshot(
@@ -112,7 +151,7 @@ export async function fetchPrSnapshot(
     const baseSha = pr.base.sha;
     const headSha = pr.head.sha;
 
-    const diff = await fetchRawDiff(pr.diff_url, token);
+    const diff = await fetchRawDiff(`${GITHUB_API}/repos/${owner}/${repo}/compare/${baseSha}...${headSha}`, token);
 
     const files: Record<string, string> = {};
     if (fetchFiles) {
@@ -141,7 +180,8 @@ export async function fetchPrSnapshot(
       );
     }
 
-    return { baseSha, headSha, diff, files };
+    const snapshot = { baseSha, headSha, diff, files };
+    return fetchFiles ? await expandSnapshotContext(owner, repo, snapshot, token) : snapshot;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
