@@ -42,6 +42,42 @@ function split<T>(items: T[]): T[][] {
   return result;
 }
 
+function splitComponent(ids: string[], graph: ChangeGraph): string[][] {
+  const remaining = new Set(ids);
+  const neighbors = new Map<string, Set<string>>();
+  for (const id of ids) neighbors.set(id, new Set());
+  for (const edge of graph.edges) {
+    if (edge.strength !== 'strong' || !remaining.has(edge.from) || !remaining.has(edge.to)) continue;
+    neighbors.get(edge.from)?.add(edge.to);
+    neighbors.get(edge.to)?.add(edge.from);
+  }
+  const result: string[][] = [];
+  while (remaining.size > 0) {
+    const seed = [...remaining].sort((left, right) =>
+      (neighbors.get(right)?.size ?? 0) - (neighbors.get(left)?.size ?? 0)
+      || left.localeCompare(right))[0];
+    const selected = new Set<string>([seed]);
+    const pending = [seed];
+    remaining.delete(seed);
+    while (pending.length > 0 && selected.size < MAX_SYMBOLS) {
+      const current = pending.shift()!;
+      const next = [...(neighbors.get(current) ?? [])]
+        .filter((id) => remaining.has(id))
+        .sort((left, right) =>
+          (neighbors.get(right)?.size ?? 0) - (neighbors.get(left)?.size ?? 0)
+          || left.localeCompare(right));
+      for (const id of next) {
+        if (selected.size >= MAX_SYMBOLS) break;
+        selected.add(id);
+        remaining.delete(id);
+        pending.push(id);
+      }
+    }
+    result.push([...selected].sort());
+  }
+  return result;
+}
+
 function confidence(nodes: ChangeGraphNode[]): BehaviorGroup['confidence'] {
   if (nodes.some((node) => node.change.confidence === 'low')) return 'medium';
   if (nodes.some((node) => node.change.confidence === 'medium')) return 'medium';
@@ -82,18 +118,18 @@ export function buildBehaviorGroups(repository: string, graph: ChangeGraph): Beh
 
   for (const component of components(graph)) {
     const nodes = component.map((id) => byId.get(id)).filter((node): node is ChangeGraphNode => Boolean(node));
-    const lowCount = nodes.filter((node) => node.change.confidence === 'low').length;
-    if (lowCount / nodes.length > LOW_CONFIDENCE_LIMIT) {
-      for (const node of nodes) {
-        fallbackByFile.set(node.change.file, [...(fallbackByFile.get(node.change.file) ?? []), node]);
+    for (const ids of splitComponent(component, graph)) {
+      const partition = ids.map((id) => byId.get(id)).filter((node): node is ChangeGraphNode => Boolean(node));
+      const low = partition.filter((node) => node.change.confidence === 'low');
+      if (low.length / partition.length > LOW_CONFIDENCE_LIMIT) {
+        const reliable = partition.filter((node) => node.change.confidence !== 'low');
+        if (reliable.length > 0) groups.push(createGroup(reliable));
+        for (const node of low) {
+          fallbackByFile.set(node.change.file, [...(fallbackByFile.get(node.change.file) ?? []), node]);
+        }
+        continue;
       }
-      continue;
-    }
-
-    for (const ids of split(component)) {
-      groups.push(createGroup(
-        ids.map((id) => byId.get(id)).filter((node): node is ChangeGraphNode => Boolean(node)),
-      ));
+      groups.push(createGroup(partition));
     }
   }
 
@@ -104,7 +140,7 @@ export function buildBehaviorGroups(repository: string, graph: ChangeGraph): Beh
       - (right.change.evidence.newStart ?? right.change.evidence.oldStart ?? 0)
       || left.change.id.localeCompare(right.change.id));
     for (const chunk of split(nodes)) {
-      groups.push(createGroup(chunk, 'file fallback for low-confidence changes'));
+      groups.push(createGroup(chunk, 'file fallback: low-confidence changes'));
     }
   }
 

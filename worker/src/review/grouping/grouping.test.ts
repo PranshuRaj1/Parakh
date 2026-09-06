@@ -35,6 +35,44 @@ describe('behavior grouping', () => {
     expect(groups[0].confidence).toBe('high');
   });
 
+  it('groups changed symbols connected through an unchanged bridge symbol', () => {
+    const first = change('one', 'src/api.ts', 'src/api.ts#update');
+    const second = change('two', 'src/service.ts', 'src/service.ts#save');
+    const graph = buildChangeGraph(
+      [first, second],
+      [
+        { id: 'a', repo: 'acme/app', commitSha: 'head', path: 'src/api.ts', qualifiedName: first.symbol!, kind: 'function', startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+        { id: 'bridge', repo: 'acme/app', commitSha: 'head', path: 'src/bridge.ts', qualifiedName: 'src/bridge.ts#connect', kind: 'function', startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+        { id: 'b', repo: 'acme/app', commitSha: 'head', path: 'src/service.ts', qualifiedName: second.symbol!, kind: 'function', startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+      ],
+      [{ from: 'a', to: 'bridge', type: 'calls' }, { from: 'bridge', to: 'b', type: 'calls' }],
+    );
+
+    expect(graph.contextNodes).toContainEqual(expect.objectContaining({
+      symbol: expect.objectContaining({ qualifiedName: 'src/bridge.ts#connect' }),
+      reason: 'bridge dependency',
+    }));
+    expect(buildBehaviorGroups('acme/app', graph)[0].changes.map((item) => item.id)).toEqual(['one', 'two']);
+  });
+
+  it('limits how many changes one bridge symbol can connect', () => {
+    const changes = Array.from({ length: 10 }, (_, index) =>
+      change(`change-${index}`, `src/file-${index}.ts`, `src/file-${index}.ts#run`));
+    const symbols = [
+      ...changes.map((item, index) => ({
+        id: `changed-${index}`, repo: 'acme/app', commitSha: 'head', path: item.file,
+        qualifiedName: item.symbol!, kind: 'function' as const, startLine: 1, endLine: 2,
+        signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [],
+      })),
+      { id: 'bridge', repo: 'acme/app', commitSha: 'head', path: 'src/shared.ts', qualifiedName: 'src/shared.ts#dispatch', kind: 'function' as const, startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+    ];
+    const graph = buildChangeGraph(changes, symbols, changes.flatMap((_, index) => [
+      { from: `changed-${index}`, to: 'bridge', type: 'calls' as const },
+    ]));
+
+    expect(graph.edges.filter((edge) => edge.reason.startsWith('bridge dependency:'))).toHaveLength(8);
+  });
+
   it('preserves all changes mapped to the same symbol', () => {
     const first = change('one', 'src/api.ts', 'src/api.ts#update');
     const second = change('two', 'src/api.ts', 'src/api.ts#update');
@@ -72,6 +110,21 @@ describe('behavior grouping', () => {
     const groups = buildBehaviorGroups('acme/app', buildChangeGraph(changes, [], []));
     expect(groups).toHaveLength(3);
     expect(groups.filter((group) => group.demotionReason)).toHaveLength(2);
+  });
+
+  it('demotes only the low-confidence partition after a connected component is split', () => {
+    const high = change('high', 'src/high.ts', 'src/high.ts#run', 'high');
+    const low = change('low', 'src/low.ts', 'src/low.ts#run', 'low');
+    const symbols = [
+      { id: 'high', repo: 'acme/app', commitSha: 'head', path: high.file, qualifiedName: high.symbol!, kind: 'function' as const, startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+      { id: 'low', repo: 'acme/app', commitSha: 'head', path: low.file, qualifiedName: low.symbol!, kind: 'function' as const, startLine: 1, endLine: 2, signature: '', exported: true, normalizedBody: '', bodyHash: '', imports: [] },
+    ];
+    const graph = buildChangeGraph([high, low], symbols, [{ from: 'high', to: 'low', type: 'calls' }]);
+    const groups = buildBehaviorGroups('acme/app', graph);
+
+    expect(groups).toHaveLength(2);
+    expect(groups.find((group) => group.changes.some((item) => item.id === 'high'))?.demotionReason).toBeUndefined();
+    expect(groups.find((group) => group.changes.some((item) => item.id === 'low'))?.demotionReason).toContain('file fallback');
   });
 
   it('combines low-confidence changes from one file into one fallback group', () => {

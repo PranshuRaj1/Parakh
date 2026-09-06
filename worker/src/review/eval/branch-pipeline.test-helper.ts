@@ -147,6 +147,8 @@ export function createBranchPipelineFromModules(input: {
   apiKeys?: string;
   strategy?: 'file' | 'grouped';
 }): EvalPipeline {
+  const clients = new Map<string, GeminiLike>();
+
   return {
     async review(testCase: EvalCase, config: EvalRunConfig): Promise<PipelineOutput> {
       if (config.tools.length > 0 || config.rulesHash !== 'none') {
@@ -194,6 +196,12 @@ export function createBranchPipelineFromModules(input: {
           [...(unit.diff + '\n' + (unit.reference ?? '')).slice(0, config.contextBudget * 4).matchAll(/^CONTEXT_FILE: (.+)$/gm)].map(match => match[1])))]
           .filter(file => !fileDiffs.has(file)).sort();
         const expectedFiles = testCase.expectedRelatedFiles ?? null;
+        const fallbackGroups = plan.groups.filter((group) => group.demotionReason);
+        const fallbackReasons = Object.fromEntries([...fallbackGroups.reduce((reasons, group) => {
+          const reason = group.demotionReason ?? 'unknown';
+          reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+          return reasons;
+        }, new Map<string, number>())].sort(([left], [right]) => left.localeCompare(right)));
         retrieval = {
           expectedFiles, retrievedFiles, renderedFiles,
           recall: expectedFiles?.length ? expectedFiles.filter(file => renderedFiles.includes(file)).length / expectedFiles.length : null,
@@ -201,6 +209,11 @@ export function createBranchPipelineFromModules(input: {
           behaviorCalls: reviewUnits.filter(unit => unit.kind === 'behavior').length,
           fileCalls: reviewUnits.filter(unit => unit.kind === 'file').length,
           truncatedReviewUnits: reviewUnits.filter(unit => unit.diff.length > config.contextBudget * 4).length,
+          groupCount: plan.groups.length,
+          fallbackGroups: fallbackGroups.length,
+          fallbackChanges: fallbackGroups.reduce((count, group) => count + group.changes.length, 0),
+          bridgeEdges: plan.graph.edges.filter((edge) => edge.reason.startsWith('bridge dependency:')).length,
+          fallbackReasons,
         };
       } else {
         reviewUnits = fileReviewUnits(fileDiffs);
@@ -214,11 +227,15 @@ export function createBranchPipelineFromModules(input: {
           0,
           Math.max(0, maxCharacters - boundedDiff.length)
         ) : undefined;
-        const client = new input.gemini.GeminiClient({
-          GEMINI_API_KEY: input.apiKey,
-          GEMINI_API_KEYS: input.apiKeys,
-          GEMINI_GENERATION_MODEL: config.reviewerModel,
-        });
+        let client = clients.get(config.reviewerModel);
+        if (!client) {
+          client = new input.gemini.GeminiClient({
+            GEMINI_API_KEY: input.apiKey,
+            GEMINI_API_KEYS: input.apiKeys,
+            GEMINI_GENERATION_MODEL: config.reviewerModel,
+          });
+          clients.set(config.reviewerModel, client);
+        }
         const result = await withTimeout(
           (signal) => kind === 'behavior' && client.reviewBehaviorGroup
             ? client.reviewBehaviorGroup(boundedDiff, [], { signal, timeoutMs: config.timeoutMs })

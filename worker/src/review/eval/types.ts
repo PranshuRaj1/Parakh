@@ -74,6 +74,11 @@ export interface PipelineOutput {
     behaviorCalls: number;
     fileCalls: number;
     truncatedReviewUnits: number;
+    groupCount: number;
+    fallbackGroups: number;
+    fallbackChanges: number;
+    bridgeEdges: number;
+    fallbackReasons: Record<string, number>;
   };
 }
 
