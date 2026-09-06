@@ -41,10 +41,9 @@ max_batch_size = 1
 # Kept as an explicit var so a code refactor can never silently fall back
 # to a model the newer keys 404 on.
 GEMINI_GENERATION_MODEL = "gemini-3-flash-preview"
-# Reasoning capture (model thinking) is OFF by default for PR reviews —
-# thinking tokens cost 2x and roughly halve daily throughput. Opt back in
-# per PR by setting REASONING_CAPTURE_ENABLED="true" here or as a secret.
-REASONING_CAPTURE_ENABLED = "false"
+# Reasoning capture (model thinking) is enabled for PR reviews.
+# Thinking tokens cost 2x and roughly halve daily throughput.
+REASONING_CAPTURE_ENABLED = "true"
 # Groq fallback model + provider routing (keys themselves are secrets).
 # llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16.
 GROQ_GENERATION_MODEL = "openai/gpt-oss-120b"
@@ -64,7 +63,7 @@ BEHAVIOR_GROUPING_SHADOW = "true"
 GROUPED_REVIEW_OUTPUT_ENABLED = "false"
 STALENESS_CHECK_ENABLED = "false"
 DETERMINISTIC_ANALYSIS_ENABLED = "false"
-INCREMENTAL_REVIEW_ENABLED = "false"
+INCREMENTAL_REVIEW_ENABLED = "true"
 INCREMENTAL_REVIEW_SHADOW = "true"
 # Review-quality rollout (issue #30) — staged flags, on for the comparison run.
 # Full-file grounding + post-hoc finding verification (fabrication rejection).

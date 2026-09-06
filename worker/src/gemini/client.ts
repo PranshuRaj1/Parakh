@@ -213,14 +213,8 @@ export class GeminiClient implements LLMProvider {
       const keyIndex = (startIndex + attempt) % this.keys.length;
       const entry = this.cooldowns.get(keyIndex);
       if (entry && entry.until > Date.now()) {
-        const remainingMs = entry.until - Date.now();
         coolingDown++;
         if (entry.dailyQuota) dailyQuotaBlocked++;
-        console.warn(
-          `[gemini] Key ${keyIndex + 1}/${this.keys.length} ` +
-          `${entry.dailyQuota ? 'daily-quota' : 'rate-limited'}, ` +
-          `skipped (cooldown ${Math.round(remainingMs / 1000)}s remaining)`
-        );
         continue;
       }
       const apiKey = this.keys[keyIndex];
@@ -292,6 +286,12 @@ export class GeminiClient implements LLMProvider {
     const dailyQuotaKeys = dailyQuotaBlocked + dailyQuotaFailures;
 
     if (accounted === this.keys.length) {
+      console.warn(
+        `[gemini] All ${this.keys.length} keys are cooling down ` +
+        `(${failed} rate-limited just now` +
+        `${dailyQuotaKeys > 0 ? `, ${dailyQuotaKeys} daily-quota` : ''}`
+        + `${unavailable > 0 ? `, ${unavailable} cannot serve ${this.generationModel}` : ''})`
+      );
       if (usableKeys === 0) {
         throw new AllKeysExhaustedError(
           lastError ?? new Error(`No key can serve ${this.generationModel}`),
