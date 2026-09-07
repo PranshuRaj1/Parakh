@@ -231,7 +231,10 @@ export function generateMarkdownReport(report: EvalReport): string {
   lines.push('');
 
   if (report.cases.length > 0) {
-    const aggregate = aggregateMetrics(report);
+    const stableCases = report.cases.filter(caseReport => caseReport.assessment !== 'judge_unstable');
+    lines.push(`Scored cases: ${stableCases.length}/${report.cases.length}. Judge-unstable cases are excluded from headline aggregate metrics.`);
+    lines.push('');
+    const aggregate = aggregateMetrics(stableCases);
     lines.push(...renderAggregateMetrics(aggregate));
     lines.push('');
   }
@@ -265,8 +268,8 @@ interface AggregateMetrics {
   totalLatencyMs: number;
 }
 
-function aggregateMetrics(report: EvalReport): AggregateMetrics {
-  const n = report.cases.length;
+function aggregateMetrics(cases: EvalCaseReport[]): AggregateMetrics {
+  const n = cases.length;
   if (n === 0) {
     return {
       oldAvgPrecision: 0,
@@ -299,7 +302,7 @@ function aggregateMetrics(report: EvalReport): AggregateMetrics {
   let totalDisagreement = 0;
   let totalLatency = 0;
 
-  for (const c of report.cases) {
+  for (const c of cases) {
     oldPrecisionSum += c.comparison.oldMetrics.knownPrecision;
     newPrecisionSum += c.comparison.newMetrics.knownPrecision;
 

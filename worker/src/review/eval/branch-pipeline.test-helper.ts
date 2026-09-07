@@ -82,6 +82,34 @@ function renderFallbackDiff(
   return [`diff --git ${oldPath} ${newPath}`, `--- ${oldPath}`, `+++ ${newPath}`, ...hunks].join('\n');
 }
 
+function renderFallbackSourceWindows(
+  file: string,
+  source: string | undefined,
+  changes: BehaviorGroup['changes'],
+  maxCharacters: number,
+): string {
+  if (!source || maxCharacters <= 0) return '';
+  const lines = source.split(/\r?\n/);
+  const ranges = changes
+    .map((change) => ({
+      start: change.evidence.newStart ?? change.evidence.oldStart ?? 1,
+      end: change.evidence.newEnd ?? change.evidence.oldEnd ?? change.evidence.newStart ?? change.evidence.oldStart ?? 1,
+    }))
+    .sort((left, right) => left.start - right.start);
+  const windows: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const next = { start: Math.max(1, range.start - 12), end: Math.min(lines.length, range.end + 12) };
+    const previous = windows[windows.length - 1];
+    if (previous && next.start <= previous.end + 1) previous.end = Math.max(previous.end, next.end);
+    else windows.push(next);
+  }
+  const rendered = [`SOURCE_FILE: ${file}`];
+  for (const window of windows) {
+    for (let line = window.start; line <= window.end; line++) rendered.push(`${line}: ${lines[line - 1] ?? ''}`);
+  }
+  return rendered.join('\n').slice(0, maxCharacters);
+}
+
 function retrievalDiagnostics(input: {
   expectedFiles: string[];
   changedFiles: ReadonlySet<string>;
@@ -122,7 +150,7 @@ function retrievalDiagnostics(input: {
   }));
 }
 
-const TEST_FILE_PATTERN = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i;
+const TEST_FILE_PATTERN = /(?:^|[./_-])(?:tests?|specs?)(?:[./_-]|$)/i;
 
 function groupedReviewUnits(input: {
   repository: string;
@@ -142,12 +170,19 @@ function groupedReviewUnits(input: {
   for (const group of plan.groups) {
     const changes = group.changes.filter(change => !fallbackPatchHashes.has(change.evidence.patchHash));
     if (!changes.length) continue;
-    const key = [...new Set(changes.map(change => change.file))].sort().join('\n');
-    const previous = merged.get(key);
-    merged.set(key, { ...group, changes: [...(previous?.changes ?? []), ...changes],
-      riskSignals: [...new Set([...(previous?.riskSignals ?? []), ...group.riskSignals])],
-      confidence: previous?.confidence === 'medium' ? 'medium' : group.confidence,
-    });
+    const partitions = new Map<'production' | 'test', BehaviorGroup['changes']>();
+    for (const change of changes) {
+      const kind = TEST_FILE_PATTERN.test(change.file) ? 'test' : 'production';
+      partitions.set(kind, [...(partitions.get(kind) ?? []), change]);
+    }
+    for (const [kind, partition] of partitions) {
+      const key = `${kind}:${[...new Set(partition.map(change => change.file))].sort().join('\n')}`;
+      const previous = merged.get(key);
+      merged.set(key, { ...group, changes: [...(previous?.changes ?? []), ...partition],
+        riskSignals: [...new Set([...(previous?.riskSignals ?? []), ...group.riskSignals])],
+        confidence: previous?.confidence === 'medium' ? 'medium' : group.confidence,
+      });
+    }
   }
   const behaviorUnits: ReviewUnit[] = [];
   for (const group of merged.values()) {
@@ -184,7 +219,10 @@ function groupedReviewUnits(input: {
       fallbackChangesByFile.get(unit.file)?.has(change.evidence.patchHash));
     const group: BehaviorGroup = { id: unit.file, anchor: unit.file, changes, context: [], riskSignals: [], confidence: 'low' };
     const context = renderGroupContext({ group, graph: plan.graph, sources, maxCharacters: Math.max(0, maxCharacters - unit.diff.length), contextExclude });
-    return { ...unit, reference: context.text ? `${context.text}\n\n${sources[unit.file]?.newSource ?? ''}` : undefined };
+    const source = renderFallbackSourceWindows(unit.file, sources[unit.file]?.newSource, changes,
+      Math.max(0, maxCharacters - unit.diff.length - context.text.length - 2));
+    const reference = [context.text, source].filter(Boolean).join('\n\n');
+    return { ...unit, reference: reference || undefined };
   });
   const covered = new Set(plan.changes.map(change => change.file));
   return [...behaviorUnits, ...fallbackUnits, ...fileReviewUnits(fileDiffs, new Set([...fileDiffs.keys()].filter(file => !covered.has(file))))];

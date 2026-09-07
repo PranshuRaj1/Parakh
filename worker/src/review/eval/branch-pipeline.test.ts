@@ -192,7 +192,7 @@ describe('branch pipeline adapter', () => {
     expect(reviewDiff.mock.calls[0][0]).toBe('README.md');
     expect(reviewDiff.mock.calls[0][1]).toContain('@@ -1 +1 @@');
     expect(reviewDiff.mock.calls[0][1]).not.toBe(rawDiff);
-    expect(reviewDiff.mock.calls[0][4]).toBe('new');
+    expect(reviewDiff.mock.calls[0][4]).toContain('SOURCE_FILE: README.md');
     expect(reviewBehaviorGroup).not.toHaveBeenCalled();
     expect(output.providerCalls).toBe(1);
   });
@@ -280,6 +280,62 @@ describe('branch pipeline adapter', () => {
     expect(reviewDiff.mock.calls[0][1]).toContain('@@ -1 +1 @@');
     expect(reviewDiff.mock.calls[0][1]).not.toContain('@@ -3,3 +3,3 @@');
     expect(output.providerCalls).toBe(2);
+  });
+
+  it('bounds fallback source context around demoted hunks', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = vi.fn(); } },
+      review: {
+        parseDiffByFile: () => new Map([['README.md', 'raw file diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+    const source = [...Array(100)].map((_, index) => `line-${index + 1}`).join('\n');
+    await pipeline.review({
+      ...testCase,
+      diff: ['diff --git a/README.md b/README.md', '--- a/README.md', '+++ b/README.md', '@@ -1 +1 @@', '-old', '+new'].join('\n'),
+      files: { 'README.md': source },
+    }, { ...config, contextBudget: 1000 });
+
+    const reference = reviewDiff.mock.calls[0][4] as string;
+    expect(reference).toContain('line-1');
+    expect(reference).not.toContain('line-100');
+    expect(reference.length).toBeLessThan(source.length);
+  });
+
+  it('keeps connected test changes out of the production behavior unit', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['src/service.ts', 'service diff'], ['tests/service.test.ts', 'test diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+    await pipeline.review({
+      ...testCase,
+      diff: [
+        'diff --git a/src/service.ts b/src/service.ts', '--- a/src/service.ts', '+++ b/src/service.ts',
+        '@@ -1,3 +1,3 @@', ' export function save(value) {', '-  return value;', '+  return value.trim();', ' }',
+        'diff --git a/tests/service.test.ts b/tests/service.test.ts', '--- a/tests/service.test.ts', '+++ b/tests/service.test.ts',
+        '@@ -1,3 +1,3 @@', " import { save } from '../src/service';", "-expect(save(' x')).toBe(' x');", "+expect(save(' x')).toBe('x');",
+      ].join('\n'),
+      files: {
+        'src/service.ts': 'export function save(value) {\n  return value.trim();\n}',
+        'tests/service.test.ts': "import { save } from '../src/service';\nexpect(save(' x')).toBe('x');",
+      },
+    }, { ...config, contextBudget: 12000 });
+
+    expect(reviewBehaviorGroup.mock.calls).toHaveLength(1);
+    expect(reviewBehaviorGroup.mock.calls[0][0]).toContain('FILE: src/service.ts');
+    expect(reviewBehaviorGroup.mock.calls[0][0]).not.toContain('FILE: tests/service.test.ts');
+    expect(reviewDiff).toHaveBeenCalledWith('tests/service.test.ts', expect.any(String), [], expect.anything(), expect.anything());
   });
 
   it('reviews the frozen diff with the branch modules', async () => {

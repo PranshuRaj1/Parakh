@@ -40,7 +40,9 @@ export function comparisonKey(report: EvalReport): string | null {
 }
 
 export function runScore(report: EvalReport): number | null {
-  const scores = report.cases.map(item => item.comparison.newMetrics.strictF1)
+  const scores = report.cases
+    .filter(item => item.assessment !== 'judge_unstable')
+    .map(item => item.comparison.newMetrics.strictF1)
     .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
   return scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null;
 }
