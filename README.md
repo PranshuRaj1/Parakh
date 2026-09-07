@@ -14,28 +14,30 @@ This README is the entry point. For the deep story of how the pipeline evolved a
 
 Parakh uses one `parakh-worker` deployable with three Cloudflare Worker handlers:
 
-```
-GitHub webhook ──► fetch handler ──► enqueue ──►┐
-dashboard API  ──► fetch handler ──► enqueue ──►┤
-cron (every min)──► scheduled handler ─────────►┤
-                                               ▼
-                                   parakh-watchdog queue
-                                    (max_retries 50)
-                                               ▼
-                                       queue handler
-                                    REVIEW / COMMENT_RESPONSE
-                                    / CONTRADICTION jobs
-                                               ▼
-                        ┌───────────────────────────────────────┐
-                        │ Neon Postgres   durable truth, rules,  │
-                        │                 reviews, step events   │
-                        │ Upstash Redis   checkpoints, locks,    │
-                        │                 key cooldowns, tokens  │
-                        │ Gemini → Groq → CF AI → OpenRouter     │
-                        │                 LLM provider chain     │
-                        │ GitHub API      reviews, comments,     │
-                        │                 reactions              │
-                        └───────────────────────────────────────┘
+```mermaid
+flowchart TD
+    GH[GitHub webhook]
+    UI[Dashboard API]
+    CRON[Minutely cron]
+
+    GH --> FETCH[Fetch handler]
+    UI --> FETCH
+    CRON --> SCHEDULED[Scheduled handler]
+    FETCH --> QUEUE[parakh-watchdog queue<br/>max retries: 50]
+    SCHEDULED --> QUEUE
+    QUEUE --> WORKER[Queue handler]
+    WORKER --> REVIEW[Review jobs]
+    WORKER --> COMMENT[Comment response jobs]
+    WORKER --> CONTRA[Contradiction jobs]
+
+    REVIEW --> DB[(Neon Postgres<br/>durable truth, rules, reviews, events)]
+    REVIEW --> REDIS[(Upstash Redis<br/>checkpoints, locks, cooldowns, tokens)]
+    REVIEW --> LLM[Gemini → Groq → Cloudflare AI → OpenRouter]
+    REVIEW --> GITHUB[GitHub API<br/>reviews, comments, reactions]
+    COMMENT --> DB
+    COMMENT --> LLM
+    CONTRA --> DB
+    CONTRA --> LLM
 ```
 
 The three invocation contexts are:
@@ -43,6 +45,8 @@ The three invocation contexts are:
 - `fetch`: the webhook endpoint (`POST /webhook`) and dashboard APIs for rules, retries, repository connections, and user LLM keys. Webhooks verify the signature, acknowledge the event, persist the required state, and enqueue work. Fetch handlers do not run reviews.
 - `queue`: the `parakh-watchdog` queue consumer runs every job in resumable slices. This is where reviews, comment intents, and contradiction checks actually run.
 - `scheduled`: a minutely cron is the watchdog. It sweeps stalled reviews, prunes expired reasoning, and auto-resumes daily-quota-paused reviews.
+
+The important boundary is deliberate: fetch acknowledges quickly, the queue owns resumable work, and cron repairs work that could not finish. No webhook handler runs a multi-file LLM review directly.
 
 ## Repo layout
 
@@ -103,24 +107,135 @@ webhook issue_comment.created
 
 **The REVIEW job** (one queue delivery equals one resumable slice):
 
-```
-acquire Redis lock (fresh heartbeat skips, stale lock is stolen)
-load SHA-pinned diff (immutable between deliveries)
-load learned rules and repository conventions
-plan full or incremental execution mode
-start stage events (FETCHING_DIFF, LOADING_RULES, REVIEWING_FILES, ...)
-budget = SubrequestBudget(44)
-for each batch of files (concurrency 2):
-  per file: bounded diff + file context → provider chain → findings
-  verify findings against full file content → reconcile with prior findings
-  save per-file state to Redis
-  heartbeat + refresh lock + update live pointer
-  on budget exceeded → checkpoint and throw, queue redelivers
-when all files done:
-  finalizeReview: score → upsert overview → post anchored findings → reactions
+```mermaid
+flowchart TD
+    LOCK[Acquire Redis lock] --> SNAP[Load SHA-pinned diff]
+    SNAP --> RULES[Load learned rules and repository conventions]
+    RULES --> PLAN[Plan full or incremental execution]
+    PLAN --> EVENTS[Write stage events]
+    EVENTS --> BUDGET[Reserve SubrequestBudget 44]
+    BUDGET --> BATCH[Process file batch<br/>concurrency: 2]
+    BATCH --> INPUT[Bounded diff + relevant context]
+    INPUT --> PROVIDER[Ordered LLM provider chain]
+    PROVIDER --> VERIFY[Verify findings against pinned source]
+    VERIFY --> SAVE[Save findings and checkpoint to Redis]
+    SAVE --> HEARTBEAT[Refresh lock and live progress]
+    HEARTBEAT --> MORE{More work?}
+    MORE -->|Yes| BUDGET
+    MORE -->|Budget or timeout| CHECKPOINT[Checkpoint and redeliver queue job]
+    MORE -->|No| FINALIZE[Score, reconcile, post anchored findings, react]
 ```
 
 For the full reliability story behind this, see [Reliability model](#reliability-model) and [architecture.md](architecture.md).
+
+## Semantic diff and behavior grouping
+
+The review planner has two jobs that the old file-only path could not perform reliably:
+
+1. Understand which changed hunks represent meaningful semantic changes.
+2. Decide which changes should be reviewed together because they can affect the same behavior.
+
+The planner is deterministic. The model does not invent group membership. It receives exact changed hunks, extracted symbols, graph relationships, bounded unchanged context, and the fallback evidence selected by the planner.
+
+```mermaid
+flowchart LR
+    DIFF[Unified diff] --> HUNKS[Parse hunks and patch hashes]
+    HUNKS --> SYMBOLS[Map hunks to symbols<br/>confidence: high, medium, low]
+    SYMBOLS --> INDEX[Build commit-pinned symbol index]
+    INDEX --> GRAPH[Build typed graph<br/>calls, imports, types, config, tests]
+    GRAPH --> BRIDGES[Find unchanged bridge symbols<br/>context evidence only]
+    BRIDGES --> GROUPS[Build bounded behavior groups]
+    GROUPS --> PROD[Production behavior units]
+    GROUPS --> TEST[Test review units]
+    GROUPS --> DEMOTE[Demoted changes]
+    DEMOTE --> FALLBACK[Hunk-scoped file fallback]
+    PROD --> REVIEW[Provider review]
+    TEST --> REVIEW
+    FALLBACK --> REVIEW
+    REVIEW --> VERIFY[Finding verification and adjudication]
+```
+
+### Grouping rules
+
+- Changed symbols are group members. Unchanged symbols are bridge evidence and context, not silently added as changed work.
+- Strong typed edges can connect changes through calls, imports, inheritance, type references, configuration relationships, and test relationships.
+- Context is bounded by the review unit budget and is labeled as unchanged dependency context.
+- Groups split deterministically when their evidence or context exceeds limits.
+- Low-confidence or demoted changes use file review, but fallback receives only the demoted patch hunks and nearby source windows. Reliable grouped hunks are not reviewed twice.
+- Production and test changes are separated before final review units are rendered. Test files include `test`, `tests`, `spec`, and `specs` path segments.
+- Group IDs are derived from stable repository and anchor identities so replay and checkpoint behavior remain deterministic.
+
+### Why the planner keeps a fallback
+
+Semantic grouping is allowed to be conservative. A parser or graph edge that cannot be trusted should not cause a changed hunk to disappear. The fallback preserves exact diff coverage while the diagnostics explain whether a file was missing, symbols were not extracted, graph edges were absent, context was not rendered, or a unit was truncated.
+
+## Evaluation workflow
+
+Grouping changes are evaluated as a paired comparison between the old file strategy and the new grouped strategy. The report keeps reviewer output, judge verdicts, retrieval diagnostics, fallback reasons, group counts, provider calls, latency, and token usage together.
+
+```mermaid
+flowchart TD
+    DEV[15-case development corpus<br/>martian-selected-context-v1.json] --> RUNDEV[npm run eval]
+    RUNDEV --> REPORT[Comparison report]
+    REPORT --> STABLE{Stable-case result improves?}
+    STABLE -->|No| DIAGNOSE[Use development diagnostics<br/>only; change one cause at a time]
+    DIAGNOSE --> RUNDEV
+    STABLE -->|Yes| HOLDOUT[5-case holdout corpus<br/>martian-grouping-holdout-v1.json]
+    HOLDOUT --> RUNHOLDOUT[npm run eval:handout]
+    RUNHOLDOUT --> GENERALIZE[Generalization check<br/>never a tuning set]
+```
+
+### Evaluation commands
+
+Run the explicit development command for the expanded labeled corpus:
+
+```bash
+npm run eval
+```
+
+This runs 15 cases and uses `expectedRelatedFiles` labels for retrieval recall diagnostics.
+
+Run the holdout only after the development comparison improves:
+
+```bash
+npm run eval:handout
+```
+
+This runs five cases selected for grouping generalization. Do not tune grouping thresholds, edge rules, or fragmentation behavior from these cases.
+
+The stateful command remains available when intentionally resuming the last comparison:
+
+```bash
+npm run eval:latest
+```
+
+Because `eval:latest` reads `.eval-cache/last-comparison.json`, it can resume whichever corpus was run most recently. Use `npm run eval` and `npm run eval:handout` when the corpus must be unambiguous.
+
+Useful supporting commands:
+
+```bash
+npm run eval:dashboard   # regenerate the cached HTML dashboard
+npm run eval:context     # expand a corpus with unchanged context files
+npm run eval:reviews     # lower-level comparison runner with explicit flags
+```
+
+### What to compare
+
+The primary quality score is stable-case strict F1. Cases assessed as `judge_unstable` remain visible but are excluded from headline aggregate metrics. Always inspect the quality and operational metrics together:
+
+| Metric | Question it answers |
+|---|---|
+| Stable-only strict F1 | Did the new strategy find and correctly classify more defects when judging was consistent? |
+| Precision and recall | Did additional context improve coverage without creating unsupported findings? |
+| Retrieval recall | Did expected unchanged related files reach the rendered review context? |
+| Fallback rate and reasons | How often did the planner distrust grouping, and why? |
+| Group count and behavior calls | Is the graph connecting related changes or fragmenting them? |
+| Input tokens | Is grouping reducing repeated context or adding overhead? |
+| Judge disagreement | Is the verdict protocol stable enough to trust the comparison? |
+
+Reports are written to `.eval-cache/reports/latest-comparison.md` and `.eval-cache/reports/latest-comparison.json`. The generated dashboard is `.eval-cache/reports/index.html`. The detailed implementation and decision history is [docs/eval-grouping-iteration-log.html](docs/eval-grouping-iteration-log.html).
+
+The current evaluation policy is deliberately conservative: improve the 15-case development corpus first, then use the five-case holdout as a later generalization check. Do not combine their headline scores.
 
 ## Tech stack and why
 
@@ -162,6 +277,19 @@ Within a pool, keys rotate one by one. A key that hits a rate limit gets parked 
 - if the last configured provider is daily-quota'd, the review parks as `PAUSED_DAILY_QUOTA` instead of retry-thrashing, and the cron auto-resumes it after 12 hours (which always crosses the quota reset).
 
 Embeddings follow their own chain: providers without an embedding endpoint (OpenRouter) are skipped, and the first provider that can embed wins.
+
+### Provider key pools and quota recovery
+
+Provider keys are configured as comma-separated pools. The clients rotate through the pool when a key is rate-limited, park unavailable keys in Redis, and avoid immediately retrying a key that is cooling down.
+
+```dotenv
+GEMINI_API_KEYS=key-one,key-two
+GROQ_API_KEYS=key-one,key-two
+```
+
+Use `GEMINI_API_KEY` or `GROQ_API_KEY` for a single-key setup. The plural variables take precedence when present. Keep the values in `worker/.dev.vars` or the appropriate secret store, never in source control.
+
+The eval judge uses Groq's `openai/gpt-oss-120b` by default. A provider response that includes a daily token limit is kept in the error output so the affected organization, usage, request size, and retry window remain diagnosable. A quota failure does not invalidate completed eval passes: rerunning the same eval resumes cached reviewer and judge work.
 
 ### Review context and finding lifecycle
 
@@ -273,6 +401,8 @@ To stop incremental execution, set `INCREMENTAL_REVIEW_ENABLED=false` in `worker
 ```bash
 npm test                # all workspaces (vitest)
 npm run test:pipeline   # pre-push smoke test, run automatically on git push
+npm run test:memory     # Redis, checkpoint, cooldown, and memory smoke tests
+node node_modules/vitest/vitest.mjs run worker/src/review/eval
 ```
 
 ## Docs map
@@ -281,4 +411,10 @@ npm run test:pipeline   # pre-push smoke test, run automatically on git push
 |---|---|
 | [architecture.md](architecture.md) | Iteration-by-iteration story of how the review pipeline got here. |
 | [greptile-architecture.md](greptile-architecture.md) | Competitive audit of Greptile's memory and rule lifecycle. |
+| [docs/semantic-diff-behavior-grouping-plan.md](docs/semantic-diff-behavior-grouping-plan.md) | Design and rollout plan for semantic changes, graph grouping, bounded execution, and fallback. |
+| [docs/grouping-strategy-research.md](docs/grouping-strategy-research.md) | Research-backed diagnosis of grouping, retrieval, fallback cost, and evaluation metrics. |
+| [docs/retrieval-ground-truth-research.md](docs/retrieval-ground-truth-research.md) | Retrieval labels, unchanged context, and ground-truth design. |
+| [docs/pr-review-evals-v1-plan.md](docs/pr-review-evals-v1-plan.md) | Eval corpus, paired pipeline comparison, adjudication, judge protocol, and metrics. |
+| [docs/change-impact-graphs-grouping-report.html](docs/change-impact-graphs-grouping-report.html) | Graph-based impact grouping research and implementation diagnosis. |
+| [docs/eval-grouping-iteration-log.html](docs/eval-grouping-iteration-log.html) | Append-only implementation log with hypotheses, changes, verification, reports, and decisions. |
 | [dashboard/README.md](dashboard/README.md) | Next.js bootstrap notes. |
