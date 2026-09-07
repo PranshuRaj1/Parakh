@@ -443,6 +443,10 @@ pnpm exec vitest run worker/src/indexer/parser.test.ts worker/src/indexer/edges.
         <p><strong>Generated corpus:</strong> <code>worker/src/review/eval/fixtures/martian-selected-context-v1.json</code> parses successfully, contains 15 cases, 39 expected related-file labels, and no missing labeled paths.</p>
         <p><strong>Current implementation state:</strong> The quality improvements in the new plan have not been implemented. In particular, full-file fallback duplication, zero-recall extraction and edge gaps, group fragmentation, production/test mixing, and unstable-case score handling remain open.</p>
         <div class="callout warning"><strong>Verification gate.</strong> The latest metrics are diagnostic evidence, not proof of a completed fix. Each planned change requires a focused regression test and a fresh expanded-corpus eval with cache identity, token counts, retrieval paths, group counts, provider calls, and judge status recorded.</div>
+        <h3>Holdout execution update</h3>
+        <p><strong>Fixture validation.</strong> The holdout initially failed because defect IDs <code>martian-defect-0010</code> and <code>martian-defect-0011</code> were reused across cases. The 14 defects now use unique corpus-local IDs while preserving their case assignments and content.</p>
+        <p><strong>Execution.</strong> The exact holdout command passed corpus validation, created its temporary worktrees, completed all four reviewer runs for the first case, and then stopped during Groq judging because the configured model reached its daily token limit at approximately 198,245 of 200,000 tokens.</p>
+        <p><strong>Interpretation.</strong> This is an external judge-capacity failure, not evidence about grouping quality. Completed reviewer and judge work is cached, so rerunning the same command should resume cached passes. The holdout result remains incomplete until all five cases are judged and reports are generated.</p>
       </section>
 
       <section id="next">

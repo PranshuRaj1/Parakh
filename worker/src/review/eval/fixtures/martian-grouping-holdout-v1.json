@@ -128,7 +128,7 @@
   ],
   "defects": [
     {
-      "id": "martian-defect-0009",
+      "id": "martian-grouping-holdout-defect-0001",
       "caseId": "martian-sentry-94376-feat-upsampling-support-upsampled-error-count-with-performan",
       "claim": "In _set_sample_rate_from_error_sampling(), the check `if client_sample_rate:` treats 0.0 as falsy, so a sample_rate of 0.0 is silently skipped and never set on normalized_data.",
       "evidence": "In _set_sample_rate_from_error_sampling(), the check `if client_sample_rate:` treats 0.0 as falsy, so a sample_rate of 0.0 is silently skipped and never set on normalized_data.",
@@ -137,7 +137,7 @@
       "fixCondition": "Verify that the reviewer identifies: In _set_sample_rate_from_error_sampling(), the check `if client_sample_rate:` treats 0.0 as falsy, so a sample_rate of 0"
     },
     {
-      "id": "martian-defect-0010",
+      "id": "martian-grouping-holdout-defect-0002",
       "caseId": "martian-sentry-94376-feat-upsampling-support-upsampled-error-count-with-performan",
       "claim": "Using Python’s built-in hash() to build cache keys is non-deterministic across processes (hash randomization), so keys won’t match across workers and invalidate_upsampling_cache may fail to delete them. Use a deterministic serialization of project_ids for the cache key.",
       "evidence": "Using Python’s built-in hash() to build cache keys is non-deterministic across processes (hash randomization), so keys won’t match across workers and invalidate_upsampling_cache may fail to delete them. Use a deterministic serialization of project_ids for the cache key.",
@@ -146,7 +146,7 @@
       "fixCondition": "Verify that the reviewer identifies: Using Python’s built-in hash() to build cache keys is non-deterministic across processes (hash randomization), so keys w"
     },
     {
-      "id": "martian-defect-0011",
+      "id": "martian-grouping-holdout-defect-0003",
       "caseId": "martian-sentry-94376-feat-upsampling-support-upsampled-error-count-with-performan",
       "claim": "The upsampling eligibility check passes the outer dataset instead of the actual dataset used by scoped_dataset. In paths where the query ultimately runs against discover (e.g., dashboard split) while the original dataset is metrics, upsampling may be skipped even when all projects are allowlisted.",
       "evidence": "The upsampling eligibility check passes the outer dataset instead of the actual dataset used by scoped_dataset. In paths where the query ultimately runs against discover (e.g., dashboard split) while the original dataset is metrics, upsampling may be skipped even when all projects are allowlisted.",
@@ -155,7 +155,7 @@
       "fixCondition": "Verify that the reviewer identifies: The upsampling eligibility check passes the outer dataset instead of the actual dataset used by scoped_dataset. In paths"
     },
     {
-      "id": "martian-defect-0024",
+      "id": "martian-grouping-holdout-defect-0004",
       "caseId": "martian-sentry-77754-feat-ecosystem-implement-cross-system-issue-synchronization",
       "claim": "The AssignmentSource dataclass uses queued: datetime = timezone.now() as a default field value, which evaluates timezone.now() once at class definition time and shares that single datetime instance across all objects.",
       "evidence": "The AssignmentSource dataclass uses queued: datetime = timezone.now() as a default field value, which evaluates timezone.now() once at class definition time and shares that single datetime instance across all objects.",
@@ -164,7 +164,7 @@
       "fixCondition": "Verify that the reviewer identifies: The AssignmentSource dataclass uses queued: datetime = timezone.now() as a default field value, which evaluates timezone"
     },
     {
-      "id": "martian-defect-0025",
+      "id": "martian-grouping-holdout-defect-0005",
       "caseId": "martian-sentry-77754-feat-ecosystem-implement-cross-system-issue-synchronization",
       "claim": "to_dict() returns a datetime for queued; if this dict is passed in task kwargs (e.g., via apply_async), JSON serialization may fail depending on the serializer, which can cause enqueue errors.",
       "evidence": "to_dict() returns a datetime for queued; if this dict is passed in task kwargs (e.g., via apply_async), JSON serialization may fail depending on the serializer, which can cause enqueue errors.",
@@ -173,7 +173,7 @@
       "fixCondition": "Verify that the reviewer identifies: to_dict() returns a datetime for queued; if this dict is passed in task kwargs (e.g., via apply_async), JSON serializati"
     },
     {
-      "id": "martian-defect-0010",
+      "id": "martian-grouping-holdout-defect-0006",
       "caseId": "martian-grafana-106778-notification-rule-processing-engine",
       "claim": "The rendered GrafanaRuleListItem is missing the required key prop for React list items. This can cause rendering issues when the list order changes.",
       "evidence": "The rendered GrafanaRuleListItem is missing the required key prop for React list items. This can cause rendering issues when the list order changes.",
@@ -182,7 +182,7 @@
       "fixCondition": "Verify that the reviewer identifies: The rendered GrafanaRuleListItem is missing the required key prop for React list items. This can cause rendering issues "
     },
     {
-      "id": "martian-defect-0011",
+      "id": "martian-grouping-holdout-defect-0007",
       "caseId": "martian-grafana-106778-notification-rule-processing-engine",
       "claim": "RuleActionsButtons is invoked with only promRule, but SilenceGrafanaRuleDrawer inside RuleActionsButtons still depends on a Grafana Ruler rule being present, so for Grafana rules coming from list views the 'Silence notifications' menu entry (now driven by Grafana Prom abilities) will toggle showSilenceDrawer without ever rendering the drawer. This means clicking 'Silence notifications' for these rules has no visible effect, even when abilities indicate silencing is allowed.",
       "evidence": "RuleActionsButtons is invoked with only promRule, but SilenceGrafanaRuleDrawer inside RuleActionsButtons still depends on a Grafana Ruler rule being present, so for Grafana rules coming from list views the 'Silence notifications' menu entry (now driven by Grafana Prom abilities) will toggle showSilenceDrawer without ever rendering the drawer. This means clicking 'Silence notifications' for these rules has no visible effect, even when abilities indicate silencing is allowed.",
@@ -191,7 +191,7 @@
       "fixCondition": "Verify that the reviewer identifies: RuleActionsButtons is invoked with only promRule, but SilenceGrafanaRuleDrawer inside RuleActionsButtons still depends o"
     },
     {
-      "id": "martian-defect-0004",
+      "id": "martian-grouping-holdout-defect-0008",
       "caseId": "martian-cal.com-10967-fix-handle-collective-multiple-host-on-destinationcalendar",
       "claim": "A null reference occurs in GoogleCalendarService.createEvent() and updateEvent() when mainHostDestinationCalendar is destructured from evt.destinationCalendar but evt.destinationCalendar is null or an empty array, causing mainHostDestinationCalendar to be undefined.",
       "evidence": "A null reference occurs in GoogleCalendarService.createEvent() and updateEvent() when mainHostDestinationCalendar is destructured from evt.destinationCalendar but evt.destinationCalendar is null or an empty array, causing mainHostDestinationCalendar to be undefined.",
@@ -200,7 +200,7 @@
       "fixCondition": "Verify that the reviewer identifies: A null reference occurs in GoogleCalendarService.createEvent() and updateEvent() when mainHostDestinationCalendar is des"
     },
     {
-      "id": "martian-defect-0005",
+      "id": "martian-grouping-holdout-defect-0009",
       "caseId": "martian-cal.com-10967-fix-handle-collective-multiple-host-on-destinationcalendar",
       "claim": "Logic error: when externalCalendarId is provided, you're searching for a calendar where externalId === externalCalendarId, but this will always fail since you're looking for a calendar that matches itself. Should likely find by credentialId or use different logic.",
       "evidence": "Logic error: when externalCalendarId is provided, you're searching for a calendar where externalId === externalCalendarId, but this will always fail since you're looking for a calendar that matches itself. Should likely find by credentialId or use different logic.",
@@ -209,7 +209,7 @@
       "fixCondition": "Verify that the reviewer identifies: Logic error: when externalCalendarId is provided, you're searching for a calendar where externalId === externalCalendarI"
     },
     {
-      "id": "martian-defect-0006",
+      "id": "martian-grouping-holdout-defect-0010",
       "caseId": "martian-cal.com-10967-fix-handle-collective-multiple-host-on-destinationcalendar",
       "claim": "Logic inversion in organization creation: The slug property is now conditionally set when IS_TEAM_BILLING_ENABLED is true, instead of when it's false as originally intended. This change, combined with requestedSlug still being set when IS_TEAM_BILLING_ENABLED is true, results in both properties being set when billing is enabled, and neither when disabled",
       "evidence": "Logic inversion in organization creation: The slug property is now conditionally set when IS_TEAM_BILLING_ENABLED is true, instead of when it's false as originally intended. This change, combined with requestedSlug still being set when IS_TEAM_BILLING_ENABLED is true, results in both properties being set when billing is enabled, and neither when disabled",
@@ -218,7 +218,7 @@
       "fixCondition": "Verify that the reviewer identifies: Logic inversion in organization creation: The slug property is now conditionally set when IS_TEAM_BILLING_ENABLED is tru"
     },
     {
-      "id": "martian-defect-0007",
+      "id": "martian-grouping-holdout-defect-0011",
       "caseId": "martian-cal.com-10967-fix-handle-collective-multiple-host-on-destinationcalendar",
       "claim": "The Calendar interface now requires createEvent(event, credentialId), but some implementations (e.g., Lark/Office365) still declare createEvent(event) only—this breaks the interface contract (also applies to other locations in the PR).",
       "evidence": "The Calendar interface now requires createEvent(event, credentialId), but some implementations (e.g., Lark/Office365) still declare createEvent(event) only—this breaks the interface contract (also applies to other locations in the PR).",
@@ -227,7 +227,7 @@
       "fixCondition": "Verify that the reviewer identifies: The Calendar interface now requires createEvent(event, credentialId), but some implementations (e.g., Lark/Office365) st"
     },
     {
-      "id": "martian-defect-0008",
+      "id": "martian-grouping-holdout-defect-0012",
       "caseId": "martian-cal.com-10967-fix-handle-collective-multiple-host-on-destinationcalendar",
       "claim": "The `credential` may be undefined when passed to `updateEvent` if `reference.credentialId` is set but the credential is not found. This can lead to a runtime error when `updateEvent` is called with an undefined credential, which should be handled to prevent crashes.",
       "evidence": "The `credential` may be undefined when passed to `updateEvent` if `reference.credentialId` is set but the credential is not found. This can lead to a runtime error when `updateEvent` is called with an undefined credential, which should be handled to prevent crashes.",
@@ -236,7 +236,7 @@
       "fixCondition": "Verify that the reviewer identifies: The `credential` may be undefined when passed to `updateEvent` if `reference.credentialId` is set but the credential is "
     },
     {
-      "id": "martian-defect-0011",
+      "id": "martian-grouping-holdout-defect-0013",
       "caseId": "martian-keycloak-37038-add-groups-resource-type-and-scopes-to-authorization-schema",
       "claim": "In GroupPermissionsV2.canManage(), the permission fallback checks for both VIEW and MANAGE scopes (hasPermission(null, AdminPermissionsSchema.VIEW, AdminPermissionsSchema.MANAGE)), but canManage() should only grant access for MANAGE scope, not VIEW. This means users with only VIEW permission on groups can pass the canManage() check, granting them write access they should not have. The canView() method correctly checks both VIEW and MANAGE, but canManage() should only check MANAGE.",
       "evidence": "In GroupPermissionsV2.canManage(), the permission fallback checks for both VIEW and MANAGE scopes (hasPermission(null, AdminPermissionsSchema.VIEW, AdminPermissionsSchema.MANAGE)), but canManage() should only grant access for MANAGE scope, not VIEW. This means users with only VIEW permission on groups can pass the canManage() check, granting them write access they should not have. The canView() method correctly checks both VIEW and MANAGE, but canManage() should only check MANAGE.",
@@ -245,7 +245,7 @@
       "fixCondition": "Verify that the reviewer identifies: In GroupPermissionsV2.canManage(), the permission fallback checks for both VIEW and MANAGE scopes (hasPermission(null, A"
     },
     {
-      "id": "martian-defect-0012",
+      "id": "martian-grouping-holdout-defect-0014",
       "caseId": "martian-keycloak-37038-add-groups-resource-type-and-scopes-to-authorization-schema",
       "claim": "In getGroupIdsWithViewPermission, hasPermission is called with groupResource.getId() and the same groupResource.getId() is added to granted, but hasPermission resolves resources by name (treating the argument as a group id) and the GroupPermissionEvaluator contract says this method returns group IDs that are later used as UserModel.GROUPS and in getUsersCount group filters. This mismatch means per-group VIEW_MEMBERS/MANAGE_MEMBERS permissions may not yield the expected group IDs for filtering and counts, and evaluation may effectively only look at the type-level 'all-groups' resource; consider revisiting whether this should operate on the underlying group ids (resource names) instead so it aligns with the JPA queries and the interface contract.",
       "evidence": "In getGroupIdsWithViewPermission, hasPermission is called with groupResource.getId() and the same groupResource.getId() is added to granted, but hasPermission resolves resources by name (treating the argument as a group id) and the GroupPermissionEvaluator contract says this method returns group IDs that are later used as UserModel.GROUPS and in getUsersCount group filters. This mismatch means per-group VIEW_MEMBERS/MANAGE_MEMBERS permissions may not yield the expected group IDs for filtering and counts, and evaluation may effectively only look at the type-level 'all-groups' resource; consider revisiting whether this should operate on the underlying group ids (resource names) instead so it aligns with the JPA queries and the interface contract.",
