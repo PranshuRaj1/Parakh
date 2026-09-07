@@ -16,6 +16,8 @@
     "baseline:accept": "vite-node --script worker/src/review/baseline/generate-baseline.ts --accept",
     "eval:reviews": "vite-node --script worker/src/review/eval/run-evals.test-helper.ts --",
     "eval:latest": "vite-node --script worker/src/review/eval/run-latest.test-helper.ts --",
+    "eval": "vite-node --script worker/src/review/eval/run-latest.test-helper.ts -- --corpus worker/src/review/eval/fixtures/martian-selected-context-v1.json",
+    "eval:handout": "vite-node --script worker/src/review/eval/run-latest.test-helper.ts -- --corpus worker/src/review/eval/fixtures/martian-grouping-holdout-v1.json",
     "eval:dashboard": "vite-node --script worker/src/review/eval/dashboard-cli.test-helper.ts --",
     "eval:context": "vite-node --script worker/src/review/eval/expand-context.test-helper.ts --",
     "eval-dashboard:dev": "npm run dev --workspace @parakh/eval-dashboard",

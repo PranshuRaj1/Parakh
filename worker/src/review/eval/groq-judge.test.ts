@@ -42,6 +42,15 @@ describe('GroqJudgeTransport', () => {
     );
   });
 
+  it('preserves the complete daily quota response', async () => {
+    const body = JSON.stringify({ error: {
+      message: `Rate limit reached for model \`openai/gpt-oss-120b\` in organization \`org_test\` service tier \`on_demand\` on tokens per day (TPD): Limit 200000, Used 198968, Requested 1200. Please try again in 86400s. Full diagnostic tail.`,
+    } });
+    const request = vi.fn().mockResolvedValue(new Response(body, { status: 429 }));
+    const judge = new GroqJudgeTransport('secret', undefined, request, 0);
+    await expect(judge.judge('prompt')).rejects.toThrow(body);
+  });
+
   it('backs off and retries on a TPM rate limit with a delay hint', async () => {
     const request = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

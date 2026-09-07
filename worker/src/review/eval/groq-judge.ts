@@ -119,7 +119,7 @@ export class GroqJudgeTransport implements JudgeTransport {
           continue;
         }
         if (retryAfterMs > 0) {
-          throw new Error(`Groq judge quota wait exceeds retry limit; rerun the eval to resume cached passes. ${body.slice(0, 200)}`);
+          throw new Error(`Groq judge quota wait exceeds retry limit after trying ${this.apiKeys.length} configured key(s); rerun the eval to resume cached passes. ${body}`);
         }
         throw new Error(
           `Groq judge failed with status ${response.status}: ${body.slice(0, 400)}`
