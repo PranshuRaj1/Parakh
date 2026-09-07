@@ -63,6 +63,8 @@
       <a href="#failures">What went wrong</a>
       <a href="#hypotheses">Assumptions and hypotheses</a>
       <a href="#metrics">Eval evidence</a>
+      <a href="#plan-iteration-9">Iteration 9 plan</a>
+      <a href="#evidence-iteration-10">Latest eval evidence</a>
       <a href="#current">Current state</a>
       <a href="#next">Next iteration protocol</a>
       <a href="#sources">Sources</a>
@@ -174,6 +176,15 @@
             <p><strong>Fix.</strong> The behavior-group filter now tracks exact demoted change IDs. Low-confidence changes still receive file fallback, but reliable changes in the same file remain eligible for behavior-group review.</p>
             <p><strong>Verification.</strong> The targeted grouping and branch-pipeline suites passed: 23 tests passed across two test files. The full eval has not yet been rerun against this uncommitted fix, so the improvement is not yet measured.</p>
           </article>
+
+          <article class="event">
+            <h3>Iteration 10: add a grouping holdout corpus <span class="tag">2026-09-07</span></h3>
+            <p class="commit">Working tree, pending commit</p>
+            <p><strong>Changes.</strong> Added five additional real Martian benchmark cases to <code>martian-grouping-holdout-v1.json</code>, selecting multi-file changes from Sentry, Grafana, Cal.com, and Keycloak. The cases contain 7, 7, 14, 22, and 19 changed files, with 14 gold defects in total.</p>
+            <p><strong>Why.</strong> The original 15 cases are useful for tuning, but repeated tuning and evaluation on the same cases risks overfitting. The new five cases are held out for validation of grouping behavior and review quality.</p>
+            <p><strong>Policy.</strong> These cases are not mixed into the tuning corpus. They currently evaluate semantic grouping and final review outcomes. Retrieval recall is intentionally not reported until their unchanged context is expanded and labeled with the same ground-truth process as the 15-case corpus.</p>
+            <p><strong>Verification.</strong> The generated corpus parses successfully and contains exactly five pinned cases and 14 defects. The source cases retain their original commit SHAs and defect evidence.</p>
+          </article>
         </div>
       </section>
 
@@ -266,15 +277,156 @@
         </table>
       </section>
 
+      <section id="plan-iteration-9">
+        <h2>Iteration 9: quality improvement plan</h2>
+        <p class="meta">Planned 2026-09-07. No implementation from this plan has been applied yet. The logging change is committed in <code>307dbe2</code>; the quality work below starts from that verified baseline.</p>
+
+        <div class="callout warning"><strong>Decision.</strong> The next work must be staged in dependency order: first repair fallback routing, then inspect and repair symbol and graph coverage, then reduce fragmentation, then isolate test review, and finally change score interpretation for judge instability. Scoring weights will not be changed before retrieval and graph evidence explain the zero-recall cases.</div>
+
+        <h3>What is wrong now</h3>
+        <table>
+          <thead><tr><th>Problem</th><th>Current behavior</th><th>Why it is harmful</th><th>Evidence</th></tr></thead>
+          <tbody>
+            <tr><td>Duplicate full-file fallback</td><td><code>groupedReviewUnits</code> removes demoted changes from behavior groups, but creates fallback units with <code>fileReviewUnits(fileDiffs, fallbackFiles)</code>. That helper receives the complete file diff, not only the demoted hunks.</td><td>A file containing reliable grouped changes and demoted changes is sent through both paths. The model sees and reviews the reliable changes twice, inflating prompt tokens and potentially duplicating findings.</td><td><code>worker/src/review/eval/branch-pipeline.test-helper.ts:77-123</code>. Observed input grew from approximately 30,200 to 49,700 tokens.</td></tr>
+            <tr><td>Zero-recall retrieval</td><td>The plan can contain changed nodes and bridge context only when changed lines map to indexed symbols and indexed edges connect the symbols. The current indexer supports TypeScript, JavaScript, Python, Go, Java, and Lua declarations, but configuration files have no symbols. Edge resolution is primarily relative-path resolution plus exact name matching.</td><td>If the expected related file is absent from the graph, later ranking or prompt changes cannot retrieve it. A zero-recall result must therefore be diagnosed at extraction, edge construction, traversal, rendering, and truncation boundaries.</td><td>Sentry uptime expected files are <code>src/sentry/remote_subscriptions/models.py</code> and <code>src/sentry/conf/types/uptime.py</code>. Grafana SQL expected files are <code>pkg/expr/mathexp/exp.go</code> and <code>pkg/expr/mathexp/testing.go</code>. The current parser and edge code are in <code>worker/src/indexer/parser.ts</code> and <code>worker/src/indexer/edges.ts</code>.</td></tr>
+            <tr><td>Group fragmentation</td><td>The uptime case produces 28 groups and 13 provider calls. Strong connected components are formed only from current graph edges. Bridge traversal is capped at two hops, and the graph does not model several configuration, framework registration, Python import, or Go package relationships.</td><td>Related changes become separate review units, so shared behavior is not visible to one reviewer and the number of provider calls rises.</td><td><code>worker/src/review/grouping/graph.ts:6-110</code> and <code>group-builder.ts:8-154</code>. The case-level observation is recorded in the latest eval evidence.</td></tr>
+            <tr><td>Test and production mixing</td><td>Tests can be connected to implementation by matching changed identifiers. The eval renderer excludes test files from context in some paths, but test changes can still become primary changes or separate review units, and a group can contain both production and test evidence.</td><td>Findings about sleeps, test exception handling, and test-only mechanics can dominate the production behavior result. This makes the main score less representative of production correctness and encourages unrelated group fragmentation.</td><td><code>TEST_FILE_PATTERN</code> and the implementation/test pairing logic in <code>branch-pipeline.test-helper.ts:66</code> and <code>graph.ts:163-187</code>.</td></tr>
+            <tr><td>Judge instability</td><td>Two judge verdicts that disagree become <code>needs_human_review</code>. The case assessment can become <code>judge_unstable</code>, but the general report score still needs an explicit exclusion policy.</td><td>With only 15 cases, three unstable cases can move the headline F1 enough to obscure whether grouping improved. Treating them as ordinary scored cases confounds reviewer quality with judge variance.</td><td><code>worker/src/review/eval/adjudication.ts:6-41</code>, <code>metrics.ts:24-103</code>, and <code>orchestrator.test.ts:289-311</code>.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Implementation sequence</h3>
+        <ol>
+          <li><strong>Verify the committed baseline.</strong> Run the targeted grouping, branch-pipeline, adjudication, metrics, and orchestrator tests. Re-run the expanded corpus only with cache identity visible. Record the current per-case group count, fallback changes, file calls, behavior calls, rendered related files, input tokens, F1, and judge status before each code change.</li>
+          <li><strong>Make fallback hunk-scoped.</strong> Introduce one deterministic renderer that accepts a set of change IDs or patch hashes and emits only the corresponding unified hunks. In the grouped adapter, pass demoted change evidence to the file fallback unit. Preserve unchanged source context only when it is needed for those demoted hunks, and cap it independently. Do not use the full file diff when the file also has reliable grouped changes.</li>
+          <li><strong>Keep fallback ownership exact.</strong> Track primary evidence ownership by change ID and patch hash. Assert that each change is reviewed exactly once, either in one reliable behavior unit or in one fallback unit. A file may have multiple fallback hunks, but those hunks must not re-enter a behavior unit or an all-file fallback unit. Preserve a separate file-level fallback only for files with no planner-owned change evidence.</li>
+          <li><strong>Inspect zero recall before changing weights.</strong> Add a diagnostic snapshot for each expected file with: source present or absent, extracted symbols, changed-line to symbol mappings, indexed imports, indexed edges, graph edges, bridge paths, context nodes, rendered context markers, and truncation status. Run it for the Sentry uptime case and the Grafana SQL case. For the Sentry case, specifically inspect Python module imports, model/type references, configuration declarations, and test-to-production links. For Grafana, inspect Go package imports, receiver methods, type references, and test file relationships.</li>
+          <li><strong>Repair the smallest missing extraction seam.</strong> Prefer improving parser adapters and edge construction over score changes. Add explicit symbol kinds or relationship records for configuration and framework registration only where the fixture demonstrates a real missing relationship. Improve path resolution for the languages involved, preserve import aliases and package identity, and add tests that assert the exact expected edge or bridge path. Do not add broad same-directory edges as a substitute for semantic evidence.</li>
+          <li><strong>Reduce fragmentation with evidence-preserving connection rules.</strong> After extraction is correct, connect related changed nodes through verified calls, imports, type references, configuration keys, registration identifiers, and direct test coverage. Use bounded multi-hop traversal with deterministic ordering. Measure component purity and completeness before and after. If a component exceeds size limits, split by weakest cut or stable seeded expansion while keeping production behavior changes together and retaining explicit lineage.</li>
+          <li><strong>Separate production and test review.</strong> Classify files using the existing test path convention plus language-specific test conventions. Build production groups first. Attach test changes as a separate test-review group when they contain meaningful changed evidence. Permit an explicit production-to-test link in metadata for coverage context, but do not let test-only edges merge the primary production group. Give test groups their own calls, findings, and metrics so test sleeps or exception handling cannot dominate production scoring.</li>
+          <li><strong>Exclude unstable cases from the primary score.</strong> Keep every unstable case in the report for diagnosis, but compute the headline comparison over cases whose old and new adjudications are stable. Report both the stable-only score and the all-case descriptive score, with the unstable case count and held-out rate. Do not silently convert disagreement into a pass, failure, or parity result. Require the judge to produce consistent verdicts in a repeat run before returning a case to the primary score.</li>
+          <li><strong>Run one-variable evaluations.</strong> First measure hunk-scoped fallback alone. Then measure extraction and edge fixes. Then measure grouping and production/test separation. Finally measure judge-score exclusion. Each run must use a distinct strategy or working-tree identity, retain the same corpus and reviewer configuration, and compare against the same baseline.</li>
+        </ol>
+
+        <h3>Why this order matters</h3>
+        <p>Fallback duplication is a direct routing bug with a clear token-level oracle, so it should be fixed before interpreting cost or call-count changes. Zero recall is a graph-input problem until proven otherwise. If the expected file never becomes a symbol, edge, context node, or rendered context marker, changing weights only changes the ranking of evidence that does not exist. Fragmentation should be addressed after graph coverage because merging weakly connected nodes can hide unrelated changes. Test separation should be measured after production connections are known, otherwise it is impossible to tell whether a new boundary fixed a real graph edge or only removed useful context. Judge instability belongs last in the scoring layer because it changes interpretation, not review planning.</p>
+
+        <h3>Regression tests to add before fixes</h3>
+        <table>
+          <thead><tr><th>Test</th><th>Red condition before fix</th><th>Green condition after fix</th></tr></thead>
+          <tbody>
+            <tr><td>Mixed reliable and demoted changes in one file</td><td>Fallback prompt contains the reliable hunk or the full file diff.</td><td>Fallback prompt contains only demoted hunk markers and any bounded supporting context; reliable hunk is present exactly once.</td></tr>
+            <tr><td>Change ownership invariant</td><td>A patch hash or change ID occurs in more than one review unit or is absent.</td><td>Every planner change occurs exactly once across behavior and fallback units.</td></tr>
+            <tr><td>Sentry uptime graph snapshot</td><td>Expected model or uptime type has no extracted symbol, edge, bridge path, or rendered context record.</td><td>The diagnostic snapshot identifies a deterministic path from changed uptime code to each expected related file.</td></tr>
+            <tr><td>Grafana migrator and access-control graph snapshot</td><td>Go package, receiver method, type, migration, or access-control relationship is absent despite source being present.</td><td>The expected file is connected by an explicit typed edge or a bounded bridge path and appears in the rendered context.</td></tr>
+            <tr><td>Production/test boundary</td><td>A test sleep or test exception finding is emitted in the production behavior group.</td><td>Production and test review units are separate, with an optional coverage relation recorded but no primary-group contamination.</td></tr>
+            <tr><td>Stable-only score</td><td>A report headline changes when a judge-unstable case is included or excluded.</td><td>Headline score excludes unstable cases and the report separately exposes their count and diagnostics.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Acceptance gates</h3>
+        <ul>
+          <li>Mixed files show no duplicate reliable hunk in fallback prompts.</li>
+          <li>All planner changes have exactly one execution owner.</li>
+          <li>Sentry uptime and Grafana target cases have nonzero retrieval recall, with the exact extraction or edge path recorded.</li>
+          <li>Uptime group count and provider calls decrease without a production defect-recall regression.</li>
+          <li>Test-only findings are reported in test units and do not determine the production group assessment.</li>
+          <li>Three judge-unstable cases remain visible but are excluded from the primary score until repeated verdicts stabilize.</li>
+          <li>Targeted tests, full relevant eval tests, and a fresh expanded-corpus run pass with cache identity and token metrics recorded.</li>
+        </ul>
+
+        <h3>Open questions to resolve during implementation</h3>
+        <ul>
+          <li>Whether Sentry's expected model and uptime files are absent because Python declarations are not extracted, because imports are unresolved, or because the files are present but context rendering truncates them.</li>
+          <li>Whether Grafana's expected test relationship is direct package or type coupling, or whether it should remain a separate test group with only coverage metadata.</li>
+          <li>Whether 13 uptime provider calls are caused mainly by missing graph edges, the 2-hop bridge limit, the renderer character cap, or the current group partition strategy.</li>
+          <li>Whether unstable judge cases are caused by insufficient judge context, genuinely ambiguous findings, or reviewer output variance. The score policy should not hide this distinction.</li>
+        </ul>
+
+        <p><strong>Planned outcome.</strong> The grouped pipeline should review each changed behavior once, use fallback only for the evidence that needs it, retrieve expected related files through explainable graph paths, keep production behavior coherent, isolate test quality, and report stable score changes without allowing judge variance to masquerade as grouping quality.</p>
+      </section>
+
+      <section id="evidence-iteration-10">
+        <h2>Iteration 10: stable-case eval confirms improvement, but routing remains broken</h2>
+        <p class="meta">Evidence received 2026-09-07. Compared old file-strategy with new grouped-strategy. Judge-unstable cases were excluded from the primary comparison.</p>
+
+        <div class="callout success"><strong>What is improving.</strong> On stable cases, strict F1 increased from <strong>0.298</strong> to <strong>0.470</strong>, precision increased from <strong>0.417</strong> to <strong>0.542</strong>, and recall increased from <strong>0.213</strong> to <strong>0.380</strong>. This is a real positive signal that grouped review finds more ground-truth defects when its routing and context are effective.</div>
+
+        <p><strong>Why this changes the interpretation.</strong> The older 15-case result in this history showed only a small F1 movement from 20.8% to 22.4%, with the new approach assessed as worse. The newer stable-case result contradicts that older conclusion because the grouping pipeline has improved since then. The correct conclusion is not that grouping failed. It is that grouping has become useful but is not yet reliable across repositories and change shapes.</p>
+
+        <h3>Target cases that remain broken</h3>
+        <table>
+          <thead><tr><th>Case</th><th>Observed result</th><th>Interpretation</th><th>Plan consequence</th></tr></thead>
+          <tbody>
+            <tr><td><code>sentry-95633</code>, uptime queues</td><td>Retrieval recall 0. Group count increased from 28 to 28 in the reported run context, provider calls increased 7 to 13, input tokens increased 37k to 98k, false positives increased 1 to 4, and assessment was worse.</td><td>This remains the clearest fragmentation and cost regression. Related uptime changes are not being connected, while fallback and repeated context are expanding the review.</td><td>Implement fallback deduplication and graph diagnostics before changing grouping weights. Inspect Python symbols, imports, configuration types, bridge paths, and test boundaries.</td></tr>
+            <tr><td><code>grafana-80329</code>, database performance</td><td>Retrieval recall 0.33. The exact migrator and access-control files named in the plan were still missed. False positives increased from 5 to 7 and the assessment was worse.</td><td>Retrieval is incomplete and the additional review context is not improving precision for this case.</td><td>Inspect Go package, receiver, type, migration, and access-control edges. Do not treat the 0.33 recall as adequate when the labeled files are the required context.</td></tr>
+            <tr><td><code>keycloak-40940</code></td><td>Retrieval recall dropped to 0 and both GroupResource files were missed, yet F1 reached 1.0.</td><td>F1 can silently pass when the judge finds the defect without the expected retrieved files. Retrieval recall is therefore a diagnostic quality metric, not a sufficient outcome metric.</td><td>Keep retrieval diagnostics separate from defect scoring. Add a case-level assertion for expected context coverage and inspect whether the finding was grounded in changed evidence or happened to be discoverable from remaining context.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Cost and routing evidence</h3>
+        <table>
+          <thead><tr><th>Metric</th><th>Old file strategy</th><th>New grouped strategy</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Average input tokens</td><td>Approximately 30.2k</td><td>Approximately 49.7k</td><td>Input increased approximately 64%, despite the intended context reuse.</td></tr>
+            <tr><td>Average latency</td><td>Roughly comparable</td><td>Roughly comparable</td><td>The token increase is not currently buying a corresponding latency reduction.</td></tr>
+            <tr><td>Average provider calls</td><td>7.4</td><td>7.87</td><td>Call volume moved only slightly, so the main cost problem is prompt size and repeated context rather than a large call-count increase across the whole corpus.</td></tr>
+            <tr><td>Average new-pipeline fallback rate</td><td>Not applicable</td><td>0.654</td><td>Most changes still go through fallback review. This limits the benefit of grouping and supports investigating fallback rendering and low-confidence routing.</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Important qualification.</strong> The 64% average token increase supports the duplicate-fallback hypothesis, but it does not prove that fallback duplication is the only source. The same increase could also include broad context rendering, fragmented groups, repeated files across multiple fallback units, or large test and production contexts. The implementation must therefore measure per-unit input characters and evidence ownership, not only the final average.</p>
+
+        <h3>Judge stability confirmation</h3>
+        <p>Three of fifteen cases, or 20%, were <code>judge_unstable</code>. This validates the plan's decision to exclude unstable cases from the primary score. The stable-case improvement is the correct headline signal for now, while the all-case result remains useful only as descriptive diagnostic evidence.</p>
+
+        <h3>Updated conclusion</h3>
+        <p>The grouping approach is producing a meaningful quality improvement when it works: stable-case F1, precision, and recall all increased. However, the improvement is uneven because review planning still has three unresolved weaknesses: fallback remains the dominant route and can repeat reliable content, graph coverage misses required related files, and fragmented groups increase context and provider work without consistently improving precision. The reported results support the existing implementation order: fallback deduplication first, retrieval diagnostics and parser or edge repair second, fragmentation reduction third, test separation fourth, and stable scoring policy fifth.</p>
+
+        <h3>Next measurement requirements</h3>
+        <ul>
+          <li>Report fallback input tokens separately from behavior-group input tokens.</li>
+          <li>Report repeated patch hashes and files across review units.</li>
+          <li>Report expected-file retrieval, rendered-file retrieval, and finding evidence grounding as separate metrics.</li>
+          <li>Report group count, provider calls, context size, and test versus production group counts for Sentry uptime.</li>
+          <li>Report exact missing graph edges for Grafana and Keycloak before any score-weight changes.</li>
+          <li>Keep the stable-only score as the primary comparison while exposing the three unstable cases separately.</li>
+        </ul>
+      </section>
+
+      <section id="implementation-iteration-11">
+        <h2>Iteration 11: implementation approved and started</h2>
+        <p class="meta">Approved 2026-09-07. Implementation begins from committed progress logging change <code>307dbe2</code> with the HTML plan updates retained as working documentation.</p>
+        <div class="callout"><strong>Execution decision.</strong> Implement the plan in isolated phases. The first phase is hunk-scoped fallback because it has the clearest defect boundary and the strongest cost oracle. Retrieval and graph changes will not be layered on top until fallback ownership is test-verified.</div>
+        <h3>Phase order</h3>
+        <ol>
+          <li>Verify the baseline tests and clean code baseline.</li>
+          <li>Render fallback review units from demoted evidence only.</li>
+          <li>Add exact change ownership and mixed-file regression tests.</li>
+          <li>Run the expanded eval and record per-unit token and duplication metrics.</li>
+          <li>Diagnose Sentry, Grafana, and Keycloak extraction and graph paths.</li>
+          <li>Repair the smallest parser or edge seams found by the diagnostics.</li>
+          <li>Reduce fragmentation, separate test review, and stabilize score interpretation.</li>
+        </ol>
+        <h3>Phase 1 result: hunk-scoped fallback</h3>
+        <p><strong>Implementation.</strong> <code>worker/src/review/eval/branch-pipeline.test-helper.ts</code> now identifies fallback evidence by patch hash and renders only the selected semantic hunks. If one hunk contains both reliable and demoted symbol mappings, the entire hunk is assigned to fallback so it cannot be reviewed twice. Full-file fallback remains available only for files that have no planner-owned changes.</p>
+        <p><strong>Why.</strong> Change-level filtering alone can still duplicate a hunk when multiple semantic changes share the same patch hash. Hunk-level ownership makes the execution boundary exact and prevents reliable grouped content from re-entering fallback.</p>
+        <p><strong>Verification.</strong> Added expectations for hunk-scoped fallback and a mixed reliable-plus-demoted same-file regression case. The focused branch-pipeline suite passes:</p>
+        <pre><code>pnpm exec vitest run worker/src/review/eval/branch-pipeline.test.ts
+
+12 tests passed</code></pre>
+        <p><strong>Next phase.</strong> Add retrieval diagnostics for Sentry uptime, Grafana database performance, and Keycloak group access before modifying graph connectivity or scoring.</p>
+      </section>
+
       <section id="current">
         <h2>Current state</h2>
-        <p><strong>Verified code change:</strong> <code>worker/src/review/eval/branch-pipeline.test-helper.ts</code> now filters demoted changes by exact change ID. Targeted tests passed:</p>
+        <p><strong>Verified baseline:</strong> The progress-logging change is committed in <code>307dbe2</code>. The targeted grouping and eval tests pass against the clean baseline:</p>
         <pre><code>pnpm exec vitest run worker/src/review/grouping/grouping.test.ts worker/src/review/eval/branch-pipeline.test.ts
 
 23 tests passed</code></pre>
         <p><strong>Generated corpus:</strong> <code>worker/src/review/eval/fixtures/martian-selected-context-v1.json</code> parses successfully, contains 15 cases, 39 expected related-file labels, and no missing labeled paths.</p>
-        <p><strong>Uncommitted work:</strong> The exact-change-ID fix, annotation helper, and expanded context fixture are currently uncommitted. The latest report before the fix was generated against commit <code>b15982c</code>, so it does not measure the new filtering change.</p>
-        <div class="callout warning"><strong>Verification gate.</strong> The fix is test-verified but eval-unverified. The next valid evidence is a fresh eval using the expanded corpus and the working-tree fix, followed by a comparison against the previous report.</div>
+        <p><strong>Current implementation state:</strong> The quality improvements in the new plan have not been implemented. In particular, full-file fallback duplication, zero-recall extraction and edge gaps, group fragmentation, production/test mixing, and unstable-case score handling remain open.</p>
+        <div class="callout warning"><strong>Verification gate.</strong> The latest metrics are diagnostic evidence, not proof of a completed fix. Each planned change requires a focused regression test and a fresh expanded-corpus eval with cache identity, token counts, retrieval paths, group counts, provider calls, and judge status recorded.</div>
       </section>
 
       <section id="next">

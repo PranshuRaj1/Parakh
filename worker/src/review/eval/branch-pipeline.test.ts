@@ -176,7 +176,10 @@ describe('branch pipeline adapter', () => {
       files: { 'README.md': 'new' },
     }, config);
 
-    expect(reviewDiff).toHaveBeenCalledWith('README.md', rawDiff, [], expect.any(Object), 'new');
+    expect(reviewDiff.mock.calls[0][0]).toBe('README.md');
+    expect(reviewDiff.mock.calls[0][1]).toContain('@@ -1 +1 @@');
+    expect(reviewDiff.mock.calls[0][1]).not.toBe(rawDiff);
+    expect(reviewDiff.mock.calls[0][4]).toBe('new');
     expect(reviewBehaviorGroup).not.toHaveBeenCalled();
     expect(output.providerCalls).toBe(1);
   });
@@ -216,9 +219,54 @@ describe('branch pipeline adapter', () => {
     }, config);
 
     expect(reviewDiff).toHaveBeenCalledTimes(1);
-    expect(reviewDiff).toHaveBeenCalledWith('src/a.ts', rawDiff, [], expect.any(Object), expect.any(String));
+    expect(reviewDiff.mock.calls[0][0]).toBe('src/a.ts');
+    expect(reviewDiff.mock.calls[0][1]).toContain('@@ -1,3 +1,3 @@');
+    expect(reviewDiff.mock.calls[0][1]).toContain('@@ -5,3 +5,3 @@');
+    expect(reviewDiff.mock.calls[0][1]).not.toBe(rawDiff);
     expect(reviewBehaviorGroup).not.toHaveBeenCalled();
     expect(output.providerCalls).toBe(1);
+  });
+
+  it('sends only demoted hunks to fallback when a file also has a reliable group', async () => {
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'grouped',
+      gemini: { GeminiClient: class { reviewDiff = reviewDiff; reviewBehaviorGroup = reviewBehaviorGroup; } },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', 'raw file diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1 +1 @@',
+      "-import { oldSave } from './service';",
+      "+import { save } from './service';",
+      '@@ -3,3 +3,3 @@',
+      ' export function update() {',
+      '-  return oldSave();',
+      '+  return save();',
+      ' }',
+    ].join('\n');
+    const output = await pipeline.review({
+      ...testCase,
+      diff,
+      files: {
+        'src/a.ts': "import { save } from './service';\n\nexport function update() {\n  return save();\n}",
+      },
+    }, { ...config, contextBudget: 12000 });
+
+    expect(reviewBehaviorGroup).toHaveBeenCalledTimes(1);
+    expect(reviewBehaviorGroup.mock.calls[0][0]).toContain('@@ -3,3 +3,3 @@');
+    expect(reviewBehaviorGroup.mock.calls[0][0]).not.toContain('@@ -1 +1 @@');
+    expect(reviewDiff).toHaveBeenCalledTimes(1);
+    expect(reviewDiff.mock.calls[0][1]).toContain('@@ -1 +1 @@');
+    expect(reviewDiff.mock.calls[0][1]).not.toContain('@@ -3,3 +3,3 @@');
+    expect(output.providerCalls).toBe(2);
   });
 
   it('reviews the frozen diff with the branch modules', async () => {

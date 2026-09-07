@@ -63,6 +63,24 @@ function fileReviewUnits(fileDiffs: Map<string, string>, files = new Set(fileDif
   });
 }
 
+function renderFallbackDiff(
+  file: string,
+  plan: ChangeUnderstandingPlan,
+  patchHashes: ReadonlySet<string>,
+): string {
+  const semanticFile = plan.files.find((candidate) =>
+    (candidate.newPath ?? candidate.oldPath) === file
+  );
+  if (!semanticFile) return '';
+  const oldPath = semanticFile.oldPath ? `a/${semanticFile.oldPath}` : '/dev/null';
+  const newPath = semanticFile.newPath ? `b/${semanticFile.newPath}` : '/dev/null';
+  const hunks = semanticFile.hunks
+    .filter((hunk) => patchHashes.has(hunk.evidence.patchHash))
+    .map((hunk) => [hunk.header, ...hunk.lines].join('\n'));
+  if (hunks.length === 0) return '';
+  return [`diff --git ${oldPath} ${newPath}`, `--- ${oldPath}`, `+++ ${newPath}`, ...hunks].join('\n');
+}
+
 const TEST_FILE_PATTERN = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i;
 
 function groupedReviewUnits(input: {
@@ -74,14 +92,14 @@ function groupedReviewUnits(input: {
   contextExclude?: RegExp[];
 }): ReviewUnit[] {
   const { repository, plan, fileDiffs, sources, maxCharacters, contextExclude } = input;
-  const fallbackChangeIds = new Set(plan.groups
+  const fallbackPatchHashes = new Set(plan.groups
     .filter((group) => group.demotionReason)
-    .flatMap((group) => group.changes.map((change) => change.id)));
+    .flatMap((group) => group.changes.map((change) => change.evidence.patchHash)));
   const hunks = new Map(plan.files.flatMap((file) => file.hunks)
     .map((hunk) => [hunk.evidence.patchHash, hunk]));
   const merged = new Map<string, BehaviorGroup>();
   for (const group of plan.groups) {
-    const changes = group.changes.filter(change => !fallbackChangeIds.has(change.id));
+    const changes = group.changes.filter(change => !fallbackPatchHashes.has(change.evidence.patchHash));
     if (!changes.length) continue;
     const key = [...new Set(changes.map(change => change.file))].sort().join('\n');
     const previous = merged.get(key);
@@ -110,11 +128,19 @@ function groupedReviewUnits(input: {
     }
     if (changes.length) emit();
   }
-  const fallbackFiles = new Set(plan.groups
-    .filter((group) => group.demotionReason)
-    .flatMap((group) => group.changes.map((change) => change.file)));
-  const fallbackUnits = fileReviewUnits(fileDiffs, fallbackFiles).map(unit => {
-    const changes = plan.changes.filter(change => change.file === unit.file);
+  const fallbackChangesByFile = new Map<string, Set<string>>();
+  for (const change of plan.changes) {
+    if (!fallbackPatchHashes.has(change.evidence.patchHash)) continue;
+    const hashes = fallbackChangesByFile.get(change.file) ?? new Set<string>();
+    hashes.add(change.evidence.patchHash);
+    fallbackChangesByFile.set(change.file, hashes);
+  }
+  const fallbackUnits = [...fallbackChangesByFile.keys()].sort().flatMap((file) => {
+    const diff = renderFallbackDiff(file, plan, fallbackChangesByFile.get(file)!);
+    return diff ? [{ file, diff, kind: 'file' as const }] : [];
+  }).map(unit => {
+    const changes = plan.changes.filter(change =>
+      fallbackChangesByFile.get(unit.file)?.has(change.evidence.patchHash));
     const group: BehaviorGroup = { id: unit.file, anchor: unit.file, changes, context: [], riskSignals: [], confidence: 'low' };
     const context = renderGroupContext({ group, graph: plan.graph, sources, maxCharacters: Math.max(0, maxCharacters - unit.diff.length), contextExclude });
     return { ...unit, reference: context.text ? `${context.text}\n\n${sources[unit.file]?.newSource ?? ''}` : undefined };
