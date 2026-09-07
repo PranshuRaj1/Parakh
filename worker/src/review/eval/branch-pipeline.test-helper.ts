@@ -7,6 +7,7 @@ import type {
   EvalPipeline,
   EvalRunConfig,
   PipelineOutput,
+  RetrievalDiagnostic,
 } from './types.js';
 import { buildRepositoryIndex } from '../../indexer/repository-index.js';
 import { buildChangeUnderstandingPlan, type ChangeUnderstandingPlan } from '../semantic-diff/plan.js';
@@ -79,6 +80,46 @@ function renderFallbackDiff(
     .map((hunk) => [hunk.header, ...hunk.lines].join('\n'));
   if (hunks.length === 0) return '';
   return [`diff --git ${oldPath} ${newPath}`, `--- ${oldPath}`, `+++ ${newPath}`, ...hunks].join('\n');
+}
+
+function retrievalDiagnostics(input: {
+  expectedFiles: string[];
+  changedFiles: ReadonlySet<string>;
+  sources: Record<string, { oldSource?: string; newSource?: string }>;
+  index: ReturnType<typeof buildRepositoryIndex>;
+  plan: ChangeUnderstandingPlan;
+  reviewUnits: ReviewUnit[];
+  maxCharacters: number;
+}): RetrievalDiagnostic[] {
+  const symbolsById = new Map(input.index.symbols.map((symbol) => [symbol.id, symbol]));
+  const edgesByFile = new Map<string, string[]>();
+  for (const edge of input.index.edges) {
+    const from = symbolsById.get(edge.from);
+    const to = symbolsById.get(edge.to);
+    if (!from || !to) continue;
+    const value = `${from.qualifiedName} -[${edge.type}]-> ${to.qualifiedName}`;
+    for (const file of new Set([from.path, to.path])) {
+      edgesByFile.set(file, [...(edgesByFile.get(file) ?? []), value]);
+    }
+  }
+  const bridgePaths = new Map<string, string[]>();
+  for (const node of input.plan.graph.contextNodes ?? []) {
+    bridgePaths.set(node.symbol.path, [...(bridgePaths.get(node.symbol.path) ?? []),
+      `${node.symbol.qualifiedName} <- ${node.changeIds.join(', ')}`]);
+  }
+  return input.expectedFiles.map((file) => ({
+    file,
+    sourcePresent: Boolean(input.sources[file]?.newSource ?? input.sources[file]?.oldSource),
+    changed: input.changedFiles.has(file),
+    extractedSymbols: input.index.symbols.filter((symbol) => symbol.path === file)
+      .map((symbol) => symbol.qualifiedName).sort(),
+    indexedEdges: [...new Set(edgesByFile.get(file) ?? [])].sort(),
+    bridgePaths: [...new Set(bridgePaths.get(file) ?? [])].sort(),
+    rendered: input.reviewUnits.some((unit) =>
+      (unit.diff + '\n' + (unit.reference ?? '')).includes(`CONTEXT_FILE: ${file}`)),
+    truncated: input.reviewUnits.some((unit) => unit.diff.length > input.maxCharacters
+      && (unit.diff + '\n' + (unit.reference ?? '')).includes(`CONTEXT_FILE: ${file}`)),
+  }));
 }
 
 const TEST_FILE_PATTERN = /(?:^|[./_-])(?:test|spec)(?:[./_-]|$)/i;
@@ -243,6 +284,15 @@ export function createBranchPipelineFromModules(input: {
           fallbackChanges: fallbackGroups.reduce((count, group) => count + group.changes.length, 0),
           bridgeEdges: plan.graph.edges.filter((edge) => edge.reason.startsWith('bridge dependency:')).length,
           fallbackReasons,
+          diagnostics: expectedFiles ? retrievalDiagnostics({
+            expectedFiles,
+            changedFiles: new Set(fileDiffs.keys()),
+            sources,
+            index: headIndex,
+            plan,
+            reviewUnits,
+            maxCharacters: config.contextBudget * 4,
+          }) : undefined,
         };
       } else {
         reviewUnits = fileReviewUnits(fileDiffs);

@@ -79,7 +79,19 @@ export interface PipelineOutput {
     fallbackChanges: number;
     bridgeEdges: number;
     fallbackReasons: Record<string, number>;
+    diagnostics?: RetrievalDiagnostic[];
   };
+}
+
+export interface RetrievalDiagnostic {
+  file: string;
+  sourcePresent: boolean;
+  changed: boolean;
+  extractedSymbols: string[];
+  indexedEdges: string[];
+  bridgePaths: string[];
+  rendered: boolean;
+  truncated: boolean;
 }
 
 export interface EvalRun {
