@@ -2,6 +2,8 @@
 
 An AI code-review bot for GitHub that learns from your feedback. Parakh reviews pull requests, scores them out of 5, posts the review as a GitHub PR review with 👍 / 👎 reactions, and remembers your corrections so it stops repeating the same nags.
 
+Built by [Pranshu Raj](https://github.com/PranshuRaj1). Read the [Parakh architecture and debugging case study](https://pranshuraj.vercel.app/projects/parakh) on the portfolio.
+
 ## What is Parakh
 
 Parakh is a GitHub App built on Cloudflare Workers. When you open or reopen a PR, or mention `@parakh` in a comment, it reviews a SHA-pinned diff through the configured LLM provider chain, turns the model output into structured findings, scores the PR, and posts the result. Correct it in a comment and it saves that correction as a rule in its memory, then enforces the rule on future reviews. Tell it to stop flagging something and deterministic suppression removes that finding even when the model repeats it.
