@@ -12,6 +12,7 @@
     "@google/generative-ai": "^0.24.0",
     "@neondatabase/serverless": "^0.10.0",
     "@upstash/redis": "^1.34.0",
+    "@vercel/blob": "^1.1.1",
     "@parakh/shared": "*"
   },
   "devDependencies": {

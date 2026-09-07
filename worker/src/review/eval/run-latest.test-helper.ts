@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { loadEvalState } from './eval-state.js';
+import { publishEvalReport } from './publisher.js';
+import type { EvalReport } from './types.js';
 
 function run(command: string, args: string[]): Promise<void> {
   return new Promise((resolvePromise, reject) => {
@@ -41,6 +43,10 @@ const evalArgs = [
 const viteNode = join(repoRoot, 'node_modules', 'vite-node', 'dist', 'cli.mjs');
 await access(viteNode);
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs]);
+
+const report = JSON.parse(await readFile(resolve(repoRoot, '.eval-cache/reports/latest-comparison.json'), 'utf8')) as EvalReport;
+const runId = await publishEvalReport(report);
+process.stdout.write(`Published eval run ${runId}\n`);
 
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--']);
 const dashboardPath = resolve(repoRoot, '.eval-cache/reports/index.html');

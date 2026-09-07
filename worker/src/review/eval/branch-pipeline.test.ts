@@ -49,6 +49,30 @@ describe('branch pipeline adapter', () => {
     expect(output.retrieval?.fallbackRate).toBe(0.5);
   });
 
+  it('reuses the provider client across review calls', async () => {
+    let constructed = 0;
+    const reviewDiff = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
+    class GeminiClient {
+      reviewDiff = reviewDiff;
+      constructor() { constructed++; }
+    }
+    const pipeline = createBranchPipelineFromModules({
+      strategy: 'file',
+      gemini: { GeminiClient },
+      review: {
+        parseDiffByFile: () => new Map([['src/a.ts', 'diff']]),
+        isIgnoredLockfile: () => false,
+        resolveReviewResult: () => ({ findings: [] }),
+      },
+    });
+
+    await pipeline.review(testCase, config);
+    await pipeline.review(testCase, config);
+
+    expect(constructed).toBe(1);
+    expect(reviewDiff).toHaveBeenCalledTimes(2);
+  });
+
   it('renders an unchanged callee and measures its retrieval', async () => {
     const reviewBehaviorGroup = vi.fn().mockResolvedValue({ genericFindings: [], ruleFindings: [], thinking: null });
     const pipeline = createBranchPipelineFromModules({

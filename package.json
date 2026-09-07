@@ -5,7 +5,8 @@
   "workspaces": [
     "shared",
     "worker",
-    "dashboard"
+    "dashboard",
+    "eval-dashboard"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
@@ -17,6 +18,8 @@
     "eval:latest": "vite-node --script worker/src/review/eval/run-latest.test-helper.ts --",
     "eval:dashboard": "vite-node --script worker/src/review/eval/dashboard-cli.test-helper.ts --",
     "eval:context": "vite-node --script worker/src/review/eval/expand-context.test-helper.ts --",
+    "eval-dashboard:dev": "npm run dev --workspace @parakh/eval-dashboard",
+    "eval-dashboard:build": "npm run build --workspace @parakh/eval-dashboard",
     "test:pipeline": "vitest run worker/src/smoke/pipeline-smoke.test.ts",
     "test:memory": "vitest run worker/src/smoke/memory-smoke.test.ts",
     "db:push": "drizzle-kit push",

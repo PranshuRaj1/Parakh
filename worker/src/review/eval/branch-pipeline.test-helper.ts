@@ -74,14 +74,14 @@ function groupedReviewUnits(input: {
   contextExclude?: RegExp[];
 }): ReviewUnit[] {
   const { repository, plan, fileDiffs, sources, maxCharacters, contextExclude } = input;
-  const fallbackFiles = new Set(plan.groups
+  const fallbackChangeIds = new Set(plan.groups
     .filter((group) => group.demotionReason)
-    .flatMap((group) => group.changes.map((change) => change.file)));
+    .flatMap((group) => group.changes.map((change) => change.id)));
   const hunks = new Map(plan.files.flatMap((file) => file.hunks)
     .map((hunk) => [hunk.evidence.patchHash, hunk]));
   const merged = new Map<string, BehaviorGroup>();
   for (const group of plan.groups) {
-    const changes = group.changes.filter(change => !fallbackFiles.has(change.file));
+    const changes = group.changes.filter(change => !fallbackChangeIds.has(change.id));
     if (!changes.length) continue;
     const key = [...new Set(changes.map(change => change.file))].sort().join('\n');
     const previous = merged.get(key);
@@ -110,6 +110,9 @@ function groupedReviewUnits(input: {
     }
     if (changes.length) emit();
   }
+  const fallbackFiles = new Set(plan.groups
+    .filter((group) => group.demotionReason)
+    .flatMap((group) => group.changes.map((change) => change.file)));
   const fallbackUnits = fileReviewUnits(fileDiffs, fallbackFiles).map(unit => {
     const changes = plan.changes.filter(change => change.file === unit.file);
     const group: BehaviorGroup = { id: unit.file, anchor: unit.file, changes, context: [], riskSignals: [], confidence: 'low' };

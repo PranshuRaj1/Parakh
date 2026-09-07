@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Change Impact Graphs and Behavior Grouping</title>
+  <style>
+    :root { --ink:#172033; --muted:#5d687b; --line:#dce2eb; --paper:#fff; --wash:#f5f7fb; --blue:#1f5eff; --teal:#087f73; --amber:#9b5b00; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--wash); font:16px/1.62 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { max-width:1120px; margin:auto; padding:32px 22px 64px; }
+    header, section, footer { background:var(--paper); border:1px solid var(--line); border-radius:16px; padding:28px; margin:18px 0; }
+    header { background:linear-gradient(135deg,#eef4ff,#ffffff 62%); }
+    h1 { font-size:clamp(2rem,4vw,3.2rem); line-height:1.08; margin:0 0 12px; letter-spacing:-.04em; }
+    h2 { font-size:1.55rem; margin:0 0 14px; }
+    h3 { font-size:1.08rem; margin:24px 0 6px; }
+    p { max-width:82ch; }
+    .kicker { color:var(--blue); font-weight:700; text-transform:uppercase; letter-spacing:.11em; font-size:.78rem; }
+    .lede { color:var(--muted); font-size:1.12rem; max-width:76ch; }
+    .callout { border-left:4px solid var(--blue); background:#f2f6ff; padding:14px 18px; border-radius:8px; }
+    .warning { border-left-color:var(--amber); background:#fff7e8; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; font-size:.95rem; }
+    th, td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:11px 10px; }
+    th { background:#f7f9fc; }
+    code { background:#eef1f6; border-radius:4px; padding:1px 4px; font-size:.9em; }
+    pre { overflow:auto; background:#172033; color:#eef4ff; padding:16px; border-radius:10px; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .card { border:1px solid var(--line); border-radius:12px; padding:16px; background:#fbfcfe; }
+    .metric { font-size:1.8rem; font-weight:750; color:var(--blue); display:block; }
+    .small { color:var(--muted); font-size:.9rem; }
+    svg { width:100%; height:auto; display:block; margin:18px 0; }
+    a { color:#154dc7; }
+    footer { color:var(--muted); font-size:.92rem; }
+    @media (max-width:700px) { main { padding:14px 10px 40px; } header, section, footer { padding:20px; border-radius:12px; } .grid { grid-template-columns:1fr; } table { display:block; overflow-x:auto; white-space:normal; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="kicker">Research brief · 6 September 2026</div>
+    <h1>Change Impact Graphs and Behavior Grouping</h1>
+    <p class="lede">What German, Hassan, and Robles propose, what it means for the current review planner, and the smallest changes likely to make grouping more accurate and more useful.</p>
+    <div class="callout"><strong>Executive finding:</strong> The paper supports the direction of graph-based grouping, but it points to a more precise design. Group changes around dependency-mediated behavior, keep historical change evidence separate from ordinary context, and rank or filter the graph instead of treating every connected node as equally important.</div>
+  </header>
+
+  <section>
+    <h2>1. Paper at a glance</h2>
+    <table>
+      <tr><th>Title</th><td>Change impact graphs: Determining the impact of prior codechanges</td></tr>
+      <tr><th>Authors</th><td>Daniel M. German, Ahmed E. Hassan, Gregorio Robles</td></tr>
+      <tr><th>Venue</th><td><em>Information and Software Technology</em>, Volume 51, Issue 10, October 2009, pages 1394-1408</td></tr>
+      <tr><th>DOI</th><td><a href="https://doi.org/10.1016/j.infsof.2009.04.018">10.1016/j.infsof.2009.04.018</a></td></tr>
+      <tr><th>Evidence available for this brief</th><td>ScienceDirect abstract and accessible section previews. The publisher page indicates that the full text requires institutional access, so detailed claims about figures and all experiments should be verified against the PDF if available.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>2. What the paper says</h2>
+    <p>Software failures often appear in code that was not recently edited. A previous change can affect that code through calls, data dependencies, or other relationships. Starting at the failure location and manually walking the dependency graph is slow. Traditional program slicing can also return a very large set of possible locations.</p>
+    <p>The paper proposes <strong>Change Impact Graphs</strong>, or CIGs. The method first recovers which functions changed in the past from version-control history. It then propagates the effect of those changed functions through a dependence graph. The result is a graph in which recent historical changes are marked, allowing a maintainer to focus on a smaller, more relevant part of the system.</p>
+    <p>The important distinction is that the graph is not merely a map of files changed in one commit. It is a map of <strong>changed behavior and its possible impact</strong>, including unchanged code through which the impact travels.</p>
+    <svg viewBox="0 0 900 190" role="img" aria-label="Changed code reaches an unchanged bridge and then another changed or failing area">
+      <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#1f5eff"/></marker></defs>
+      <rect x="34" y="58" width="205" height="72" rx="12" fill="#dfeaff" stroke="#1f5eff"/><text x="136" y="88" text-anchor="middle" font-weight="700">Changed function A</text><text x="136" y="110" text-anchor="middle" fill="#5d687b">historical change</text>
+      <rect x="348" y="58" width="205" height="72" rx="12" fill="#e0f5f1" stroke="#087f73"/><text x="450" y="88" text-anchor="middle" font-weight="700">Unchanged bridge</text><text x="450" y="110" text-anchor="middle" fill="#5d687b">call or data dependency</text>
+      <rect x="662" y="58" width="205" height="72" rx="12" fill="#fff0cf" stroke="#9b5b00"/><text x="764" y="88" text-anchor="middle" font-weight="700">Failure or change B</text><text x="764" y="110" text-anchor="middle" fill="#5d687b">impact target</text>
+      <path d="M244 94 H340" stroke="#1f5eff" stroke-width="3" marker-end="url(#arrow)"/><path d="M554 94 H654" stroke="#1f5eff" stroke-width="3" marker-end="url(#arrow)"/>
+    </svg>
+  </section>
+
+  <section>
+    <h2>3. Main ideas to carry into our planner</h2>
+    <div class="grid">
+      <div class="card"><span class="metric">1</span><strong>Impact is propagated</strong><p>Dependencies should explain why two changes belong to the same behavior, even when the connecting code itself was not edited.</p></div>
+      <div class="card"><span class="metric">2</span><strong>History is evidence</strong><p>Commit age, changed functions, and prior changes help prioritize impact. They should not be confused with the static dependency graph.</p></div>
+      <div class="card"><span class="metric">3</span><strong>Graphs need filtering</strong><p>The goal is to reduce investigation effort, not to display every reachable node. Relevance and compactness are first-class requirements.</p></div>
+    </div>
+    <h3>How this differs from a file grouping strategy</h3>
+    <p>A file strategy assumes that all changes in one file should be reviewed together and that changes in different files are separate. CIG-style grouping instead asks whether the changes participate in the same behavior through dependency paths. This is closer to the question a reviewer needs to answer: “What behavior could these changes jointly alter?”</p>
+  </section>
+
+  <section>
+    <h2>4. Current implementation diagnosis</h2>
+    <p>The current implementation already has a useful foundation: semantic changes, indexed symbols, typed edges, graph components, confidence levels, context rendering, and file fallback. The main issue is where the dependency information enters the pipeline.</p>
+    <table>
+      <tr><th>Current behavior</th><th>Why it matters</th><th>Paper-aligned interpretation</th></tr>
+      <tr><td>Strong components are built from edges whose endpoints are changed nodes.</td><td>An unchanged service or type cannot join two changed symbols.</td><td>Dependency paths should connect changed anchors through unchanged bridge nodes.</td></tr>
+      <tr><td>Unchanged dependencies are stored in <code>contextNodes</code>.</td><td>They are rendered after grouping, so they explain a group but cannot define one.</td><td>Use bridge nodes during grouping, then keep them as labeled evidence rather than review members.</td></tr>
+      <tr><td>Large components are split by sorted change ID.</td><td>Alphabetical order is unrelated to behavior and can separate tightly coupled changes.</td><td>Split by weighted graph locality and preserve the strongest paths.</td></tr>
+      <tr><td>More than 25% low-confidence changes demotes the whole component.</td><td>A few ambiguous hunks can force well-supported changes into file fallback.</td><td>Demote locally, or split ambiguous nodes from reliable neighborhoods.</td></tr>
+    </table>
+    <p>The local evaluation notes report a 73.9% fallback-unit rate and higher average input tokens for grouped review than file review. That pattern is consistent with a planner that adds context but does not yet obtain enough reliable cross-file grouping value. It is a routing and graph-construction problem, not proof that behavior grouping is the wrong objective.</p>
+  </section>
+
+  <section>
+    <h2>5. Recommended grouping design</h2>
+    <h3>Phase 1: Add unchanged bridge traversal</h3>
+    <p>Build a bounded impact view around changed symbols. Traverse one or two unchanged nodes through strong typed edges. If changed A and changed B are connected by a short, strong path, add a group edge between A and B and record the bridge path as evidence.</p>
+    <pre><code>changed A -> unchanged service -> unchanged repository -> changed B
+             group edge: A <-> B
+             evidence: calls, hop distance 2, bridge symbols [service, repository]</code></pre>
+    <p>Do not make bridge nodes review members. They should be context with direction, edge type, hop count, and the changed anchors they connect.</p>
+
+    <h3>Phase 2: Replace binary connectivity with weighted evidence</h3>
+    <p>Connected components are a good baseline, but one weak edge can create a large and noisy component. Start with explicit weights and require either one strong relation or multiple independent signals.</p>
+    <table><tr><th>Evidence</th><th>Starting weight</th><th>Use</th></tr>
+      <tr><td>Direct call, implementation, or override relation</td><td>5</td><td>Strong join</td></tr>
+      <tr><td>One-hop unchanged bridge</td><td>4</td><td>Strong join with path evidence</td></tr>
+      <tr><td>Type, schema, route, export, or configuration-key relation</td><td>3</td><td>Join when direction and identity are reliable</td></tr>
+      <tr><td>Same changed file</td><td>2</td><td>Supporting signal only</td></tr>
+      <tr><td>Matching identifier basename</td><td>1</td><td>Never sufficient alone</td></tr>
+    </table>
+
+    <h3>Phase 3: Split by graph locality</h3>
+    <p>When a group exceeds the context budget, choose the highest-risk or highest-degree changed anchor, expand through the strongest edges, and stop at the character limit. Start the next group from the highest-ranked unassigned change. This preserves behavior neighborhoods instead of slicing by sorted IDs.</p>
+
+    <h3>Phase 4: Demote only ambiguous changes</h3>
+    <p>Keep reliable portions of a component grouped. Send only low-confidence changes, or small neighborhoods whose evidence does not pass the join threshold, to file fallback. Track the reason per change so the dashboard can distinguish parser weakness from genuinely weak relatedness.</p>
+
+    <h3>Phase 5: Treat context as required, supporting, or optional</h3>
+    <table><tr><th>Class</th><th>Examples</th><th>Budget policy</th></tr>
+      <tr><td>Required</td><td>Direct definition, implementation, type, schema, route registration, configuration key</td><td>Protect from truncation</td></tr>
+      <tr><td>Supporting</td><td>Callers, tests, adapters, nearby consumers</td><td>Include after required context</td></tr>
+      <tr><td>Optional</td><td>Weak lexical neighbors, broad repository siblings</td><td>Drop first when budget is tight</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. Suggested data model changes</h2>
+    <p>The smallest useful extension is to preserve bridge evidence and edge confidence without changing the public review-unit shape too much.</p>
+    <pre><code>interface ImpactEvidence {
+  fromChangeId: string;
+  toChangeId: string;
+  path: Array&lt;{ symbol: string; edgeType: string }&gt;;
+  score: number;
+  reasons: string[];
+}
+
+interface BehaviorGroup {
+  // existing fields
+  impactEvidence?: ImpactEvidence[];
+  requiredContext?: string[];
+  supportingContext?: string[];
+}</code></pre>
+    <p>Keep group membership limited to changed items. This avoids sending every bridge symbol to the reviewer while preserving enough provenance to explain the grouping and debug false joins.</p>
+  </section>
+
+  <section>
+    <h2>7. Evaluation plan</h2>
+    <p>Run the same corpus, model, judge, and token budget through three planners:</p>
+    <ol><li><strong>A:</strong> current direct changed-node graph.</li><li><strong>B:</strong> current graph plus bounded unchanged bridge traversal.</li><li><strong>C:</strong> weighted bridge graph, graph-local splitting, and local demotion.</li></ol>
+    <p>Do not use final defect F1 as the only measurement. Add:</p>
+    <table><tr><th>Metric</th><th>Question answered</th></tr>
+      <tr><td>Group recall and precision</td><td>Did the planner put behaviorally related changes together without noisy joins?</td></tr>
+      <tr><td>Related-file retrieval recall</td><td>Did the selected group context contain files needed to understand the change?</td></tr>
+      <tr><td>Fallback rate</td><td>How often did the planner lack enough evidence to use a behavior group?</td></tr>
+      <tr><td>Required-context retention</td><td>Did token trimming preserve direct dependencies?</td></tr>
+      <tr><td>Input tokens and review calls</td><td>Did grouping reduce cost rather than add context overhead?</td></tr>
+      <tr><td>Defect recall and F1</td><td>Did the end-to-end review outcome improve?</td></tr>
+    </table>
+    <div class="callout warning"><strong>Acceptance bar:</strong> bridge grouping should increase related-file and group recall, materially reduce fallback, and lower or maintain input tokens. End-to-end defect recall must not regress against the file baseline. Judge-unstable cases should be reported separately.</div>
+  </section>
+
+  <section>
+    <h2>8. Bottom line</h2>
+    <p>The paper’s most useful lesson for this project is simple: a change group should represent an impact neighborhood, not merely a set of changed files or directly changed symbols. The first implementation step should therefore be unchanged bridge traversal with explicit path evidence. After that, weighted joins, graph-local splitting, and local demotion should make the grouping both more accurate and less conservative.</p>
+    <p>Embeddings or broad semantic retrieval should come later. The current bottleneck is deterministic graph structure and trustworthy measurement. Fixing those first gives the team a clear signal about whether more advanced retrieval is needed.</p>
+  </section>
+
+  <footer>
+    <strong>Sources</strong>
+    <ul>
+      <li><a href="https://doi.org/10.1016/j.infsof.2009.04.018">German, Hassan, and Robles, “Change impact graphs: Determining the impact of prior codechanges”</a>. ScienceDirect accessible abstract and section previews were used for the paper summary.</li>
+      <li><a href="../worker/src/review/grouping/graph.ts">worker/src/review/grouping/graph.ts</a>, <a href="../worker/src/review/grouping/group-builder.ts">group-builder.ts</a>, and <a href="../worker/src/review/grouping/types.ts">types.ts</a>, used to diagnose the current grouping pipeline.</li>
+      <li><a href="../worker/src/review/semantic-diff/plan.ts">worker/src/review/semantic-diff/plan.ts</a> and <a href="../worker/src/review/semantic-diff/entity-parser.ts">entity-parser.ts</a>, used to trace plan construction and confidence mapping.</li>
+      <li><a href="grouping-strategy-research.md">docs/grouping-strategy-research.md</a>, used for the local evaluation snapshot and prior research synthesis.</li>
+    </ul>
+  </footer>
+</main>
+</body>
+</html>

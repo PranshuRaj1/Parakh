@@ -9,6 +9,7 @@
  * `schema_migrations` table to track which migrations have run.
  */
 
+import 'dotenv/config';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

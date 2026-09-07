@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eval and Grouping Iteration Log</title>
+  <style>
+    :root { --bg:#f5f7f9; --panel:#fff; --ink:#17212b; --muted:#5b6875; --line:#d9e0e7; --accent:#0b6e69; --accent-soft:#e1f2ef; --warn:#9b5b00; --warn-soft:#fff2d9; --bad:#a3342a; --bad-soft:#fde9e7; --good:#196b3a; --good-soft:#e3f5e9; --mono:ui-monospace,SFMono-Regular,Consolas,monospace; --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--bg); font:16px/1.65 var(--sans); }
+    .layout { max-width:1360px; margin:auto; display:grid; grid-template-columns:250px minmax(0,1fr); gap:28px; padding:28px; }
+    aside { position:sticky; top:20px; align-self:start; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; }
+    aside h2 { margin:0 0 12px; font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+    aside a { display:block; color:var(--accent); text-decoration:none; padding:5px 0; font-size:14px; }
+    aside a:hover, aside a:focus { text-decoration:underline; }
+    main { min-width:0; }
+    header, section { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:28px; margin-bottom:22px; box-shadow:0 4px 18px rgba(23,33,43,.04); }
+    header { border-top:5px solid var(--accent); }
+    h1 { margin:0 0 8px; font-size:clamp(28px,4vw,44px); line-height:1.1; letter-spacing:-.03em; }
+    h2 { margin:0 0 14px; font-size:25px; line-height:1.2; }
+    h3 { margin:24px 0 8px; font-size:19px; }
+    p { margin:9px 0; }
+    .lede { color:var(--muted); font-size:18px; max-width:850px; }
+    .meta { color:var(--muted); font-size:14px; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:18px 0; }
+    .stat { border:1px solid var(--line); border-radius:12px; padding:14px; background:#fbfcfd; }
+    .stat strong { display:block; font-size:25px; line-height:1.1; }
+    .stat span { color:var(--muted); font-size:13px; }
+    .callout { border-left:4px solid var(--accent); background:var(--accent-soft); padding:14px 16px; border-radius:8px; margin:14px 0; }
+    .warning { border-left-color:var(--warn); background:var(--warn-soft); }
+    .failure { border-left-color:var(--bad); background:var(--bad-soft); }
+    .success { border-left-color:var(--good); background:var(--good-soft); }
+    table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+    th, td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:9px 10px; }
+    th { background:#f0f4f6; color:#34434f; font-weight:700; }
+    code, pre { font-family:var(--mono); }
+    code { background:#eef2f4; border-radius:4px; padding:1px 4px; font-size:.9em; }
+    pre { overflow:auto; background:#17212b; color:#e9f1f4; padding:16px; border-radius:10px; font-size:13px; line-height:1.55; }
+    .timeline { border-left:3px solid var(--line); margin:20px 0 4px 8px; padding-left:22px; }
+    .event { position:relative; margin:0 0 24px; }
+    .event:before { content:""; position:absolute; width:11px; height:11px; border-radius:50%; background:var(--accent); left:-30px; top:8px; box-shadow:0 0 0 4px var(--panel); }
+    .event h3 { margin-top:0; }
+    .commit { color:var(--accent); font-family:var(--mono); font-size:14px; }
+    .tag { display:inline-block; border-radius:999px; padding:2px 9px; font-size:12px; font-weight:700; margin-right:5px; background:var(--accent-soft); color:var(--accent); }
+    .tag.warn { background:var(--warn-soft); color:var(--warn); }
+    .tag.bad { background:var(--bad-soft); color:var(--bad); }
+    .tag.good { background:var(--good-soft); color:var(--good); }
+    .small { color:var(--muted); font-size:14px; }
+    footer { color:var(--muted); font-size:13px; padding:8px 4px 30px; }
+    @media (max-width:850px) { .layout { grid-template-columns:1fr; padding:14px; } aside { position:static; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:520px) { header, section { padding:19px; border-radius:12px; } .grid { grid-template-columns:1fr; } table { display:block; overflow:auto; white-space:normal; } }
+    @media print { body { background:#fff; } aside { display:none; } .layout { display:block; padding:0; } header, section { box-shadow:none; break-inside:avoid; } pre { white-space:pre-wrap; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside aria-label="Table of contents">
+      <h2>Contents</h2>
+      <a href="#tldr">Executive summary</a>
+      <a href="#scope">Scope and rules</a>
+      <a href="#timeline">Iteration timeline</a>
+      <a href="#architecture">How the system works</a>
+      <a href="#failures">What went wrong</a>
+      <a href="#hypotheses">Assumptions and hypotheses</a>
+      <a href="#metrics">Eval evidence</a>
+      <a href="#current">Current state</a>
+      <a href="#next">Next iteration protocol</a>
+      <a href="#sources">Sources</a>
+    </aside>
+
+    <main>
+      <header id="tldr">
+        <h1>Eval and Grouping Iteration Log</h1>
+        <p class="lede">A living record of how Parakh's semantic review grouping and evaluation system evolved, what each change was intended to solve, what failed, how the failures were diagnosed, and what remains uncertain.</p>
+        <p class="meta">Started 2026-09-03. Last updated 2026-09-07. This document is append-only: each future code or eval iteration should add a dated entry instead of rewriting the history.</p>
+        <div class="callout warning"><strong>Current conclusion.</strong> Grouping is directionally better, but not yet effective enough to declare success. The latest 15-case run had 3 better cases, 10 parity cases, 0 worse cases, 1 pass, and 1 judge-unstable case. Average F1 moved from 22.4% to 24.2%, while average file fallback remained approximately 75.6%.</div>
+        <div class="grid">
+          <div class="stat"><strong>3 better</strong><span>Latest grouped-versus-file assessments</span></div>
+          <div class="stat"><strong>+1.4 pts</strong><span>Average defect recall delta</span></div>
+          <div class="stat"><strong>47.8%</strong><span>Average related-file retrieval recall</span></div>
+          <div class="stat"><strong>75.6%</strong><span>Average review-unit fallback rate</span></div>
+          <div class="stat"><strong>1.07</strong><span>Average behavior-group calls per case</span></div>
+          <div class="stat"><strong>69</strong><span>Total bridge edges in latest run</span></div>
+        </div>
+      </header>
+
+      <section id="scope">
+        <h2>Scope, evidence, and working rules</h2>
+        <p>This log covers the semantic diff parser, repository indexing, dependency graph, behavior-group planner, fallback routing, Gemini review calls, Groq adjudication, retrieval ground truth, dashboard reporting, and the local eval workflow.</p>
+        <p>Evidence is separated into three categories:</p>
+        <table>
+          <thead><tr><th>Evidence</th><th>Meaning</th><th>How it is used</th></tr></thead>
+          <tbody>
+            <tr><td>Git commits</td><td>What was actually changed in the repository.</td><td>Establishes chronology and implementation intent.</td></tr>
+            <tr><td>Eval reports</td><td>Observed behavior on the pinned corpus and pipeline commits.</td><td>Measures whether a hypothesis improved outcomes.</td></tr>
+            <tr><td>Conversation decisions</td><td>Assumptions, approvals, and interpretations made during the work.</td><td>Explains why an experiment was chosen and what was considered out of scope.</td></tr>
+          </tbody>
+        </table>
+        <div class="callout"><strong>Safety rule for future entries.</strong> Record commands, paths, commit IDs, metrics, and errors, but never record API keys, access tokens, database credentials, signed URLs, or environment values. Use typed placeholders such as <code>&lt;REDACTED:API_KEY&gt;</code> if a secret appears in a captured artifact.</div>
+      </section>
+
+      <section id="timeline">
+        <h2>Iteration timeline</h2>
+        <div class="timeline">
+          <article class="event">
+            <h3>Iteration 1: establish semantic grouping foundations <span class="tag">2026-09-03</span></h3>
+            <p class="commit">fdd3849, 076b6e8, 0809410, 6c4b823, cfa4e1c</p>
+            <p><strong>Changes.</strong> Added changed-symbol indexing across benchmark languages; connected behavior groups with corroborated code relationships; loaded bounded dependency context; rendered grounded multi-file review units; and ran semantic grouping in production shadow mode.</p>
+            <p><strong>Why.</strong> File-by-file review repeats context and cannot express that several changed files implement one behavior. The intended architecture was to parse changed entities, build a repository graph, form behavior groups, and ask Gemini to review a coherent multi-file unit.</p>
+            <p><strong>Assumptions.</strong> Symbol extraction would be reliable enough to anchor changed hunks. Indexed calls, imports, exports, and related facts would provide useful grouping evidence. Grouped prompts would improve context reuse without degrading localization.</p>
+            <p><strong>Risk accepted.</strong> Unsupported or ambiguous changes could fall back to file review. This made the first version safer, but also created the possibility that the fallback would dominate the experiment.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 2: make file fallback bounded and safer <span class="tag">2026-09-04</span></h3>
+            <p class="commit">9645b25, 7f8e059</p>
+            <p><strong>Changes.</strong> Bounded semantic review with file fallback and avoided cross-suite duplicate test findings.</p>
+            <p><strong>Why.</strong> A grouping system must not force low-confidence symbol matches into a multi-file prompt. Fallback provides a correctness escape hatch, while duplicate-test suppression prevents the new context path from creating repeated findings.</p>
+            <p><strong>What this made visible.</strong> The fallback was not just a safety net. It became a major routing decision, so fallback rate had to be measured explicitly instead of looking only at final F1.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 3: add the latest-eval and dashboard workflow <span class="tag">2026-09-04</span></h3>
+            <p class="commit">1eb9d77, b763e48, 2da3eb3, d24eace, db3e1bf, 8fe21a2, 7e626cc</p>
+            <p><strong>Changes.</strong> Added a visual eval dashboard, remembered the latest comparison, added a latest-eval runner, reused eval configuration, aligned cache identity with config checks, fixed Windows launching, and streamed process output.</p>
+            <p><strong>Why.</strong> Re-running long evaluations without stable identity and visible progress made it difficult to know whether a result was new, cached, stuck, or using different settings.</p>
+            <p><strong>Observed issue.</strong> The CLI could remain silent while Gemini calls were still running. Report files were written before later publication steps, so seeing Markdown and JSON reports did not necessarily mean the whole command had finished.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 4: stabilize adjudication and cache behavior <span class="tag">2026-09-03 to 2026-09-06</span></h3>
+            <p class="commit">0050d3c, 026a913, 4afb97a, c849eaf, 3f11c94</p>
+            <p><strong>Changes.</strong> Versioned eval strategy and planner cache identity; normalized judge disagreement and quota recovery; preserved generic rate-limit errors; rotated Groq judge keys across accounts; and resumed partial judge cache entries safely.</p>
+            <p><strong>Why.</strong> A comparison is only meaningful if cache keys include the corpus, pipeline, configuration, and strategy. Judge retries and partial entries also needed to avoid replaying or silently accepting incomplete adjudication.</p>
+            <p><strong>Important distinction.</strong> Gemini reviewer calls and Groq judge calls have separate cache behavior. A rerun can reuse cached work when the identity matches, but a changed corpus, pipeline SHA, configuration, or strategy should invalidate the relevant result.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 5: expand retrieval context and improve measurement <span class="tag">2026-09-06</span></h3>
+            <p class="commit">a6efd62, f735998, 1c52ea5, cb3ecb5</p>
+            <p><strong>Changes.</strong> Improved semantic dependency context; added retrieval tracking and eval history; added expanded corpus fixtures; and updated provider logging and rollout behavior.</p>
+            <p><strong>Why.</strong> The original corpus did not populate <code>expectedRelatedFiles</code>, so retrieval recall could not be measured. The expanded context corpus introduced unchanged files and a ground-truth field to separate “the graph did not retrieve the right file” from “Gemini reviewed the context poorly.”</p>
+            <p><strong>Ground-truth policy.</strong> Each case received two to five files judged necessary to understand the changed behavior. Generic logging, broad utilities, and test framework files were not labeled unless the defect depended on them.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 6: bridge traversal and grouped pipeline commit <span class="tag">2026-09-06</span></h3>
+            <p class="commit">b15982c: Improve eval behavior grouping</p>
+            <p><strong>Changes.</strong> Added bounded traversal through unchanged bridge symbols, graph context tracking, group-building behavior, local component splitting and demotion tests, and eval-side grouping metrics.</p>
+            <p><strong>Why.</strong> The graph previously stored unchanged dependencies as decorative context. A path such as <code>changed controller -&gt; unchanged service -&gt; changed repository</code> could not connect two changed symbols during grouping. Bridge traversal made the unchanged symbol participate in the connection while retaining only changed symbols as group members.</p>
+            <p><strong>Safety decisions.</strong> Traversal used strong typed relations, a two-hop limit, per-component and total path caps, and a per-bridge-symbol fan-in cap. Components were split before confidence demotion, so demotion percentages were calculated on the final sub-component rather than stale pre-split composition.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 7: context corpus repair and annotation <span class="tag warn">2026-09-07</span></h3>
+            <p class="commit">Working tree, not committed</p>
+            <p><strong>Failure.</strong> A direct patch to the large generated context JSON corrupted its escaping. Attempts to repair invalid escapes with a scanner made the situation worse by confusing valid escaped backslashes and quotes with malformed sequences.</p>
+            <p><strong>Diagnosis.</strong> The original selected corpus still parsed. The expanded file failed JSON parsing only after the large artifact was edited. Regenerating the expanded file restored valid JSON.</p>
+            <p><strong>Fix.</strong> Stopped repairing the artifact in place; regenerated it from the original corpus; changed the annotation helper to parse only valid JSON and to locate the JSON argument robustly; applied labels; and verified all 15 cases, 39 labels, and zero missing paths.</p>
+            <p><strong>Lesson.</strong> Generated artifacts should be regenerated by their producer rather than patched directly, especially when they contain source code with many escape sequences.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 8: latest eval with retrieval ground truth <span class="tag good">2026-09-07</span></h3>
+            <p class="commit">Observed against b15982c</p>
+            <p><strong>Result.</strong> The new report used <code>martian-selected-context-v1</code> and showed that retrieval labels were active. Related-file retrieval recall averaged 47.8%. The grouped pipeline was assessed as better in three cases, parity in ten, pass in one, and judge-unstable in one, with no worse cases.</p>
+            <p><strong>Interpretation.</strong> The grouping direction is promising but the routing policy still sends most review units through file fallback. The next experiment should target the fallback mechanism before tuning scoring weights.</p>
+          </article>
+
+          <article class="event">
+            <h3>Iteration 9: fix over-broad fallback filtering <span class="tag good">2026-09-07</span></h3>
+            <p class="commit">Working tree, not committed</p>
+            <p><strong>Root cause.</strong> <code>groupedReviewUnits</code> collected demoted files and removed every change in those files from behavior groups. A single low-confidence change therefore discarded reliable changes sharing its file.</p>
+            <p><strong>Fix.</strong> The behavior-group filter now tracks exact demoted change IDs. Low-confidence changes still receive file fallback, but reliable changes in the same file remain eligible for behavior-group review.</p>
+            <p><strong>Verification.</strong> The targeted grouping and branch-pipeline suites passed: 23 tests passed across two test files. The full eval has not yet been rerun against this uncommitted fix, so the improvement is not yet measured.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <h2>How the current system works</h2>
+        <pre><code>changed diff
+  -&gt; semantic changes and confidence
+  -&gt; base/head repository indexes
+  -&gt; changed-symbol graph
+  -&gt; strong components and bounded bridge traversal
+  -&gt; component splitting
+  -&gt; local confidence demotion
+  -&gt; behavior review units plus file fallbacks
+  -&gt; Gemini reviewer calls
+  -&gt; Groq judge adjudication
+  -&gt; metrics, comparison report, dashboard, publication</code></pre>
+        <h3>Important data-model boundary</h3>
+        <p>Changed symbols are graph nodes. Unchanged dependency symbols are context nodes and bridge evidence. The bridge node helps form an edge between changed symbols, but it is not itself reviewed as a changed member.</p>
+        <h3>Important routing boundary</h3>
+        <p>A behavior unit is eligible for a multi-file review call. A fallback unit uses the ordinary file-review adapter. The current eval reports both the final review quality and the routing statistics, because a good F1 score can hide a system that is doing almost no grouping.</p>
+      </section>
+
+      <section id="failures">
+        <h2>What went wrong and how it was diagnosed</h2>
+        <table>
+          <thead><tr><th>Failure</th><th>Symptom</th><th>Diagnosis</th><th>Resolution</th></tr></thead>
+          <tbody>
+            <tr><td>Groq schema missing <code>reason</code></td><td>HTTP 400 said generated JSON missed the required <code>reason</code> property.</td><td>The response schema and generated response were not aligned.</td><td>Schema and judge transport work was updated so required fields are explicit and disagreement handling remains structured.</td></tr>
+            <tr><td>Groq schema itself invalid</td><td>HTTP 400 said every property must be listed in <code>required</code>, including <code>reason</code>.</td><td>The provider validates the response schema before generation.</td><td>Required properties were aligned with provider requirements.</td></tr>
+            <tr><td>CLI appeared stuck</td><td>Report files appeared, but the process continued or later failed in publication.</td><td>Report generation and database/blob publication are later phases than eval execution; output was sparse while calls were active.</td><td>Latest runner output and publication diagnostics were improved. The presence of a report file is not treated as process completion.</td></tr>
+            <tr><td>Missing <code>DATABASE_URL</code></td><td>Publisher threw before database insertion.</td><td>The variable existed in the dashboard environment, not in the local shell running the CLI.</td><td>Environment scope was identified as the issue. The eval runner needs the variable in its own process environment.</td></tr>
+            <tr><td>Private Vercel Blob used with public access</td><td>Blob upload returned “Cannot use public access on a private store.”</td><td>The upload option requested public access while the store was configured private.</td><td>The access mode must match the store. Private stores require private upload semantics and authenticated retrieval; public stores may use public access.</td></tr>
+            <tr><td>Expanded JSON corrupted</td><td>JSON parsing failed at different positions after repair attempts.</td><td>Direct patching of a generated multi-megabyte artifact damaged escaping.</td><td>Regenerated from the original source and validated with <code>JSON.parse</code> before annotation.</td></tr>
+            <tr><td>Grouping fallback dominated</td><td>Latest run showed 75.6% average fallback and only 1.07 behavior calls per case.</td><td>The planner was over-conservative, and the eval adapter removed whole files when only some changes were demoted.</td><td>First fix changed filtering from file identity to exact demoted change identity. Full eval verification is pending.</td></tr>
+            <tr><td>Judge instability</td><td>One latest case remained judge-unstable; an earlier run had two.</td><td>Repeated judge passes disagreed on whether an unlisted but plausible issue was a defect.</td><td>Unstable cases are separated from the main grouping conclusion rather than treated as reliable wins or losses.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="hypotheses">
+        <h2>Assumptions and hypotheses</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Hypothesis</th><th>Prediction</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>H1</td><td>Unchanged bridge symbols are necessary for cross-file behavioral grouping.</td><td>Adding bounded bridge traversal should increase connected behavior groups and retrieval of required context.</td><td><span class="tag good">Partially supported</span> Bridge edges were produced and retrieval recall became measurable, but fallback remains high.</td></tr>
+            <tr><td>H2</td><td>Whole-component demotion is too conservative.</td><td>Local demotion should preserve reliable changes and reduce loss of grouped coverage.</td><td><span class="tag warn">Being tested</span> The exact-change-ID fix is implemented, but the eval has not yet measured it.</td></tr>
+            <tr><td>H3</td><td>Sorted identifier splitting harms locality in large components.</td><td>Graph-local splitting should improve grouping precision and reduce unrelated context.</td><td><span class="tag">Not tested</span> Do not tune this until H2 is measured.</td></tr>
+            <tr><td>H4</td><td>Retrieval quality, not only review reasoning, is limiting F1.</td><td>Cases with low related-file recall should improve when graph edges or retrieval ranking improve.</td><td><span class="tag good">Supported as a concern</span> Average retrieval recall is 47.8%, with three cases at 0%.</td></tr>
+            <tr><td>H5</td><td>Direct scoring-weight tuning will solve the current problem.</td><td>Changing edge weights alone should lower fallback and improve F1.</td><td><span class="tag warn">Deferred</span> The current failure is earlier in routing and context reachability.</td></tr>
+            <tr><td>H6</td><td>Judge instability can materially distort a 15-case comparison.</td><td>Small F1 movements should not be treated as conclusive when unstable cases remain.</td><td><span class="tag good">Supported</span> One or two unstable cases materially reduce confidence in headline deltas.</td></tr>
+          </tbody>
+        </table>
+        <h3>Explicit assumptions made during the work</h3>
+        <ul>
+          <li>The original selected corpus is the stable baseline and should not be rewritten.</li>
+          <li>Expanded context labels are ground truth for necessary files, not a claim that every retrieved file is useful.</li>
+          <li>Unchanged bridge nodes should connect changed symbols but should not become review findings themselves.</li>
+          <li>Strong typed relations are safer grouping evidence than basename similarity or generic logging relationships.</li>
+          <li>When a change cannot be mapped reliably to a symbol, file fallback is safer than speculative grouping.</li>
+          <li>Judge-unstable cases are diagnostic evidence and should not be counted as definitive grouping wins or losses.</li>
+          <li>The current 15-case corpus is too small to treat single-digit percentage-point changes as conclusive.</li>
+        </ul>
+      </section>
+
+      <section id="metrics">
+        <h2>Eval evidence and interpretation</h2>
+        <h3>Latest labeled-context comparison</h3>
+        <table>
+          <thead><tr><th>Metric</th><th>Old file pipeline</th><th>New grouped pipeline</th><th>Interpretation</th></tr></thead>
+          <tbody>
+            <tr><td>Average precision</td><td>33.3%</td><td>33.3%</td><td>No aggregate precision movement.</td></tr>
+            <tr><td>Average defect recall</td><td>16.0%</td><td>17.4%</td><td>Small positive movement.</td></tr>
+            <tr><td>Average F1</td><td>22.4%</td><td>24.2%</td><td>Positive, but not conclusive with this corpus and judge instability.</td></tr>
+            <tr><td>Assessments</td><td colspan="2">3 better, 10 parity, 0 worse, 1 pass, 1 judge-unstable</td><td>Direction is positive; effect is concentrated in a few cases.</td></tr>
+            <tr><td>Related-file retrieval recall</td><td>Not available in old file path</td><td>47.8% average</td><td>New measurement shows many required files are still missed.</td></tr>
+            <tr><td>Fallback rate</td><td>File strategy by definition</td><td>75.6% average</td><td>Grouping is still mostly bypassed.</td></tr>
+            <tr><td>Behavior calls</td><td>0</td><td>1.07 average per case</td><td>Some grouping occurs, but not enough to create the expected efficiency.</td></tr>
+          </tbody>
+        </table>
+        <div class="callout failure"><strong>Do not overread the F1 gain.</strong> The stronger signal is that retrieval recall remains below half and fallback is roughly three quarters. The next run must show whether exact-change fallback filtering increases behavior coverage before any claim about scoring quality is made.</div>
+        <h3>Cases requiring attention</h3>
+        <table>
+          <thead><tr><th>Case pattern</th><th>Observed signal</th><th>Next diagnostic</th></tr></thead>
+          <tbody>
+            <tr><td>Zero retrieval recall</td><td>Uptime Sentry and concurrent Keycloak group access cases retrieved none of their labeled files.</td><td>Inspect changed symbol extraction and indexed edges for the labeled paths before adjusting ranking.</td></tr>
+            <tr><td>High fallback</td><td>Several Cal.com and Sentry cases had fallback above 85%.</td><td>Compare demoted change IDs against the behavior units after the latest fix.</td></tr>
+            <tr><td>Good retrieval but parity</td><td>Some cases retrieved all or most expected files but did not improve F1.</td><td>Separate context retrieval failure from Gemini review-quality failure.</td></tr>
+            <tr><td>Judge unstable</td><td>One case had conflicting judge passes on a plausible unlisted finding.</td><td>Keep it outside the primary grouping score and review the adjudication policy separately.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="current">
+        <h2>Current state</h2>
+        <p><strong>Verified code change:</strong> <code>worker/src/review/eval/branch-pipeline.test-helper.ts</code> now filters demoted changes by exact change ID. Targeted tests passed:</p>
+        <pre><code>pnpm exec vitest run worker/src/review/grouping/grouping.test.ts worker/src/review/eval/branch-pipeline.test.ts
+
+23 tests passed</code></pre>
+        <p><strong>Generated corpus:</strong> <code>worker/src/review/eval/fixtures/martian-selected-context-v1.json</code> parses successfully, contains 15 cases, 39 expected related-file labels, and no missing labeled paths.</p>
+        <p><strong>Uncommitted work:</strong> The exact-change-ID fix, annotation helper, and expanded context fixture are currently uncommitted. The latest report before the fix was generated against commit <code>b15982c</code>, so it does not measure the new filtering change.</p>
+        <div class="callout warning"><strong>Verification gate.</strong> The fix is test-verified but eval-unverified. The next valid evidence is a fresh eval using the expanded corpus and the working-tree fix, followed by a comparison against the previous report.</div>
+      </section>
+
+      <section id="next">
+        <h2>Next iteration protocol</h2>
+        <ol>
+          <li>Run the expanded-corpus eval against the current working tree.</li>
+          <li>Record the new report timestamp, pipeline SHA or working-tree identity, corpus version, and cache status.</li>
+          <li>Compare fallback rate, behavior calls, fallback changes, retrieval recall, input tokens, F1, and judge stability.</li>
+          <li>If fallback decreases and behavior calls increase without a precision collapse, commit the exact-change-ID fix with the measured verification.</li>
+          <li>If fallback does not change, inspect the planner's confidence distribution and the demotion reasons before changing thresholds.</li>
+          <li>For the three zero-recall cases, inspect whether the expected file is present in the fetched context, rendered into the prompt, and connected by a graph edge. Do not conflate these stages.</li>
+          <li>Only after routing is healthy, test graph-local splitting and calibrated edge weights one variable at a time.</li>
+        </ol>
+        <h3>Append-only entry template</h3>
+        <pre><code>## Iteration N: short title
+Date: YYYY-MM-DD
+Commit or working-tree state:
+Files changed:
+Intent:
+Assumptions:
+Hypotheses and prediction:
+Observed result:
+Failure or surprise:
+Diagnosis:
+Fix:
+Verification command and result:
+Eval comparison:
+Decision:
+Remaining uncertainty:</code></pre>
+      </section>
+
+      <section id="sources">
+        <h2>Sources</h2>
+        <p>This report synthesizes the following repository evidence. Paths are relative to <code>D:\reptile-killer</code>.</p>
+        <ul>
+          <li>Git history from <code>cb3b912</code> through <code>b15982c</code>, including the grouping, eval, dashboard, cache, and provider changes listed in the timeline.</li>
+          <li><code>worker/src/review/grouping/graph.ts</code>, <code>group-builder.ts</code>, <code>grouping.test.ts</code>, and <code>types.ts</code>.</li>
+          <li><code>worker/src/review/eval/branch-pipeline.test-helper.ts</code> and <code>branch-pipeline.test.ts</code>.</li>
+          <li><code>worker/src/review/semantic-diff/entity-parser.ts</code> and <code>unified-parser.ts</code>.</li>
+          <li><code>worker/src/review/eval/expand-context.test-helper.ts</code> and <code>annotate-context.test-helper.ts</code>.</li>
+          <li><code>.eval-cache/reports/latest-comparison.json</code> and <code>latest-comparison.md</code>, generated 2026-09-07.</li>
+          <li><code>docs/grouping-strategy-research.md</code> and <code>docs/retrieval-ground-truth-research.md</code>.</li>
+          <li>Research references already recorded in the repository research document, including Martian Code Review Bench, SWE-CARE, DraCo, RepoGraph, RepoCoder, CodeRAG, CodeReviewQA, DependEval, Tree-sitter, and SCIP.</li>
+        </ul>
+      </section>
+
+      <footer>Last updated: 2026-09-07. Maintain this file by appending a new iteration entry after each meaningful code, configuration, corpus, or eval change.</footer>
+    </main>
+  </div>
+</body>
+</html>

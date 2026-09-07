@@ -105,4 +105,29 @@ describe('GroqJudgeTransport', () => {
       'Groq judge returned an invalid verdict'
     );
   });
+
+  it('converts a schema-validation generation failure into an unsupported verdict', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: 'json_validate_failed',
+        message: 'Generated JSON does not match the expected schema.',
+        failed_generation: '{"defectExists":true}',
+      },
+    }), { status: 400 }));
+    const judge = new GroqJudgeTransport('secret', undefined, request, 0);
+
+    await expect(judge.judge('prompt')).resolves.toMatchObject({
+      defectExists: false,
+      matchedDefectId: null,
+      correctness: 0,
+      localization: 0,
+      actionability: 0,
+      unsupportedClaim: true,
+      evidenceQuote: '',
+      reason: 'Groq judge could not produce a schema-valid verdict.',
+    });
+    const init = request.mock.calls[0][1] as RequestInit;
+    const payload = JSON.parse(init.body as string);
+    expect(payload.response_format.json_schema.schema.required).toContain('reason');
+  });
 });

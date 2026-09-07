@@ -42,11 +42,15 @@ function parseVerdict(content: string): VerdictBody {
     || !score(value.actionability)
     || typeof value.unsupportedClaim !== 'boolean'
     || typeof value.evidenceQuote !== 'string'
-    || typeof value.reason !== 'string'
   ) {
     throw new Error('Groq judge returned an invalid verdict');
   }
-  return value as VerdictBody;
+  return {
+    ...value,
+    reason: typeof value.reason === 'string'
+      ? value.reason
+      : 'No reason provided by judge.',
+  } as VerdictBody;
 }
 
 export class GroqJudgeTransport implements JudgeTransport {
@@ -123,6 +127,18 @@ export class GroqJudgeTransport implements JudgeTransport {
       }
       if (!response.ok) {
         const body = await response.text().catch(() => '');
+        if (response.status === 400 && isSchemaValidationFailure(body)) {
+          return {
+            defectExists: false,
+            matchedDefectId: null,
+            correctness: 0,
+            localization: 0,
+            actionability: 0,
+            unsupportedClaim: true,
+            evidenceQuote: '',
+            reason: 'Groq judge could not produce a schema-valid verdict.',
+          };
+        }
         throw new Error(
           `Groq judge failed with status ${response.status}: ${body.slice(0, 400)}`
         );
@@ -147,4 +163,12 @@ function retryDelayMsFrom(body: string, headers: Headers): number {
   const match = body.match(/try again in ([\d.]+)s/);
   if (match) return Number(match[1]) * 1000;
   return 0;
+}
+
+function isSchemaValidationFailure(body: string): boolean {
+  try {
+    return (JSON.parse(body) as { error?: { code?: string } }).error?.code === 'json_validate_failed';
+  } catch {
+    return false;
+  }
 }
