@@ -89,11 +89,13 @@ async function evaluateRun(input: {
   judge: JudgeTransport;
   cache: JudgeCache;
   config: EvalRunConfig;
+  progress?: (message: string) => void;
 }): Promise<EvaluatedRun> {
   const adjudications: FindingAdjudication[] = [];
   const matchedDefectIds = new Set<string>();
 
-  for (const finding of input.run.output.finalFindings) {
+  for (const [index, finding] of input.run.output.finalFindings.entries()) {
+    input.progress?.(`${input.run.caseId} ${input.run.pipeline.label} judging finding ${index + 1}/${input.run.output.finalFindings.length}`);
     const result = await judgeFindingTwice({
       caseId: input.testCase.id,
       goldSetVersion: input.run.goldSetVersion,
@@ -183,6 +185,7 @@ export async function evaluateCase(input: {
   judge: JudgeTransport;
   cache: JudgeCache;
   reviewCache?: ReviewCache;
+  progress?: (message: string) => void;
 }): Promise<EvalCaseReport> {
   const run = (pipeline: EvalPipeline, version: PipelineVersion, slot: RunSlot) =>
     runEvalCase(
@@ -193,7 +196,8 @@ export async function evaluateCase(input: {
       input.config,
       undefined,
       input.reviewCache,
-      slot
+      slot,
+      input.progress
     );
   const oldA = await run(input.oldPipeline, input.oldVersion, 'oldA');
   const oldB = await run(input.oldPipeline, input.oldVersion, 'oldB');
@@ -210,6 +214,7 @@ export async function evaluateCase(input: {
     judge: input.judge,
     cache: input.cache,
     config: input.config,
+    progress: input.progress,
   });
   const evaluatedOldA = await evaluate(oldA);
   const evaluatedOldB = await evaluate(oldB);

@@ -9,15 +9,20 @@ function getSql() {
   return neon(process.env.DATABASE_URL);
 }
 
-export async function publishEvalReport(report: EvalReport): Promise<string> {
+export async function publishEvalReport(
+  report: EvalReport,
+  progress?: (message: string) => void
+): Promise<string> {
   const sql = getSql();
   const runId = reportId(report);
+  progress?.(`uploading report blob for ${runId}`);
   const blob = await put(`eval-reports/${runId}/report.json`, JSON.stringify(report), {
     access: 'public',
     token: process.env.PUBLIC_READ_WRITE_TOKEN,
     addRandomSuffix: false,
   });
 
+  progress?.('writing eval run metadata');
   await sql`
     INSERT INTO eval_runs (
       run_id, created_at, commit_sha, working_tree_hash, corpus_version,
@@ -33,8 +38,10 @@ export async function publishEvalReport(report: EvalReport): Promise<string> {
       score = EXCLUDED.score
   `;
 
+  progress?.('clearing previous case metrics');
   await sql`DELETE FROM eval_case_metrics WHERE run_id = ${runId}`;
-  for (const item of report.cases) {
+  for (const [index, item] of report.cases.entries()) {
+    progress?.(`writing case metrics ${index + 1}/${report.cases.length}`);
     const metrics = item.comparison.newMetrics;
     const output = item.runs.newA.run.output;
     await sql`

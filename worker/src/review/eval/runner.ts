@@ -72,7 +72,8 @@ export async function runEvalCase(
   config: EvalRunConfig,
   now: () => number = Date.now,
   cache?: ReviewCache,
-  slot?: RunSlot
+  slot?: RunSlot,
+  progress?: (message: string) => void
 ): Promise<EvalRun> {
   const startedAt = now();
   const caseSnapshotHash = await hashEvalCase(testCase);
@@ -81,8 +82,12 @@ export async function runEvalCase(
     : null;
   if (cache && cacheKey) {
     const cached = await cache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      progress?.(`${testCase.id} ${slot} cache hit`);
+      return cached;
+    }
   }
+  progress?.(`${testCase.id} ${slot ?? 'run'} started`);
   const output = await pipeline.review(testCase, config);
   const run: EvalRun = {
     caseId: testCase.id,
@@ -95,6 +100,7 @@ export async function runEvalCase(
     latencyMs: Math.max(0, now() - startedAt),
   };
   if (cache && cacheKey) await cache.set(cacheKey, run);
+  progress?.(`${testCase.id} ${slot ?? 'run'} finished: ${output.providerCalls} provider calls`);
   return run;
 }
 

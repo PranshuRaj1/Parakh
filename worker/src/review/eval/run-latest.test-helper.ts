@@ -20,6 +20,9 @@ function run(command: string, args: string[]): Promise<void> {
 const args = process.argv.slice(2).filter((arg) => arg !== '--');
 const has = (name: string) => args.includes(name);
 const repoRoot = process.cwd();
+const progress = (message: string) => {
+  process.stdout.write(`[eval ${new Date().toISOString()}] ${message}\n`);
+};
 const state = await loadEvalState(resolve(repoRoot, '.eval-cache', 'last-comparison.json'));
 
 if (!has('--old-ref') && !state) {
@@ -45,11 +48,14 @@ await access(viteNode);
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/run-evals.test-helper.ts'), '--', ...evalArgs]);
 
 const report = JSON.parse(await readFile(resolve(repoRoot, '.eval-cache/reports/latest-comparison.json'), 'utf8')) as EvalReport;
-const runId = await publishEvalReport(report);
+progress('evaluation reports complete; starting publication');
+const runId = await publishEvalReport(report, progress);
 process.stdout.write(`Published eval run ${runId}\n`);
 
+progress('generating dashboard');
 await run(process.execPath, [viteNode, '--script', join(repoRoot, 'worker/src/review/eval/dashboard-cli.test-helper.ts'), '--']);
 const dashboardPath = resolve(repoRoot, '.eval-cache/reports/index.html');
+progress('opening dashboard');
 if (process.platform === 'win32') {
   await run('cmd', ['/c', 'start', '', dashboardPath]);
 } else if (process.platform === 'darwin') {

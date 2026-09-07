@@ -254,6 +254,10 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
     rulesHash: 'none',
     timeoutMs: positiveNumber(args.timeoutMs, 'timeout-ms'),
   };
+  const progress = (message: string) => {
+    process.stdout.write(`[eval ${new Date().toISOString()}] ${message}\n`);
+  };
+  progress(`starting ${casesToRun.length} case(s); old=${oldPipeline.resolvedSha.slice(0, 12)} new=${newPipeline.resolvedSha.slice(0, 12)} corpus=${corpus.goldSetVersion}`);
 
   const cases = await withDetachedWorktree({
     repoRoot,
@@ -288,8 +292,10 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
           resolve(repoRoot, '.eval-cache', 'review-runs.json')
         );
         const reports = [];
-        for (const testCase of casesToRun) {
-          reports.push(await evaluateCase({
+        for (const [index, testCase] of casesToRun.entries()) {
+          const startedAt = Date.now();
+          progress(`case ${index + 1}/${casesToRun.length} started: ${testCase.id}`);
+          const report = await evaluateCase({
             testCase,
             defects: corpus.defects.filter(
               (defect) => defect.caseId === testCase.id
@@ -303,7 +309,10 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
             judge,
             cache,
             reviewCache,
-          }));
+            progress,
+          });
+          reports.push(report);
+          progress(`case ${index + 1}/${casesToRun.length} finished in ${Date.now() - startedAt}ms: ${report.assessment}`);
         }
         return reports;
       },
@@ -346,6 +355,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
 
   const output = resolve(repoRoot, args.output);
   await mkdir(dirname(output), { recursive: true });
+  progress('writing JSON report');
   await saveEvalReport(output, report);
   await saveEvalState(statePath, {
     oldPipeline,
@@ -360,6 +370,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
   if (args.outputMd) {
     const mdPath = resolve(repoRoot, args.outputMd);
     await mkdir(dirname(mdPath), { recursive: true });
+    progress('writing Markdown report');
     await writeFile(mdPath, generateMarkdownReport(report));
     process.stdout.write(`Wrote Markdown report to ${mdPath}\n`);
   }
@@ -367,6 +378,7 @@ async function runEval(args: ReturnType<typeof parseArgs>, repoRoot: string): Pr
   if (args.outputReview) {
     const reviewPath = resolve(repoRoot, args.outputReview);
     await mkdir(dirname(reviewPath), { recursive: true });
+    progress('writing adjudication review');
     await writeFile(reviewPath, generateAdjudicationReview(report));
     process.stdout.write(`Wrote adjudication review to ${reviewPath}\n`);
   }
