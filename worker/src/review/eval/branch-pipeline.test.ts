@@ -101,6 +101,19 @@ describe('branch pipeline adapter', () => {
     expect(output.retrieval).toMatchObject({
       retrievedFiles: ['src/service.ts'], renderedFiles: ['src/service.ts'], recall: 1,
     });
+    expect(output.retrieval?.diagnostics).toEqual([
+      expect.objectContaining({
+        file: 'src/service.ts',
+        sourcePresent: true,
+        changed: false,
+        extractedSymbols: ['src/service.ts#save'],
+        bridgePaths: expect.arrayContaining([
+          expect.stringContaining('src/service.ts#save <- change:'),
+        ]),
+        rendered: true,
+        truncated: false,
+      }),
+    ]);
   });
 
   it('reviews planner-generated behavior groups without changing the file adapter', async () => {

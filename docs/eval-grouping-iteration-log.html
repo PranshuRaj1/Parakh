@@ -416,6 +416,22 @@
 
 12 tests passed</code></pre>
         <p><strong>Next phase.</strong> Add retrieval diagnostics for Sentry uptime, Grafana database performance, and Keycloak group access before modifying graph connectivity or scoring.</p>
+        <h3>Phase 2 result: retrieval diagnostics</h3>
+        <p><strong>Implementation.</strong> Added optional per-expected-file retrieval diagnostics to <code>PipelineOutput</code> and the grouped eval adapter. Each diagnostic records source presence, whether the file is changed, extracted symbols, indexed edges, bridge paths, rendered context, and truncation.</p>
+        <p><strong>Why.</strong> A retrieval score of zero does not identify whether the failure came from missing fixture source, parser coverage, edge construction, bridge traversal, context rendering, or prompt truncation. The new fields make those stages observable without changing scoring weights.</p>
+        <p><strong>Verification.</strong> The focused grouping and branch-pipeline suites pass, and the broader indexer, semantic-diff, grouping, and eval suites remain green:</p>
+        <pre><code>pnpm exec vitest run worker/src/review/grouping/grouping.test.ts worker/src/review/eval/branch-pipeline.test.ts
+
+24 tests passed
+
+node node_modules/typescript/bin/tsc -p worker/tsconfig.json --noEmit
+
+passed
+
+pnpm exec vitest run worker/src/indexer/parser.test.ts worker/src/indexer/edges.test.ts worker/src/review/semantic-diff worker/src/review/grouping worker/src/review/eval
+
+133 tests passed</code></pre>
+        <p><strong>Environment note.</strong> The repository has no <code>typecheck</code> package script, and the pnpm TypeScript launcher hits a Windows profile permission error in this environment. The direct local TypeScript compiler completed successfully.</p>
       </section>
 
       <section id="current">
